@@ -1,22 +1,21 @@
-import { fetchPulse } from "@/lib/mobula";
-import { buildPulseViews, DEFAULT_CHAINS } from "@/lib/pulseViews";
-import type { PulseResponse } from "@/lib/types";
+import { fetchBoard } from "@/lib/market";
+import { CHAINS, type TokenMarket } from "@/lib/types";
 import { TokenTable } from "@/components/TokenTable";
 import { ChainFilter } from "@/components/ChainFilter";
-import { ErrorState } from "@/components/ui";
 
 type SearchParams = Promise<{ chains?: string }>;
 
 export default async function Home({ searchParams }: { searchParams: SearchParams }) {
   const sp = await searchParams;
-  const chains = sp.chains ? sp.chains.split(",").filter(Boolean) : DEFAULT_CHAINS;
+  const chains = sp.chains ? sp.chains.split(",").filter(Boolean) : [...CHAINS];
 
-  let initialData: PulseResponse = {};
-  let error: string | null = null;
+  // HTTP 榜单接口只做 SSR 首屏兜底（§5 推荐策略）；拉不到也不阻塞渲染，
+  // 客户端 WS subscribe 即有 snapshot。
+  let initialTrending: TokenMarket[] | null = null;
   try {
-    initialData = await fetchPulse(buildPulseViews(chains));
-  } catch (err) {
-    error = err instanceof Error ? err.message : "Failed to load Mobula data";
+    initialTrending = (await fetchBoard("trending")).items;
+  } catch {
+    // ignore：交给 WS
   }
 
   return (
@@ -24,18 +23,14 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
       <div>
         <h1 className="text-xl font-semibold tracking-tight text-foreground">Discover</h1>
         <p className="text-sm text-muted">
-          Live token pulse across Solana, Base and BNB — trending, new listings, bonding curves and graduated
-          tokens, powered by Mobula.
+          Live token boards — trending, new listings, bonding curves and graduated tokens, streamed in
+          real time over WebSocket.
         </p>
       </div>
 
       <ChainFilter selected={chains} />
 
-      {error ? (
-        <ErrorState message={error} />
-      ) : (
-        <TokenTable initialData={initialData} chains={chains} />
-      )}
+      <TokenTable initialTrending={initialTrending} chains={chains} />
     </div>
   );
 }

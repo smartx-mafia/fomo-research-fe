@@ -1,11 +1,12 @@
 "use client";
 
-import { useTokenStream, mobulaUrl } from "@/lib/client";
+import useSWR from "swr";
+import { fetchTrades } from "@/lib/market";
 import { Card, CardHeader, Skeleton, EmptyState, ErrorState } from "@/components/ui";
-import { fmtUsd, fmtAge, shortAddr } from "@/lib/format";
-import type { Trade } from "@/lib/types";
+import { fmtUsd, fmtPrice, fmtAge, shortAddr } from "@/lib/format";
+import type { TradeItem } from "@/lib/types";
 
-/** 交易类型徽标：buy/sell 用涨跌色，其它类型（withdrawal 等）用中性灰 */
+/** 交易类型徽标：buy/sell 用涨跌色，其它类型（deposit/withdrawal）用中性灰 */
 function TypeBadge({ type }: { type?: string }) {
   const t = (type ?? "").toLowerCase();
   if (t === "buy") {
@@ -32,28 +33,25 @@ function TradesTableSkeleton() {
 }
 
 /**
- * 最近成交流。轮询刷新（PoC 阶段用 SWR 轮询，后续接 WS/SSE 时只需换 useTokenStream 内部实现）。
+ * 最近成交流。SWR 轮询（服务端有 5–15s 缓存，5s 间隔正合适；
+ * 该数据没有 WS topic，轮询是正解）。
  */
-export default function TradesTab({ chainId, address }: { chainId: string; address: string }) {
-  const url = mobulaUrl("token/trades", {
-    blockchain: chainId,
-    address,
-    mode: "asset",
-    limit: "30",
-    offset: "0",
-    sortOrder: "desc",
-  });
-  const { data: res, error, isLoading } = useTokenStream<{ data: Trade[] }>(url, { intervalMs: 5000 });
-  const trades = res?.data ?? [];
+export default function TradesTab({ chain, address }: { chain: string; address: string }) {
+  const { data: trades, error, isLoading } = useSWR<TradeItem[]>(
+    ["trades", chain, address],
+    () => fetchTrades(chain, address, { limit: 30 }),
+    { refreshInterval: 5000, revalidateOnFocus: true, dedupingInterval: 2000 }
+  );
+  const items = trades ?? [];
 
   return (
     <Card>
       <CardHeader>Recent Trades</CardHeader>
-      {isLoading && !res ? (
+      {isLoading && !trades ? (
         <TradesTableSkeleton />
       ) : error ? (
         <ErrorState message={error instanceof Error ? error.message : String(error)} />
-      ) : trades.length === 0 ? (
+      ) : items.length === 0 ? (
         <EmptyState>No trades found</EmptyState>
       ) : (
         <div className="max-h-[480px] overflow-y-auto">
@@ -69,18 +67,18 @@ export default function TradesTab({ chainId, address }: { chainId: string; addre
               </tr>
             </thead>
             <tbody>
-              {trades.map((tr, i) => (
-                <tr key={tr.id ?? tr.transactionHash ?? i} className="border-t border-border">
+              {items.map((tr, i) => (
+                <tr key={tr.tx_hash ? `${tr.tx_hash}-${i}` : i} className="border-t border-border">
                   <td className="px-3 py-2">
                     <TypeBadge type={tr.type} />
                   </td>
-                  <td className="tabular px-3 py-2 text-right text-foreground">{fmtUsd(tr.baseTokenAmountUSD)}</td>
-                  <td className="tabular px-3 py-2 text-right text-foreground">{fmtUsd(tr.baseTokenPriceUSD)}</td>
-                  <td className="px-3 py-2 font-mono text-muted" title={tr.swapSenderAddress}>
-                    {shortAddr(tr.swapSenderAddress)}
+                  <td className="tabular px-3 py-2 text-right text-foreground">{fmtUsd(tr.base_token_amount_usd)}</td>
+                  <td className="tabular px-3 py-2 text-right text-foreground">{fmtPrice(tr.price_usd)}</td>
+                  <td className="px-3 py-2 font-mono text-muted" title={tr.sender}>
+                    {shortAddr(tr.sender)}
                   </td>
-                  <td className="px-3 py-2 text-muted">{tr.platform?.name ?? "—"}</td>
-                  <td className="tabular px-3 py-2 text-right text-muted" title={tr.transactionHash}>
+                  <td className="px-3 py-2 text-muted">{tr.platform_name ?? "—"}</td>
+                  <td className="tabular px-3 py-2 text-right text-muted" title={tr.tx_hash}>
                     {fmtAge(tr.date)}
                   </td>
                 </tr>

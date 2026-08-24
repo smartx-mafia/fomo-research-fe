@@ -1,77 +1,44 @@
+"use client";
+
 import { Card, CardHeader, StatCell } from "@/components/ui";
+import { Flash } from "@/components/Flash";
 import { fmtUsd, fmtInt, fmtAge, fmtPct, DASH } from "@/lib/format";
-import type { TokenDetails } from "@/lib/types";
+import type { TokenMarket } from "@/lib/types";
 
-function BuySellBar({
-  label,
-  buy,
-  sell,
-  fmt,
-}: {
-  label: string;
-  buy?: number;
-  sell?: number;
-  fmt: (v: unknown) => string;
-}) {
-  if (buy === undefined && sell === undefined) return null;
-  const b = buy ?? 0;
-  const s = sell ?? 0;
-  const total = b + s;
-  const buyPct = total > 0 ? (b / total) * 100 : 50;
-  const sellPct = 100 - buyPct;
-
-  return (
-    <div className="flex flex-col gap-1">
-      <div className="flex items-center justify-between text-[11px] text-muted">
-        <span className="uppercase tracking-wide">{label}</span>
-        <span className="tabular">
-          <span className="text-up">{fmt(buy)}</span> / <span className="text-down">{fmt(sell)}</span>
-        </span>
-      </div>
-      <div className="flex h-1.5 w-full overflow-hidden rounded-full bg-surface-2">
-        {total > 0 ? (
-          <>
-            <div className="h-full bg-up" style={{ width: `${buyPct}%` }} />
-            <div className="h-full bg-down" style={{ width: `${sellPct}%` }} />
-          </>
-        ) : (
-          <div className="h-full w-full bg-surface-2" />
-        )}
-      </div>
-    </div>
-  );
+/** 会被 WS 实时刷新的格子：包一层 Flash，更新时按涨跌闪色 */
+function LiveCell({ label, raw, text }: { label: string; raw: unknown; text: string }) {
+  return <StatCell label={label} value={<Flash value={raw}>{text}</Flash>} />;
 }
 
-export default function StatGrid({ data }: { data: TokenDetails }) {
-  const showBonding = !data.bonded && data.bondingPercentage !== undefined;
-  const showBondedAt = data.bonded && data.bondedAt !== undefined;
+export default function StatGrid({ data }: { data: TokenMarket }) {
+  const showBonding = !data.bonded && data.bonding_percentage !== undefined;
 
   return (
     <Card>
       <CardHeader>Overview</CardHeader>
-      <div className="flex flex-col gap-4 p-4">
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-          <StatCell label="Market Cap" value={fmtUsd(data.marketCapUSD)} />
-          <StatCell label="FDV" value={fmtUsd(data.marketCapDilutedUSD)} />
-          <StatCell label="Liquidity" value={fmtUsd(data.liquidityUSD)} />
-          <StatCell label="Volume 24h" value={fmtUsd(data.volume24hUSD)} />
-          <StatCell label="Holders" value={fmtInt(data.holdersCount)} />
-          <StatCell label="Created" value={data.createdAt ? fmtAge(data.createdAt) : DASH} />
-          {showBonding && <StatCell label="Bonding" value={fmtPct(data.bondingPercentage, { sign: false })} />}
-          {showBondedAt && <StatCell label="Bonded" value={fmtAge(data.bondedAt)} sub="ago" />}
-          <StatCell label="ATH" value={fmtUsd(data.athUSD)} />
-          <StatCell label="ATL" value={fmtUsd(data.atlUSD)} />
-        </div>
-
-        <div className="flex flex-col gap-3 border-t border-border pt-3">
-          <BuySellBar label="Buys / Sells (24h)" buy={data.buys24h} sell={data.sells24h} fmt={fmtInt} />
-          <BuySellBar
-            label="Buy / Sell Volume (24h)"
-            buy={data.volumeBuy24hUSD}
-            sell={data.volumeSell24hUSD}
-            fmt={fmtUsd}
+      <div className="grid grid-cols-2 gap-2 p-4 sm:grid-cols-3 lg:grid-cols-4">
+        <LiveCell label="Market Cap" raw={data.market_cap} text={fmtUsd(data.market_cap)} />
+        <LiveCell label="FDV" raw={data.market_cap_diluted} text={fmtUsd(data.market_cap_diluted)} />
+        <LiveCell label="Liquidity" raw={data.liquidity} text={fmtUsd(data.liquidity)} />
+        <LiveCell label="Holders" raw={data.holders_count} text={fmtInt(data.holders_count)} />
+        <LiveCell label="Volume 1h" raw={data.volume_1h} text={fmtUsd(data.volume_1h)} />
+        <LiveCell label="Volume 24h" raw={data.volume_24h} text={fmtUsd(data.volume_24h)} />
+        <LiveCell label="Trades 1h" raw={data.trades_1h} text={fmtInt(data.trades_1h)} />
+        <LiveCell label="Trades 24h" raw={data.trades_24h} text={fmtInt(data.trades_24h)} />
+        <LiveCell label="Buyers 24h" raw={data.buyers_24h} text={fmtInt(data.buyers_24h)} />
+        <StatCell
+          label="Security Score"
+          value={data.security_score !== undefined ? fmtInt(data.security_score) : DASH}
+        />
+        <StatCell label="Created" value={data.created_at ? fmtAge(data.created_at) : DASH} sub="ago" />
+        {showBonding && (
+          <LiveCell
+            label="Bonding"
+            raw={data.bonding_percentage}
+            text={fmtPct(data.bonding_percentage, { sign: false })}
           />
-        </div>
+        )}
+        {data.bonded && <StatCell label="Bonding" value="Graduated" />}
       </div>
     </Card>
   );

@@ -7,7 +7,7 @@ import HoldersTab from "@/components/HoldersTab";
 
 type Tab = "trades" | "holders";
 
-export default function DetailTabs({ chainId, address }: { chainId: string; address: string }) {
+export default function DetailTabs({ chain, address }: { chain: string; address: string }) {
   const [tab, setTab] = useState<Tab>("trades");
 
   const tabs: { id: Tab; label: string }[] = [
@@ -35,9 +35,9 @@ export default function DetailTabs({ chainId, address }: { chainId: string; addr
       </div>
       <div className="p-4">
         {tab === "trades" ? (
-          <TradesTab chainId={chainId} address={address} />
+          <TradesTab chain={chain} address={address} />
         ) : (
-          <HoldersTab chainId={chainId} address={address} />
+          <HoldersTab chain={chain} address={address} />
         )}
       </div>
     </Card>

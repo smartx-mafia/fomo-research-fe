@@ -13,7 +13,7 @@ import {
   type HistogramData,
   type UTCTimestamp,
 } from "lightweight-charts";
-import { mobulaUrl } from "@/lib/client";
+import { fetchOhlcv } from "@/lib/market";
 import type { OhlcvBar, OhlcvPeriod } from "@/lib/types";
 import { Skeleton, ErrorState, EmptyState } from "@/components/ui";
 
@@ -28,12 +28,12 @@ const FOREGROUND = "#e6e8eb"; // --foreground
 const MUTED = "#8b90a0"; // --muted
 
 interface PriceChartProps {
-  chainId: string;
+  chain: string;
   address: string;
   createdAt?: string;
 }
 
-export default function PriceChart({ chainId, address, createdAt }: PriceChartProps) {
+export default function PriceChart({ chain, address, createdAt }: PriceChartProps) {
   const [period, setPeriod] = useState<OhlcvPeriod>("5m");
   const [bars, setBars] = useState<OhlcvBar[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -44,24 +44,17 @@ export default function PriceChart({ chainId, address, createdAt }: PriceChartPr
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
 
-  // Fetch OHLCV data whenever chainId/address/period change.
+  // Fetch OHLCV data whenever chain/address/period change.
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
     setBars(null);
 
-    fetch(mobulaUrl("token/ohlcv-history", { chainId, address, period, usd: "true" }))
-      .then(async (res) => {
-        if (!res.ok) {
-          const body = await res.json().catch(() => ({}));
-          throw new Error(body.error || `HTTP ${res.status}`);
-        }
-        return res.json();
-      })
-      .then((json: { data?: OhlcvBar[] }) => {
+    fetchOhlcv(chain, address, { period })
+      .then((data: OhlcvBar[]) => {
         if (cancelled) return;
-        setBars(Array.isArray(json.data) ? json.data : []);
+        setBars(data);
       })
       .catch((err: unknown) => {
         if (cancelled) return;
@@ -74,7 +67,7 @@ export default function PriceChart({ chainId, address, createdAt }: PriceChartPr
     return () => {
       cancelled = true;
     };
-  }, [chainId, address, period]);
+  }, [chain, address, period]);
 
   // Create the chart once the container is mounted. Runs only client-side (useEffect never runs on server).
   useEffect(() => {

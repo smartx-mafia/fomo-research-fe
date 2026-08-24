@@ -2,102 +2,18 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import useSWR from "swr";
-import type { PulseResponse, PulseToken } from "@/lib/types";
-import { fmtPrice, fmtCompact, fmtInt, fmtAge, chainToSlug, num } from "@/lib/format";
+import type { BoardName, TokenMarket } from "@/lib/types";
+import { BOARDS } from "@/lib/types";
+import { useBoardStream } from "@/lib/ws";
+import { fmtPrice, fmtCompact, fmtInt, fmtAge } from "@/lib/format";
 import { Card, ChainBadge, PctBadge, Skeleton, EmptyState } from "@/components/ui";
-import { buildPulseViews, TABS, TAB_LABELS, type TabName } from "@/lib/pulseViews";
+import { Flash } from "@/components/Flash";
 
-/**
- * The real /pulse response does NOT match the flat shape implied by the
- * PulseToken type for identity fields: address/chainId/symbol/name/logo live
- * under `pair.token0` or `pair.token1` (whichever `pair.baseToken` points at),
- * and a few metrics use different casing than declared (`holders_count` not
- * `holdersCount`, `market_cap` not `marketCap`, liquidity only under `pair`).
- * This shape is undocumented in types.ts (pulse isn't in the official OpenAPI
- * spec), so we normalize here rather than touch the shared type file.
- */
-interface RawPairToken {
-  address?: string;
-  chainId?: string;
-  symbol?: string;
-  name?: string;
-  logo?: string;
-}
-interface RawPair {
-  token0?: RawPairToken;
-  token1?: RawPairToken;
-  baseToken?: "token0" | "token1";
-  liquidity?: number;
-  blockchain?: string;
-}
-
-interface DisplayToken {
-  key: string;
-  address: string;
-  chainId: string;
-  symbol: string;
-  name: string;
-  logo?: string;
-  price?: number;
-  priceChange1h?: unknown;
-  priceChange24h?: unknown;
-  marketCap?: number;
-  liquidity?: number;
-  volume24h?: unknown;
-  holdersCount?: number;
-  createdAt?: unknown;
-  bonded?: boolean;
-  bondingPercentage?: number;
-}
-
-function deriveDisplayToken(t: PulseToken, idx: number): DisplayToken {
-  const pair = (t.pair ?? undefined) as RawPair | undefined;
-  const base = pair?.baseToken === "token0" ? pair.token0 : pair?.token1;
-
-  const address = base?.address ?? (typeof t.address === "string" ? t.address : undefined) ?? `unknown-${idx}`;
-  const chainId =
-    base?.chainId ??
-    pair?.blockchain ??
-    (typeof t.chainId === "string" ? t.chainId : undefined) ??
-    "unknown";
-  const rawTokenSymbol = t.tokenSymbol;
-  const rawTokenName = t.tokenName;
-  const symbol = (typeof rawTokenSymbol === "string" && rawTokenSymbol) || base?.symbol || t.symbol || "?";
-  const name = (typeof rawTokenName === "string" && rawTokenName) || base?.name || t.name || symbol;
-  const logo = base?.logo ?? t.logo;
-
-  return {
-    key: address + chainId,
-    address,
-    chainId,
-    symbol,
-    name,
-    logo,
-    price: num(t.price) ?? num(t.latest_price),
-    priceChange1h: t.price_change_1h,
-    priceChange24h: t.price_change_24h,
-    marketCap: num(t.market_cap) ?? num(t.marketCap),
-    liquidity: num(pair?.liquidity) ?? num(t.liquidity),
-    volume24h: t.volume_24h,
-    holdersCount: num(t.holders_count) ?? num(t.holdersCount),
-    createdAt: t.created_at ?? t.createdAt,
-    bonded: typeof t.bonded === "boolean" ? t.bonded : undefined,
-    bondingPercentage: num(t.bondingPercentage),
-  };
-}
-
-const postFetcher = (chains: string[]) => async (url: string) => {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ assetMode: true, filterQuotes: true, views: buildPulseViews(chains) }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error || `HTTP ${res.status}`);
-  }
-  return res.json() as Promise<PulseResponse>;
+const BOARD_LABELS: Record<BoardName, string> = {
+  trending: "Trending",
+  new: "New",
+  bonding: "Bonding",
+  bonded: "Bonded",
 };
 
 function TokenLogo({ logo, symbol }: { logo?: string; symbol: string }) {
@@ -149,7 +65,7 @@ function TableSkeleton() {
   );
 }
 
-function TokenRows({ tokens }: { tokens: DisplayToken[] }) {
+function TokenRows({ tokens }: { tokens: TokenMarket[] }) {
   if (tokens.length === 0) {
     return <EmptyState>No tokens match this view right now.</EmptyState>;
   }
@@ -173,33 +89,50 @@ function TokenRows({ tokens }: { tokens: DisplayToken[] }) {
         </thead>
         <tbody>
           {tokens.map((tok) => (
-            <tr key={tok.key} className="border-b border-border/60 last:border-0 hover:bg-surface-2/60">
+            <tr
+              key={`${tok.chain}:${tok.address}`}
+              className="border-b border-border/60 last:border-0 hover:bg-surface-2/60"
+            >
               <td className="px-3 py-2">
-                <Link href={`/token/${chainToSlug(tok.chainId)}/${tok.address}`} className="flex items-center gap-2">
-                  <TokenLogo logo={tok.logo} symbol={tok.symbol} />
+                <Link href={`/token/${tok.chain}/${tok.address}`} className="flex items-center gap-2">
+                  <TokenLogo logo={tok.logo} symbol={tok.symbol ?? "?"} />
                   <div className="flex flex-col leading-tight">
-                    <span className="font-medium text-foreground">{tok.symbol}</span>
-                    <span className="max-w-[160px] truncate text-xs text-muted">{tok.name}</span>
+                    <span className="font-medium text-foreground">{tok.symbol ?? "?"}</span>
+                    <span className="max-w-[160px] truncate text-xs text-muted">{tok.name ?? tok.symbol}</span>
                   </div>
                 </Link>
               </td>
               <td className="px-3 py-2">
-                <ChainBadge chainId={tok.chainId} />
+                <ChainBadge chainId={tok.chain} />
               </td>
-              <td className="px-3 py-2 tabular text-muted">{fmtAge(tok.createdAt)}</td>
-              <td className="px-3 py-2 tabular text-right">{fmtPrice(tok.price)}</td>
+              <td className="px-3 py-2 tabular text-muted">{fmtAge(tok.created_at)}</td>
+              <td className="px-3 py-2 tabular text-right">
+                <Flash value={tok.price}>{fmtPrice(tok.price)}</Flash>
+              </td>
               <td className="px-3 py-2 text-right">
-                <PctBadge value={tok.priceChange1h} />
+                <Flash value={tok.price_change_1h}>
+                  <PctBadge value={tok.price_change_1h} />
+                </Flash>
               </td>
               <td className="px-3 py-2 text-right">
-                <PctBadge value={tok.priceChange24h} />
+                <Flash value={tok.price_change_24h}>
+                  <PctBadge value={tok.price_change_24h} />
+                </Flash>
               </td>
-              <td className="px-3 py-2 tabular text-right">{fmtCompact(tok.marketCap)}</td>
-              <td className="px-3 py-2 tabular text-right">{fmtCompact(tok.liquidity)}</td>
-              <td className="px-3 py-2 tabular text-right">{fmtCompact(tok.volume24h)}</td>
-              <td className="px-3 py-2 tabular text-right">{fmtInt(tok.holdersCount)}</td>
+              <td className="px-3 py-2 tabular text-right">
+                <Flash value={tok.market_cap}>{fmtCompact(tok.market_cap)}</Flash>
+              </td>
+              <td className="px-3 py-2 tabular text-right">
+                <Flash value={tok.liquidity}>{fmtCompact(tok.liquidity)}</Flash>
+              </td>
+              <td className="px-3 py-2 tabular text-right">
+                <Flash value={tok.volume_24h}>{fmtCompact(tok.volume_24h)}</Flash>
+              </td>
+              <td className="px-3 py-2 tabular text-right">
+                <Flash value={tok.holders_count}>{fmtInt(tok.holders_count)}</Flash>
+              </td>
               <td className="px-3 py-2">
-                <BondingBar pct={tok.bondingPercentage} bonded={tok.bonded} />
+                <BondingBar pct={tok.bonding_percentage} bonded={tok.bonded} />
               </td>
             </tr>
           ))}
@@ -209,35 +142,31 @@ function TokenRows({ tokens }: { tokens: DisplayToken[] }) {
   );
 }
 
-export function TokenTable({ initialData, chains }: { initialData: PulseResponse; chains: string[] }) {
-  const [tab, setTab] = useState<TabName>("trending");
+/**
+ * 榜单表。主数据源是 WS（subscribe 即 snapshot，之后增量合并，见 lib/ws.ts）；
+ * `initialTrending` 是 SSR 用 HTTP 拉的首屏兜底，snapshot 到达后即被替换。
+ * 榜单接口没有链过滤参数，chains 在客户端过滤。
+ */
+export function TokenTable({
+  initialTrending,
+  chains,
+}: {
+  initialTrending: TokenMarket[] | null;
+  chains: string[];
+}) {
+  const [tab, setTab] = useState<BoardName>("trending");
+  const { items, status } = useBoardStream(tab, initialTrending ?? undefined);
 
-  // Polling implementation (SWR + fallbackData + refreshInterval), swap-in point for a future
-  // WebSocket/SSE stream — same pattern as useTokenStream in lib/client.ts, but POST-based since
-  // /api/mobula/pulse takes the 4-view body as a POST, not a GET query string.
-  const { data, error, isLoading } = useSWR<PulseResponse>(
-    ["/api/mobula/pulse", chains.join(",")],
-    () => postFetcher(chains)("/api/mobula/pulse"),
-    {
-      fallbackData: initialData,
-      refreshInterval: 5000,
-      revalidateOnFocus: true,
-      dedupingInterval: 2000,
-    }
+  const rows = useMemo(
+    () => (chains.length > 0 ? items.filter((t) => chains.includes(t.chain)) : items),
+    [items, chains]
   );
-
-  const activeData = data ?? initialData;
-
-  const rows = useMemo(() => {
-    const list = activeData[tab]?.data ?? [];
-    return list.map((t, i) => deriveDisplayToken(t, i));
-  }, [activeData, tab]);
 
   return (
     <Card>
       <div className="flex items-center justify-between border-b border-border px-4 py-2">
         <div className="flex items-center gap-1">
-          {TABS.map((t) => (
+          {BOARDS.map((t) => (
             <button
               key={t}
               type="button"
@@ -246,14 +175,21 @@ export function TokenTable({ initialData, chains }: { initialData: PulseResponse
                 tab === t ? "bg-accent/15 text-foreground" : "text-muted hover:text-foreground"
               }`}
             >
-              {TAB_LABELS[t]}
+              {BOARD_LABELS[t]}
             </button>
           ))}
         </div>
-        {error && <span className="text-xs text-down">Live updates paused: {error.message}</span>}
+        <span
+          className={`flex items-center gap-1.5 text-xs ${status === "live" ? "text-up" : "text-muted"}`}
+        >
+          <span
+            className={`h-1.5 w-1.5 rounded-full ${status === "live" ? "bg-up" : "animate-pulse bg-muted"}`}
+          />
+          {status === "live" ? "Live" : "Connecting…"}
+        </span>
       </div>
 
-      {isLoading && !activeData[tab] ? <TableSkeleton /> : <TokenRows tokens={rows} />}
+      {status !== "live" && items.length === 0 ? <TableSkeleton /> : <TokenRows tokens={rows} />}
     </Card>
   );
 }

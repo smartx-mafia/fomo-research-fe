@@ -1,11 +1,8 @@
-import { fetchTokenDetails } from "@/lib/mobula";
-import { slugToChain } from "@/lib/format";
-import TokenHeader from "@/components/TokenHeader";
-import StatGrid from "@/components/StatGrid";
-import SecurityPanel from "@/components/SecurityPanel";
+import { fetchTokenMarket, MarketApiError } from "@/lib/market";
+import type { TokenMarket } from "@/lib/types";
+import TokenLive from "@/components/TokenLive";
 import DetailTabs from "@/components/DetailTabs";
 import PriceChart from "@/components/PriceChart";
-import type { TokenDetails } from "@/lib/types";
 
 export default async function TokenDetailPage({
   params,
@@ -13,25 +10,27 @@ export default async function TokenDetailPage({
   params: Promise<{ chain: string; address: string }>;
 }) {
   const { chain, address } = await params;
-  const chainId = slugToChain(chain);
 
-  let data: TokenDetails | undefined;
+  let market: TokenMarket | undefined;
   let errorMessage: string | undefined;
 
   try {
-    const res = await fetchTokenDetails(chainId, address);
-    data = res.data;
+    market = await fetchTokenMarket(chain, address);
   } catch (err) {
     errorMessage = err instanceof Error ? err.message : "Unknown error";
+    // 500304 = 行情管线暂无数据（榜外冷币首查稍慢），提示稍后刷新而不是"不存在"
+    if (err instanceof MarketApiError && err.code === 500304) {
+      errorMessage = "Market data is warming up for this token — refresh in a few seconds.";
+    }
   }
 
-  if (!data || !data.address) {
+  if (!market || !market.address) {
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center gap-2 text-center">
         <h1 className="text-lg font-semibold text-foreground">Token not found</h1>
         <p className="max-w-md text-sm text-muted">
           Could not load data for <span className="font-mono">{address}</span> on{" "}
-          <span className="font-mono">{chainId}</span>.
+          <span className="font-mono">{chain}</span>.
           {errorMessage && <span className="mt-1 block text-xs text-muted">{errorMessage}</span>}
         </p>
       </div>
@@ -40,20 +39,12 @@ export default async function TokenDetailPage({
 
   return (
     <div className="flex flex-col gap-4">
-      <TokenHeader initialData={data} chainId={chainId} address={address} />
+      {/* TokenLive 订阅 token:{chain}:{address}，头部与 Overview 实时刷新；chart 作为插槽夹在中间 */}
+      <TokenLive initial={market} chain={chain} address={address}>
+        <PriceChart chain={chain} address={address} createdAt={market.created_at} />
+      </TokenLive>
 
-      <PriceChart chainId={chainId} address={address} createdAt={data.createdAt} />
-
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        <div className="lg:col-span-2">
-          <StatGrid data={data} />
-        </div>
-        <div className="lg:col-span-1">
-          <SecurityPanel data={data} />
-        </div>
-      </div>
-
-      <DetailTabs chainId={chainId} address={address} />
+      <DetailTabs chain={chain} address={address} />
     </div>
   );
 }

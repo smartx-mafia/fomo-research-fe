@@ -47,3 +47,27 @@ body {
 .tabular {
   font-variant-numeric: tabular-nums;
 }
+
+/* 实时数值更新提示：涨闪绿、跌闪红，~1s 淡出（components/Flash.tsx） */
+@keyframes flash-up {
+  0% {
+    background-color: color-mix(in srgb, var(--up) 38%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+@keyframes flash-down {
+  0% {
+    background-color: color-mix(in srgb, var(--down) 38%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+.flash-up {
+  animation: flash-up 1s ease-out;
+}
+.flash-down {
+  animation: flash-down 1s ease-out;
+}

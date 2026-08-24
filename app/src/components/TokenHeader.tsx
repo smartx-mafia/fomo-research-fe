@@ -1,30 +1,24 @@
 "use client";
 
 import { useState } from "react";
-import { useTokenStream, mobulaUrl } from "@/lib/client";
+import type { TokenMarket } from "@/lib/types";
 import { fmtPrice, shortAddr, chainLabel } from "@/lib/format";
 import { PctBadge } from "@/components/ui";
-import type { TokenDetails } from "@/lib/types";
+import { Flash } from "@/components/Flash";
 
+/** 详情页头部。纯展示组件，实时数据由 TokenLive 通过 props 灌入 */
 export default function TokenHeader({
-  initialData,
-  chainId,
+  data,
+  chain,
   address,
+  live,
 }: {
-  initialData: TokenDetails;
-  chainId: string;
+  data: TokenMarket;
+  chain: string;
   address: string;
+  live?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
-  const url = mobulaUrl("token/details", { blockchain: chainId, address });
-  const { data: res } = useTokenStream<{ data: TokenDetails }>(url, {
-    intervalMs: 10000,
-    fallbackData: { data: initialData },
-  });
-  const data = res?.data ?? initialData;
-
-  const socials = data.socials ?? {};
-  const hasSocials = socials.twitter || socials.telegram || socials.website;
 
   function handleCopy() {
     navigator.clipboard.writeText(address).catch(() => {});
@@ -46,7 +40,7 @@ export default function TokenHeader({
             <span className="text-base font-semibold text-foreground">{data.name ?? data.symbol ?? "Unknown"}</span>
             {data.symbol && <span className="text-sm text-muted">{data.symbol}</span>}
             <span className="rounded border border-border bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-muted">
-              {chainLabel(chainId)}
+              {chainLabel(chain)}
             </span>
             {data.bonded !== undefined && (
               <span
@@ -57,6 +51,10 @@ export default function TokenHeader({
                 {data.bonded ? "Graduated" : "Bonding"}
               </span>
             )}
+            <span className={`flex items-center gap-1 text-[10px] ${live ? "text-up" : "text-muted"}`}>
+              <span className={`h-1.5 w-1.5 rounded-full ${live ? "bg-up" : "animate-pulse bg-muted"}`} />
+              {live ? "Live" : "Connecting"}
+            </span>
           </div>
           <div className="flex items-center gap-2 text-xs text-muted">
             <button
@@ -68,32 +66,34 @@ export default function TokenHeader({
               {shortAddr(address)}
             </button>
             {copied && <span className="text-accent">Copied</span>}
-            {hasSocials && (
-              <span className="flex items-center gap-2">
-                {socials.twitter && (
-                  <a href={socials.twitter} target="_blank" rel="noopener noreferrer" className="hover:text-foreground">
-                    Twitter
-                  </a>
-                )}
-                {socials.telegram && (
-                  <a href={socials.telegram} target="_blank" rel="noopener noreferrer" className="hover:text-foreground">
-                    Telegram
-                  </a>
-                )}
-                {socials.website && (
-                  <a href={socials.website} target="_blank" rel="noopener noreferrer" className="hover:text-foreground">
-                    Website
-                  </a>
-                )}
-              </span>
-            )}
           </div>
         </div>
       </div>
 
-      <div className="flex items-center gap-3">
-        <span className="tabular text-xl font-semibold text-foreground">{fmtPrice(data.priceUSD)}</span>
-        <PctBadge value={data.priceChange24hPercentage} />
+      <div className="flex items-center gap-4">
+        <span className="tabular text-xl font-semibold text-foreground">
+          <Flash value={data.price}>{fmtPrice(data.price)}</Flash>
+        </span>
+        <div className="flex items-center gap-3 text-xs">
+          <span className="flex flex-col items-end">
+            <span className="text-[10px] uppercase text-muted">5m</span>
+            <Flash value={data.price_change_5min}>
+              <PctBadge value={data.price_change_5min} />
+            </Flash>
+          </span>
+          <span className="flex flex-col items-end">
+            <span className="text-[10px] uppercase text-muted">1h</span>
+            <Flash value={data.price_change_1h}>
+              <PctBadge value={data.price_change_1h} />
+            </Flash>
+          </span>
+          <span className="flex flex-col items-end">
+            <span className="text-[10px] uppercase text-muted">24h</span>
+            <Flash value={data.price_change_24h}>
+              <PctBadge value={data.price_change_24h} />
+            </Flash>
+          </span>
+        </div>
       </div>
     </div>
   );

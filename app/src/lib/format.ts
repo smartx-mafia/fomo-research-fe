@@ -2,7 +2,7 @@
 
 export const DASH = "—";
 
-/** Mobula 部分端点返回字符串数字（holder-positions），统一转 number */
+/** WS 帧内 int64 字段是字符串（protobuf JSON），统一转 number；null/空串 → undefined */
 export function num(v: unknown): number | undefined {
   if (v === null || v === undefined || v === "") return undefined;
   const n = typeof v === "number" ? v : Number(v);
@@ -54,7 +54,7 @@ export function fmtInt(v: unknown): string {
   return Math.round(n).toLocaleString("en-US");
 }
 
-/** 百分比：+3.42% / -1.05%。已是百分数（Mobula 的 *Percentage / price_change_* 都是），不再乘 100 */
+/** 百分比：+3.42% / -1.05%。price_change_* / *_percentage 已是百分数，不再乘 100 */
 export function fmtPct(v: unknown, opts: { sign?: boolean; digits?: number } = {}): string {
   const n = num(v);
   if (n === undefined) return DASH;
@@ -116,28 +116,16 @@ export function shortAddr(a: unknown, head = 4, tail = 4): string {
   return `${a.slice(0, head)}…${a.slice(-tail)}`;
 }
 
-/** "evm:56" → "BNB"，用于链徽标 */
+/** "bsc" → "BNB"，用于链徽标。key 即服务端链标识，同时是 /token/[chain] 路径段 */
 export const CHAIN_LABEL: Record<string, string> = {
-  "solana:solana": "SOL",
-  "evm:1": "ETH",
-  "evm:56": "BNB",
-  "evm:8453": "BASE",
-  "evm:143": "MONAD",
-  "evm:1337": "HYPE",
-  "evm:4663": "RH",
+  bsc: "BNB",
+  solana: "SOL",
+  base: "BASE",
+  monad: "MONAD",
+  robinhood: "RH",
 };
 
 export function chainLabel(id: unknown): string {
-  if (typeof id !== "string") return DASH;
-  return CHAIN_LABEL[id] ?? id;
-}
-
-/** URL 路径用的链短名（/token/[chain]/[address]） */
-export function chainToSlug(id: unknown): string {
-  if (typeof id !== "string") return "unknown";
-  return id.replace(":", "_");
-}
-
-export function slugToChain(slug: string): string {
-  return slug.replace("_", ":");
+  if (typeof id !== "string" || !id) return DASH;
+  return CHAIN_LABEL[id] ?? id.toUpperCase();
 }

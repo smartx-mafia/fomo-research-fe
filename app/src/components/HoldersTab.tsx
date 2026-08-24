@@ -2,10 +2,10 @@
 
 import { useState } from "react";
 import useSWR from "swr";
-import { mobulaUrl, swrFetcher } from "@/lib/client";
+import { fetchHolders } from "@/lib/market";
 import { Card, CardHeader, Skeleton, EmptyState, ErrorState } from "@/components/ui";
 import { fmtUsd, fmtPct, fmtInt, num, shortAddr } from "@/lib/format";
-import type { HolderPosition } from "@/lib/types";
+import { HOLDER_LABELS, type HolderItem } from "@/lib/types";
 
 const LIMIT = 20;
 
@@ -25,26 +25,39 @@ function HoldersTableSkeleton() {
   );
 }
 
-/**
- * 持仓列表。手动分页（Prev/Next），非自动刷新场景，直接用 useSWR，
- * 后续接 WS/SSE 时按需要换成 useTokenStream。
- */
-export default function HoldersTab({ chainId, address }: { chainId: string; address: string }) {
+/** 持仓列表。手动分页（Prev/Next）+ 服务端 label 过滤 */
+export default function HoldersTab({ chain, address }: { chain: string; address: string }) {
   const [offset, setOffset] = useState(0);
-  const url = mobulaUrl("token/holder-positions", {
-    blockchain: chainId,
-    address,
-    limit: String(LIMIT),
-    offset: String(offset),
-  });
-  const { data: res, error, isLoading } = useSWR<{ data: HolderPosition[] }>(url, swrFetcher);
-  const holders = res?.data ?? [];
+  const [label, setLabel] = useState("");
+
+  const { data: holdersData, error, isLoading } = useSWR<HolderItem[]>(
+    ["holders", chain, address, offset, label],
+    () => fetchHolders(chain, address, { limit: LIMIT, offset, label: label || undefined })
+  );
+  const holders = holdersData ?? [];
   const hasNext = holders.length >= LIMIT;
 
   return (
     <Card>
-      <CardHeader>Holders</CardHeader>
-      {isLoading && !res ? (
+      <div className="flex items-center justify-between border-b border-border px-4 py-2">
+        <span className="text-sm font-medium text-muted">Holders</span>
+        <select
+          value={label}
+          onChange={(e) => {
+            setLabel(e.target.value);
+            setOffset(0);
+          }}
+          className="rounded border border-border bg-surface-2 px-2 py-1 text-xs text-foreground"
+        >
+          <option value="">All labels</option>
+          {HOLDER_LABELS.map((l) => (
+            <option key={l} value={l}>
+              {l}
+            </option>
+          ))}
+        </select>
+      </div>
+      {isLoading && !holdersData ? (
         <HoldersTableSkeleton />
       ) : error ? (
         <ErrorState message={error instanceof Error ? error.message : String(error)} />
@@ -68,21 +81,21 @@ export default function HoldersTab({ chainId, address }: { chainId: string; addr
               </thead>
               <tbody>
                 {holders.map((h, i) => (
-                  <tr key={h.walletAddress ?? i} className="border-t border-border">
+                  <tr key={h.wallet_address ?? i} className="border-t border-border">
                     <td className="tabular px-3 py-2 text-muted">{offset + i + 1}</td>
-                    <td className="px-3 py-2 font-mono text-foreground" title={h.walletAddress}>
-                      {shortAddr(h.walletAddress)}
+                    <td className="px-3 py-2 font-mono text-foreground" title={h.wallet_address}>
+                      {shortAddr(h.wallet_address)}
                     </td>
                     <td className="tabular px-3 py-2 text-right text-foreground">
-                      {fmtUsd(h.tokenAmountUSD)}{" "}
-                      <span className="text-muted">({fmtPct(h.percentageOfTotalSupply, { sign: false })})</span>
+                      {fmtUsd(h.token_amount_usd)}{" "}
+                      <span className="text-muted">({fmtPct(h.percentage_of_total_supply, { sign: false })})</span>
                     </td>
-                    <td className="tabular px-3 py-2 text-right text-muted">{fmtUsd(h.avgBuyPriceUSD)}</td>
-                    <td className={`tabular px-3 py-2 text-right ${pnlColor(h.realizedPnlUSD)}`}>
-                      {fmtUsd(h.realizedPnlUSD)}
+                    <td className="tabular px-3 py-2 text-right text-muted">{fmtUsd(h.avg_buy_price_usd)}</td>
+                    <td className={`tabular px-3 py-2 text-right ${pnlColor(h.realized_pnl_usd)}`}>
+                      {fmtUsd(h.realized_pnl_usd)}
                     </td>
-                    <td className={`tabular px-3 py-2 text-right ${pnlColor(h.unrealizedPnlUSD)}`}>
-                      {fmtUsd(h.unrealizedPnlUSD)}
+                    <td className={`tabular px-3 py-2 text-right ${pnlColor(h.unrealized_pnl_usd)}`}>
+                      {fmtUsd(h.unrealized_pnl_usd)}
                     </td>
                     <td className="tabular px-3 py-2 text-right text-muted">
                       <span className="text-up">{fmtInt(h.buys)}</span>

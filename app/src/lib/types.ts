@@ -1,240 +1,132 @@
 /**
- * Mobula API 类型定义。
+ * SmartX 行情 API 类型定义（smartx-backend docs/api/market.md）。
  *
- * 重要：Mobula 三个端点用了三套命名约定，不要混用。
- *   - /api/2/pulse                  → snake_case  (price_change_24h, volume_24h, market_cap)
- *   - /api/2/token/details          → camelCase   (priceChange24hPercentage, volume24hUSD, marketCapUSD)
- *   - /api/2/token/holder-positions → camelCase，但数值全是 string
+ * 命名约定：HTTP 回包与 WS 帧的 data 字段名完全一致（snake_case），
+ * 唯一差异是 WS 按 protobuf JSON 编码，int64 字段是字符串
+ * （"updated_at":"1787…"、"trades_24h":"1234"）。所以所有数值字段
+ * 进入渲染层前都过一遍 market.ts 的 normalize*()，统一成 number。
  *
- * 所有字段一律 optional：pulse 不在官方 OpenAPI 里，字段随时可能变，缺字段不能让页面崩。
+ * 所有非主键字段一律 optional：缺字段不能让页面崩。
  */
 
-export type ChainId = string; // "solana:solana" | "evm:56" | "evm:8453" ...
+/** 链标识（服务端词汇表，同时也是 /token/[chain]/[address] 的路径段） */
+export const CHAINS = ["bsc", "solana", "base", "monad", "robinhood"] as const;
+export type Chain = (typeof CHAINS)[number];
 
-export interface Exchange {
-  name?: string;
-  logo?: string;
-}
-
-export interface Socials {
-  twitter?: string;
-  telegram?: string;
-  website?: string;
-  uri?: string;
-  [k: string]: string | undefined;
-}
-
-export interface Security {
-  buyTax?: number;
-  sellTax?: number;
-  isHoneypot?: boolean;
-  isMintable?: boolean;
-  isBlacklisted?: boolean;
-  isNotOpenSource?: boolean;
-  renounced?: boolean;
-  locked?: boolean;
-  burnRate?: number;
-  liquidityBurnPercentage?: number;
-  noMintAuthority?: boolean;
-  isProxy?: boolean;
-  lowLiquidity?: boolean;
-  [k: string]: unknown;
-}
-
-/** /api/2/pulse 列表项（snake_case 计量字段） */
-export interface PulseToken {
-  address?: string;
-  chainId?: ChainId;
-  symbol?: string;
-  name?: string;
-  decimals?: number;
-  logo?: string;
-  price?: number;
-  marketCap?: number;
-  marketCapDiluted?: number;
-  liquidity?: number;
-  totalSupply?: number;
-  circulatingSupply?: number;
-  holdersCount?: number;
-  createdAt?: string;
-  bonded?: boolean;
-  bondingPercentage?: number;
-  poolAddress?: string;
-  deployer?: string;
-  blockchain?: string;
-  exchange?: Exchange;
-  source?: string;
-  socials?: Socials;
-  security?: Security;
-  securityScore?: number;
-  is_spam?: boolean;
-  description?: string;
-
-  // snake_case 计量字段
-  price_change_5min?: number;
-  price_change_1h?: number;
-  price_change_6h?: number;
-  price_change_24h?: number;
-  volume_5min?: number;
-  volume_1h?: number;
-  volume_6h?: number;
-  volume_24h?: number;
-  trades_1h?: number;
-  trades_24h?: number;
-  buys_24h?: number;
-  sells_24h?: number;
-  buyers_24h?: number;
-  sellers_24h?: number;
-  fees_paid_5min?: number;
-  fees_paid_1h?: number;
-  trendingScore1h?: number;
-  trendingScore24h?: number;
-  market_cap?: number;
-  created_at?: string;
-
-  // 风控
-  top10Holdings?: number;
-  devHoldings?: number;
-  snipersHoldings?: number;
-  insidersHoldings?: number;
-
-  [k: string]: unknown;
-}
-
-/** POST /api/2/pulse 响应：按 view 名分组 */
-export type PulseResponse = Record<string, { data?: PulseToken[] } | undefined>;
-
-/** /api/2/token/details（camelCase） */
-export interface TokenDetails {
-  address?: string;
-  chainId?: ChainId;
-  symbol?: string;
-  name?: string;
-  decimals?: number;
-  logo?: string;
-  priceUSD?: number;
-  marketCapUSD?: number;
-  marketCapDilutedUSD?: number;
-  liquidityUSD?: number;
-  liquidityMaxUSD?: number;
-  totalSupply?: number;
-  circulatingSupply?: number;
-  holdersCount?: number;
-  createdAt?: string;
-  bonded?: boolean;
-  bondedAt?: string;
-  bondingPercentage?: number;
-  poolAddress?: string;
-  deployer?: string;
-  blockchain?: string;
-  exchange?: Exchange;
-  source?: string;
-  socials?: Socials;
-  security?: Security;
-  securityScore?: number;
-  description?: string;
-  athUSD?: number;
-  atlUSD?: number;
-  athDate?: string;
-  atlDate?: string;
-
-  // 涨跌幅
-  priceChange5minPercentage?: number;
-  priceChange1hPercentage?: number;
-  priceChange6hPercentage?: number;
-  priceChange24hPercentage?: number;
-
-  // 交易量
-  volume5minUSD?: number;
-  volume1hUSD?: number;
-  volume6hUSD?: number;
-  volume24hUSD?: number;
-  volumeBuy24hUSD?: number;
-  volumeSell24hUSD?: number;
-
-  // 笔数 / 人数
-  trades24h?: number;
-  buys24h?: number;
-  sells24h?: number;
-  buyers24h?: number;
-  sellers24h?: number;
-  traders24h?: number;
-
-  // 持仓分布
-  top10HoldingsPercentage?: number;
-  top50HoldingsPercentage?: number;
-  top100HoldingsPercentage?: number;
-  devHoldingsPercentage?: number;
-  insidersHoldingsPercentage?: number;
-  bundlersHoldingsPercentage?: number;
-  snipersHoldingsPercentage?: number;
-  proTradersHoldingsPercentage?: number;
-  smartTradersHoldingsPercentage?: number;
-
-  totalFeesPaidUSD?: number;
-  [k: string]: unknown;
-}
-
-/** /api/2/token/trades */
-export interface Trade {
-  id?: string;
-  type?: "buy" | "sell" | string;
-  operation?: string;
-  date?: number; // ms
-  baseTokenAmount?: number;
-  baseTokenAmountUSD?: number;
-  quoteTokenAmount?: number;
-  baseTokenPriceUSD?: number;
-  transactionHash?: string;
-  swapSenderAddress?: string;
-  swapRecipient?: string;
-  transactionSenderAddress?: string;
-  marketAddress?: string;
-  blockchain?: string;
-  labels?: string[];
-  platform?: { id?: string; name?: string; logo?: string };
-  baseToken?: { name?: string; symbol?: string; logo?: string };
-  quoteToken?: { name?: string; symbol?: string; logo?: string };
-  totalFeesUSD?: number;
-  [k: string]: unknown;
-}
+export const BOARDS = ["trending", "new", "bonding", "bonded"] as const;
+export type BoardName = (typeof BOARDS)[number];
 
 /**
- * /api/2/token/holder-positions
- * 注意：数值字段是 string，渲染前一律用 format.ts 的 num() 转换。
+ * TokenMarket：榜单条目 / 单币行情 / WS 推送共用同一形状（§2.2）。
+ * 经 normalizeTokenMarket() 之后数值字段保证是 number。
  */
-export interface HolderPosition {
-  chainId?: ChainId;
-  walletAddress?: string;
-  tokenAddress?: string;
-  tokenAmount?: string | number;
-  tokenAmountUSD?: string | number;
-  percentageOfTotalSupply?: string | number;
-  realizedPnlUSD?: string | number;
-  unrealizedPnlUSD?: string | number;
-  totalPnlUSD?: string | number;
-  avgBuyPriceUSD?: string | number;
-  avgSellPriceUSD?: string | number;
-  volumeBuyUSD?: string | number;
-  volumeSellUSD?: string | number;
-  buys?: number;
-  sells?: number;
-  firstTradeAt?: string | number;
-  lastTradeAt?: string | number;
-  labels?: string[];
-  platform?: string | { name?: string };
-  walletMetadata?: { entityName?: string; [k: string]: unknown };
-  [k: string]: unknown;
+export interface TokenMarket {
+  chain: string;
+  address: string;
+  symbol?: string;
+  name?: string;
+  logo?: string;
+  price?: number;
+  market_cap?: number;
+  market_cap_diluted?: number;
+  liquidity?: number;
+  volume_1h?: number;
+  volume_24h?: number;
+  /** 百分比数值（已乘 100，直接 toFixed 展示） */
+  price_change_5min?: number;
+  price_change_1h?: number;
+  price_change_24h?: number;
+  trades_1h?: number;
+  trades_24h?: number;
+  buyers_24h?: number;
+  holders_count?: number;
+  bonded?: boolean;
+  bonding_percentage?: number; // 0–100
+  security_score?: number;
+  /** 上游格式原样透传，仅展示用 */
+  created_at?: string;
+  /** unix 毫秒，服务端盖章——判断数据新鲜度用它 */
+  updated_at?: number;
 }
 
-/** /api/2/token/ohlcv-history */
+/** /v1/boards/{board} 回包 data（§2.1），WS snapshot 帧的 data 同形 */
+export interface BoardData {
+  /** 榜单版本号，单调递增，与 WS 帧的 seq 同一体系 */
+  seq?: number;
+  /** unix 毫秒 */
+  updated_at?: number;
+  items: TokenMarket[];
+}
+
+/** /v1/tokens/{chain}/{address}/ohlcv 的 data.bars[]，t 是 unix 毫秒 */
 export interface OhlcvBar {
   o: number;
   h: number;
   l: number;
   c: number;
   v: number;
-  t: number; // ms
+  t: number;
 }
 
 export type OhlcvPeriod = "1m" | "5m" | "15m" | "1h" | "4h" | "1d";
+
+/**
+ * /v1/tokens/{chain}/{address}/trades 的 data.items[]（§2.3）。
+ * base_token_amount / quote_token_amount 是链上最小单位的精确字符串，
+ * 不要 parseFloat 后存储——展示转换可以，比较/累计用 BigInt。
+ */
+export interface TradeItem {
+  type?: "buy" | "sell" | "deposit" | "withdrawal" | string;
+  /** unix 毫秒 */
+  date?: number;
+  base_token_amount?: string;
+  base_token_amount_usd?: number;
+  quote_token_amount?: string;
+  price_usd?: number;
+  tx_hash?: string;
+  sender?: string;
+  labels?: string[];
+  platform_name?: string;
+}
+
+/** /v1/tokens/{chain}/{address}/holders 的 data.items[]（§2.3）。token_amount 同上是精确字符串 */
+export interface HolderItem {
+  wallet_address?: string;
+  token_amount?: string;
+  token_amount_usd?: number;
+  percentage_of_total_supply?: number;
+  realized_pnl_usd?: number;
+  unrealized_pnl_usd?: number;
+  total_pnl_usd?: number;
+  avg_buy_price_usd?: number;
+  buys?: number;
+  sells?: number;
+  labels?: string[];
+  platform_name?: string;
+}
+
+/** holders 接口的 label 过滤白名单 */
+export const HOLDER_LABELS = [
+  "sniper",
+  "insider",
+  "bundler",
+  "proTrader",
+  "smartTrader",
+  "freshTrader",
+  "dev",
+  "liquidityPool",
+  "locker",
+] as const;
+
+// ---- WebSocket 帧（§3.2） ----
+
+/** 服务端 → 客户端。op 帧与 topic 帧共用一个宽松形状，收帧后按字段判别 */
+export interface WsFrame {
+  op?: "pong" | "error";
+  topic?: string;
+  kind?: "snapshot" | "update" | "remove" | "error";
+  /** 帧外层 seq 恒为数字；token topic 恒 0 */
+  seq?: number;
+  reason?: string;
+  data?: unknown;
+}

@@ -15,7 +15,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "FOMO Terminal (PoC)",
-  description: "Mobula-powered token discovery — Next.js SSR proof of concept",
+  description: "SmartX market data token discovery — Next.js SSR proof of concept",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
@@ -37,13 +37,13 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               </Link>
             </nav>
             <div className="ml-auto text-xs text-muted">
-              Powered by <span className="text-foreground/70">Mobula</span> · demo feed
+              Powered by <span className="text-foreground/70">SmartX</span> · live WS feed
             </div>
           </div>
         </header>
         <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-4">{children}</main>
         <footer className="border-t border-border px-4 py-3 text-center text-xs text-muted">
-          Proof of concept — not financial advice. Data via Mobula demo API (rate-limited).
+          Proof of concept — not financial advice. Data via SmartX market API (test environment).
         </footer>
       </body>
     </html>
