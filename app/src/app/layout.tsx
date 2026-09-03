@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Link from "next/link";
+import { PrivyProviders } from "@/components/PrivyProviders";
+import { FavoritesProvider } from "@/components/FavoritesProvider";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -35,13 +37,20 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               <Link href="/" className="hover:text-foreground">
                 Discover
               </Link>
+              <Link href="/login" className="hover:text-foreground">
+                Login
+              </Link>
             </nav>
             <div className="ml-auto text-xs text-muted">
               Powered by <span className="text-foreground/70">SmartX</span> · live WS feed
             </div>
           </div>
         </header>
-        <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-4">{children}</main>
+        <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-4">
+          <PrivyProviders>
+            <FavoritesProvider>{children}</FavoritesProvider>
+          </PrivyProviders>
+        </main>
         <footer className="border-t border-border px-4 py-3 text-center text-xs text-muted">
           Proof of concept — not financial advice. Data via SmartX market API (test environment).
         </footer>
