@@ -12,7 +12,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { normalizeTokenMarket, WS_URL } from "./market";
+import { normalizeTokenMarket, getWsUrl } from "./market";
 import { num } from "./format";
 import type { BoardName, TokenMarket, WsFrame } from "./types";
 
@@ -35,7 +35,7 @@ class MarketSocket {
   private connect() {
     if (this.ws && this.ws.readyState !== WebSocket.CLOSED) return;
     this.setState("connecting");
-    const ws = new WebSocket(WS_URL);
+    const ws = new WebSocket(getWsUrl());
     this.ws = ws;
 
     ws.onopen = () => {
@@ -138,6 +138,9 @@ export type StreamStatus = "connecting" | "live";
 /**
  * 订阅一个榜单 topic，维护 snapshot + update/remove 合并后的列表。
  * `initial` 是 SSR 首屏兜底数据，只在首次挂载时生效，snapshot 到达即被替换。
+ *
+ * 2026-09 起榜单只有四个跨链聚合 topic（board:{trending|bonding|graduated|crypto}），
+ * 链变体 topic（board:{board}:{chain}）已被网关删除，订阅会收到 op=error 帧。
  */
 export function useBoardStream(board: BoardName, initial?: TokenMarket[]) {
   const [items, setItems] = useState<TokenMarket[]>(initial ?? []);
@@ -147,6 +150,9 @@ export function useBoardStream(board: BoardName, initial?: TokenMarket[]) {
   useEffect(() => {
     const topic = `board:${board}`;
     const sock = getMarketSocket();
+    // StrictMode 下 effect 会跑两遍，initial 只能消费一次：
+    // 用 prop 快照而非可变 ref，第二遍仍能拿到 SSR 兜底数据
+    const initialItems = initial;
 
     // 列表本体放在闭包里，setItems 只发副本，避免并发帧覆盖彼此的 state 更新
     let list: TokenMarket[] = [];
@@ -157,6 +163,8 @@ export function useBoardStream(board: BoardName, initial?: TokenMarket[]) {
     if (initialRef.current) {
       list = [...initialRef.current];
       initialRef.current = undefined;
+    } else if (initialItems) {
+      list = [...initialItems];
     }
     setItems([...list]);
     setStatus("connecting");
@@ -169,6 +177,13 @@ export function useBoardStream(board: BoardName, initial?: TokenMarket[]) {
     };
 
     const onFrame = (f: WsFrame) => {
+      // op=error = 订阅参数错（如退役 topic），重订一万次也不会对，绝不自动重订。
+      // 只有 kind:"error"（stream reset）才走下面 reset() 的重订路径。
+      if (f.op === "error") {
+        console.warn(`[market-ws] subscribe rejected (${topic}):`, f.reason);
+        return;
+      }
+
       if (f.kind === "snapshot") {
         const data = f.data as { seq?: unknown; items?: unknown[] } | undefined;
         list = (data?.items ?? []).map(normalizeTokenMarket);
@@ -192,13 +207,20 @@ export function useBoardStream(board: BoardName, initial?: TokenMarket[]) {
         if (seq !== undefined) lastSeq = Math.max(lastSeq ?? seq, seq);
 
         if (f.kind === "update") {
-          const tok = normalizeTokenMarket(f.data);
-          const i = list.findIndex((t) => t.chain === tok.chain && t.address === tok.address);
-          if (i >= 0) list[i] = tok;
-          else list.push(tok);
+          // 协议 v2：update 的 data 是合批后的 TokenMarket 数组（窗口内同币只发最后一次状态）
+          const batch = Array.isArray(f.data) ? f.data : [f.data];
+          for (const raw of batch) {
+            const tok = normalizeTokenMarket(raw);
+            const i = list.findIndex((t) => t.chain === tok.chain && t.address === tok.address);
+            if (i >= 0) list[i] = tok;
+            else list.push(tok);
+          }
         } else {
-          const d = (f.data ?? {}) as { chain?: string; address?: string };
-          list = list.filter((t) => !(t.chain === d.chain && t.address === d.address));
+          // remove 同样是数组：漏处理会残留已出榜的币（周期快照 10s 内会冲正，但用户看得见）
+          const batch = Array.isArray(f.data) ? f.data : [f.data];
+          for (const d of batch as { chain?: string; address?: string }[]) {
+            list = list.filter((t) => !(t.chain === d?.chain && t.address === d?.address));
+          }
         }
         setItems([...list]);
         return;
@@ -238,7 +260,9 @@ export function useTokenLive(chain: string, address: string, initial?: TokenMark
 
     const onFrame = (f: WsFrame) => {
       if (f.kind === "update") {
-        setData(normalizeTokenMarket(f.data));
+        // token topic 的 update 数组通常只有一条，是最新全量态；取最后一条覆盖即可
+        const raw = Array.isArray(f.data) ? f.data[f.data.length - 1] : f.data;
+        setData(normalizeTokenMarket(raw));
         setLive(true);
       } else if (f.kind === "error") {
         setLive(false);

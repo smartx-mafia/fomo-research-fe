@@ -9,11 +9,18 @@
  * 所有非主键字段一律 optional：缺字段不能让页面崩。
  */
 
-/** 链标识（服务端词汇表，同时也是 /token/[chain]/[address] 的路径段） */
-export const CHAINS = ["bsc", "solana", "base", "monad", "robinhood"] as const;
+/**
+ * 链标识（服务端词汇表，同时也是 /token/[chain]/[address] 的路径段）。
+ * 2026-09 换源后 monad 已从合法链集合移除（错误码 100305）。
+ */
+export const CHAINS = ["bsc", "solana", "base", "robinhood", "ethereum"] as const;
 export type Chain = (typeof CHAINS)[number];
 
-export const BOARDS = ["trending", "new", "bonding", "bonded"] as const;
+/**
+ * 榜单集合（2026-09 起）：四榜，全部是跨链聚合榜，没有链变体。
+ * new / bonded 已退役（board=bonded 会回 100303，不要用）；graduated = 近 7 天毕业。
+ */
+export const BOARDS = ["trending", "bonding", "graduated", "crypto"] as const;
 export type BoardName = (typeof BOARDS)[number];
 
 /**
@@ -42,8 +49,9 @@ export interface TokenMarket {
   holders_count?: number;
   bonded?: boolean;
   bonding_percentage?: number; // 0–100
+  /** 新上游无此数据源，恒为 0——是"没有数据"，不是"安全分为 0"，UI 不要展示 */
   security_score?: number;
-  /** 上游格式原样透传，仅展示用 */
+  /** 上游格式原样透传（秒/毫秒/ISO 均有可能），仅展示用，必须有解析兜底 */
   created_at?: string;
   /** unix 毫秒，服务端盖章——判断数据新鲜度用它 */
   updated_at?: number;
@@ -81,11 +89,13 @@ export interface TradeItem {
   date?: number;
   base_token_amount?: string;
   base_token_amount_usd?: number;
+  /** 2026-09 起恒为空串（无数据源），展示层显示 "—" */
   quote_token_amount?: string;
   price_usd?: number;
   tx_hash?: string;
   sender?: string;
   labels?: string[];
+  /** 2026-09 起恒为空串（无数据源），展示层显示 "—"，不要渲染成 0 或空白 */
   platform_name?: string;
 }
 
@@ -102,21 +112,46 @@ export interface HolderItem {
   buys?: number;
   sells?: number;
   labels?: string[];
+  /** 2026-09 起恒为空串（无数据源），展示层显示 "—" */
   platform_name?: string;
 }
 
-/** holders 接口的 label 过滤白名单 */
-export const HOLDER_LABELS = [
-  "sniper",
-  "insider",
-  "bundler",
-  "proTrader",
-  "smartTrader",
-  "freshTrader",
-  "dev",
-  "liquidityPool",
-  "locker",
-] as const;
+/**
+ * 全站搜索（GET /v1/search）的结果条目：身份 + 可选行情。
+ * market 缺席是诚实的答案（暂无该币行情/穿透配额打满），不要渲染成价格 0。
+ * 注意：搜索路径的 market 只给 7 字段子集（logo/price/market_cap/liquidity/
+ * volume_24h/price_change_24h/updated_at），别读其它行情字段。
+ */
+export interface SearchItem {
+  chain: string;
+  address: string;
+  symbol?: string;
+  name?: string;
+  market?: TokenMarket;
+}
+
+/** 搜索范围（scope 参数）：Token 与 People 两态，前端统一用字面名 */
+export type SearchScope = "SEARCH_SCOPE_TOKEN" | "SEARCH_SCOPE_PEOPLE";
+
+/** /v1/search scope=PEOPLE 的 people[] 条目（§2.2） */
+export interface SearchPerson {
+  identifier: string;
+  /** handle，未设置缺席 */
+  username?: string;
+  /** 昵称原值，未设置缺席——不得用 identifier 伪造，空则回退 username/identifier 缩写 */
+  nickname?: string;
+  avatar_url?: string;
+  /** 1=UNKNOWN(匿名) 2=未关注 3=已关注 4=本人；永不为 0 */
+  follow_state?: 1 | 2 | 3 | 4;
+}
+
+/** /v1/search 回包 data：tokens/people 按scope二选一出现，零值键整个缺席 */
+export interface SearchData {
+  tokens?: SearchItem[];
+  people?: SearchPerson[];
+  /** 只有 PEOPLE 给；缺席 = 到底了。与 phrase 绑定，换词必须丢弃 */
+  next_cursor?: string;
+}
 
 // ---- WebSocket 帧（§3.2） ----
 

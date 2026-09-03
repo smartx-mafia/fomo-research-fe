@@ -121,8 +121,8 @@ export const CHAIN_LABEL: Record<string, string> = {
   bsc: "BNB",
   solana: "SOL",
   base: "BASE",
-  monad: "MONAD",
   robinhood: "RH",
+  ethereum: "ETH",
 };
 
 export function chainLabel(id: unknown): string {

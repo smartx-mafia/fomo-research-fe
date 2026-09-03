@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { BoardName, TokenMarket } from "@/lib/types";
 import { BOARDS } from "@/lib/types";
@@ -8,12 +8,16 @@ import { useBoardStream } from "@/lib/ws";
 import { fmtPrice, fmtCompact, fmtInt, fmtAge } from "@/lib/format";
 import { Card, ChainBadge, PctBadge, Skeleton, EmptyState } from "@/components/ui";
 import { Flash } from "@/components/Flash";
+import { StarButton, useFavorites } from "@/components/FavoritesProvider";
+import { useSession } from "@/session/storage";
+import WatchlistPanel from "@/components/WatchlistPanel";
 
+/** 2026-09 起四榜：new/bonded 已退役，graduated = 近 7 天毕业（最新毕业在前） */
 const BOARD_LABELS: Record<BoardName, string> = {
   trending: "Trending",
-  new: "New",
   bonding: "Bonding",
-  bonded: "Bonded",
+  graduated: "Graduated",
+  crypto: "Crypto",
 };
 
 function TokenLogo({ logo, symbol }: { logo?: string; symbol: string }) {
@@ -66,6 +70,14 @@ function TableSkeleton() {
 }
 
 function TokenRows({ tokens }: { tokens: TokenMarket[] }) {
+  // 榜单/搜索回包没有收藏字段：登录时批量查一次星标（favorites.md §4）
+  const {ensureStatus} = useFavorites();
+  const session = useSession();
+  useEffect(() => {
+    if (!session) return;
+    ensureStatus(tokens.map((t) => ({chain: t.chain, address: t.address})));
+  }, [session, tokens, ensureStatus]);
+
   if (tokens.length === 0) {
     return <EmptyState>No tokens match this view right now.</EmptyState>;
   }
@@ -74,6 +86,7 @@ function TokenRows({ tokens }: { tokens: TokenMarket[] }) {
       <table className="w-full min-w-[960px] border-collapse text-sm">
         <thead>
           <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-muted">
+            <th className="w-8 px-2 py-2" />
             <th className="px-3 py-2 font-medium">Token</th>
             <th className="px-3 py-2 font-medium">Chain</th>
             <th className="px-3 py-2 font-medium">Age</th>
@@ -93,6 +106,9 @@ function TokenRows({ tokens }: { tokens: TokenMarket[] }) {
               key={`${tok.chain}:${tok.address}`}
               className="border-b border-border/60 last:border-0 hover:bg-surface-2/60"
             >
+              <td className="w-8 px-2 py-2">
+                <StarButton chain={tok.chain} address={tok.address} />
+              </td>
               <td className="px-3 py-2">
                 <Link href={`/token/${tok.chain}/${tok.address}`} className="flex items-center gap-2">
                   <TokenLogo logo={tok.logo} symbol={tok.symbol ?? "?"} />
@@ -145,28 +161,23 @@ function TokenRows({ tokens }: { tokens: TokenMarket[] }) {
 /**
  * 榜单表。主数据源是 WS（subscribe 即 snapshot，之后增量合并，见 lib/ws.ts）；
  * `initialTrending` 是 SSR 用 HTTP 拉的首屏兜底，snapshot 到达后即被替换。
- * 榜单接口没有链过滤参数，chains 在客户端过滤。
+ *
+ * 四榜均为跨链聚合榜（2026-09 起），不做任何链筛选与客户端过滤——
+ * 每榜只有 ≤20 条（crypto 60），本地过滤会让榜单看起来莫名残缺。
  */
-export function TokenTable({
-  initialTrending,
-  chains,
-}: {
-  initialTrending: TokenMarket[] | null;
-  chains: string[];
-}) {
-  const [tab, setTab] = useState<BoardName>("trending");
-  const { items, status } = useBoardStream(tab, initialTrending ?? undefined);
+type Tab = BoardName | "watchlist";
 
-  const rows = useMemo(
-    () => (chains.length > 0 ? items.filter((t) => chains.includes(t.chain)) : items),
-    [items, chains]
-  );
+export function TokenTable({ initialTrending }: { initialTrending: TokenMarket[] | null }) {
+  const [tab, setTab] = useState<Tab>("trending");
+  const isBoard = tab !== "watchlist";
+  const { items, status } = useBoardStream(isBoard ? tab : "trending", isBoard ? initialTrending ?? undefined : undefined);
+  const rows = items;
 
   return (
     <Card>
       <div className="flex items-center justify-between border-b border-border px-4 py-2">
         <div className="flex items-center gap-1">
-          {BOARDS.map((t) => (
+          {([...BOARDS, "watchlist"] as Tab[]).map((t) => (
             <button
               key={t}
               type="button"
@@ -175,21 +186,29 @@ export function TokenTable({
                 tab === t ? "bg-accent/15 text-foreground" : "text-muted hover:text-foreground"
               }`}
             >
-              {BOARD_LABELS[t]}
+              {t === "watchlist" ? "★ Watchlist" : BOARD_LABELS[t as BoardName]}
             </button>
           ))}
         </div>
-        <span
-          className={`flex items-center gap-1.5 text-xs ${status === "live" ? "text-up" : "text-muted"}`}
-        >
+        {isBoard && (
           <span
-            className={`h-1.5 w-1.5 rounded-full ${status === "live" ? "bg-up" : "animate-pulse bg-muted"}`}
-          />
-          {status === "live" ? "Live" : "Connecting…"}
-        </span>
+            className={`flex items-center gap-1.5 text-xs ${status === "live" ? "text-up" : "text-muted"}`}
+          >
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${status === "live" ? "bg-up" : "animate-pulse bg-muted"}`}
+            />
+            {status === "live" ? "Live" : "Connecting…"}
+          </span>
+        )}
       </div>
 
-      {status !== "live" && items.length === 0 ? <TableSkeleton /> : <TokenRows tokens={rows} />}
+      {tab === "watchlist" ? (
+        <WatchlistPanel />
+      ) : status !== "live" && items.length === 0 ? (
+        <TableSkeleton />
+      ) : (
+        <TokenRows tokens={rows} />
+      )}
     </Card>
   );
 }

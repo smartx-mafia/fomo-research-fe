@@ -5,6 +5,9 @@ import type { TokenMarket } from "@/lib/types";
 import { fmtPrice, shortAddr, chainLabel } from "@/lib/format";
 import { PctBadge } from "@/components/ui";
 import { Flash } from "@/components/Flash";
+import { StarButton, useFavorites } from "@/components/FavoritesProvider";
+import { useSession } from "@/session/storage";
+import { useEffect } from "react";
 
 /** 详情页头部。纯展示组件，实时数据由 TokenLive 通过 props 灌入 */
 export default function TokenHeader({
@@ -19,6 +22,12 @@ export default function TokenHeader({
   live?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
+  // 详情页行情端点没有 personal 字段：星标初始态用批量 status 端点查（favorites.md §4）
+  const {ensureStatus} = useFavorites();
+  const session = useSession();
+  useEffect(() => {
+    if (session) ensureStatus([{chain, address}]);
+  }, [session, chain, address, ensureStatus]);
 
   function handleCopy() {
     navigator.clipboard.writeText(address).catch(() => {});
@@ -51,6 +60,8 @@ export default function TokenHeader({
                 {data.bonded ? "Graduated" : "Bonding"}
               </span>
             )}
+            {/* 详情页行情端点不含 personal 字段，星标状态走批量 status 端点（favorites.md §4） */}
+            <StarButton chain={chain} address={address} size="md" />
             <span className={`flex items-center gap-1 text-[10px] ${live ? "text-up" : "text-muted"}`}>
               <span className={`h-1.5 w-1.5 rounded-full ${live ? "bg-up" : "animate-pulse bg-muted"}`} />
               {live ? "Live" : "Connecting"}

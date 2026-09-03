@@ -26,10 +26,7 @@ export default function StatGrid({ data }: { data: TokenMarket }) {
         <LiveCell label="Trades 1h" raw={data.trades_1h} text={fmtInt(data.trades_1h)} />
         <LiveCell label="Trades 24h" raw={data.trades_24h} text={fmtInt(data.trades_24h)} />
         <LiveCell label="Buyers 24h" raw={data.buyers_24h} text={fmtInt(data.buyers_24h)} />
-        <StatCell
-          label="Security Score"
-          value={data.security_score !== undefined ? fmtInt(data.security_score) : DASH}
-        />
+        {/* security_score 新上游恒为 0 = "无数据"，不是"0 分"，整个指标不上屏 */}
         <StatCell label="Created" value={data.created_at ? fmtAge(data.created_at) : DASH} sub="ago" />
         {showBonding && (
           <LiveCell

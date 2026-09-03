@@ -14,11 +14,16 @@ import type {
   HolderItem,
   OhlcvBar,
   OhlcvPeriod,
+  SearchData,
+  SearchItem,
+  SearchPerson,
+  SearchScope,
   TokenMarket,
   TradeItem,
 } from "./types";
 
 // 测试期地址会变，通过 env 覆盖，不要写死进业务代码
+// 临时联调：直连 13.52.177.63:8080（HTTP，非 https）
 const API_BASE = process.env.NEXT_PUBLIC_MARKET_API_BASE || "http://13.52.177.63:8080";
 
 /**
@@ -28,8 +33,21 @@ const API_BASE = process.env.NEXT_PUBLIC_MARKET_API_BASE || "http://13.52.177.63
  */
 const HTTP_BASE = typeof window === "undefined" ? API_BASE : "/market-api";
 
-export const WS_URL =
-  process.env.NEXT_PUBLIC_MARKET_WS_URL || `${API_BASE.replace(/^http/, "ws")}/ws`;
+/**
+ * WS 连接地址。优先 env 覆盖。
+ * 浏览器默认走同源 /market-api/ws（与 HTTP 面同一转发层）：
+ * 测试网关会拒绝所有带 Origin 头的直连 WS 握手（浏览器必带），403；
+ * 经 Next 转发则不带 Origin，可以正常握手。SSR 侧不存在 WS 连接，
+ * 这里只为类型完整给出直连地址。
+ */
+export function getWsUrl(): string {
+  if (process.env.NEXT_PUBLIC_MARKET_WS_URL) return process.env.NEXT_PUBLIC_MARKET_WS_URL;
+  if (typeof window !== "undefined") {
+    const proto = window.location.protocol === "https:" ? "wss" : "ws";
+    return `${proto}://${window.location.host}/market-api/ws`;
+  }
+  return `${API_BASE.replace(/^http/, "ws")}/ws`;
+}
 
 export class MarketApiError extends Error {
   constructor(
@@ -142,6 +160,18 @@ export function normalizeBoard(raw: unknown): BoardData {
   };
 }
 
+function normalizeSearchItem(raw: unknown): SearchItem {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  return {
+    chain: typeof r.chain === "string" ? r.chain : "",
+    address: typeof r.address === "string" ? r.address : "",
+    symbol: typeof r.symbol === "string" ? r.symbol : undefined,
+    name: typeof r.name === "string" ? r.name : undefined,
+    // market 缺席就保持 undefined——"暂无行情"是诚实答案，不要造一个价格 0
+    market: r.market ? normalizeTokenMarket(r.market) : undefined,
+  };
+}
+
 function normalizeTrade(raw: unknown): TradeItem {
   const r = (raw ?? {}) as Record<string, unknown>;
   return {
@@ -179,10 +209,75 @@ function normalizeHolder(raw: unknown): HolderItem {
 
 // ---- 端点封装 ----
 
-/** 榜单快照（每榜 ≤60 条，按名次有序）。榜单页主数据走 WS，这里只做 SSR 首屏兜底，超时给短 */
-export async function fetchBoard(board: BoardName, revalidate = 3): Promise<BoardData> {
-  const data = await marketFetch<unknown>(`/v1/boards/${board}`, {}, { revalidate, timeoutMs: 3000 });
+/**
+ * 榜单快照。四榜均为跨链聚合榜（2026-09 起），?chain= 参数已废弃，传了回 100303。
+ * 条数：trending/bonding/graduated ≤ 20，crypto ≤ 60。
+ * 榜单页主数据走 WS，这里只做 SSR 首屏兜底，超时给短。
+ */
+export async function fetchBoard(
+  board: BoardName,
+  opts: { revalidate?: number } = {}
+): Promise<BoardData> {
+  const data = await marketFetch<unknown>(`/v1/boards/${board}`, {}, {
+    revalidate: opts.revalidate ?? 3,
+    timeoutMs: 3000,
+  });
   return normalizeBoard(data);
+}
+
+/**
+ * 全站搜索（GET /v1/search，docs/contracts/search.md）。Token / People 两个范围
+ * 独立请求、独立分页、独立失败：
+ * - TOKEN：不翻页（带 cursor 回 100120）；market 是 7 字段子集，缺席 = "暂无行情"；
+ * - PEOPLE：next_cursor 不透明回传翻页，与 phrase 绑定（换词丢弃）；
+ * - 420000 = 限流/配额（退避、降频）；500097 = 上游不可用（按范围降级，另一边照常）；
+ * - 100103 = cursor 失效，丢弃重拉首页；
+ * - 空查询不要发请求（空态走本地 Recent/Viewed），发了会拿 100120。
+ */
+export async function fetchSearch(
+  scope: SearchScope,
+  phrase: string,
+  opts: { limit?: number; cursor?: string } = {}
+): Promise<SearchData> {
+  const { limit = 20, cursor } = opts;
+  let data: Record<string, unknown>;
+  try {
+    data = await marketFetch<Record<string, unknown>>(
+      `/v1/search`,
+      { scope, phrase, limit, cursor },
+      { revalidate: 0 }
+    );
+  } catch (e) {
+    // 过渡降级：测试服尚未部署 /v1/search（HTTP 404 = 路由不存在）。
+    // Token 半边与旧 /v1/tokens/search 同源同配额，可安全回退；People 半边没有旧口，报不可用。
+    if (e instanceof Error && e.message.includes("HTTP 404")) {
+      if (scope !== "SEARCH_SCOPE_TOKEN") {
+        throw new MarketApiError(500097, "search not deployed yet", "SYS_UPSTREAM_UNAVAILABLE");
+      }
+      const legacy = await marketFetch<{ results?: unknown[] }>(
+        `/v1/tokens/search`,
+        { phrase, limit },
+        { revalidate: 0 }
+      );
+      return { tokens: Array.isArray(legacy?.results) ? legacy.results.map(normalizeSearchItem) : undefined };
+    }
+    throw e;
+  }
+  return {
+    tokens: Array.isArray(data?.tokens) ? data.tokens.map(normalizeSearchItem) : undefined,
+    people: Array.isArray(data?.people)
+      ? (data.people as Record<string, unknown>[]).map((r) => ({
+          identifier: typeof r.identifier === "string" ? r.identifier : "",
+          username: typeof r.username === "string" && r.username ? r.username : undefined,
+          nickname: typeof r.nickname === "string" && r.nickname ? r.nickname : undefined,
+          avatar_url: typeof r.avatar_url === "string" && r.avatar_url ? r.avatar_url : undefined,
+          follow_state: (r.follow_state === 1 || r.follow_state === 2 || r.follow_state === 3 || r.follow_state === 4
+            ? r.follow_state
+            : undefined) as SearchPerson["follow_state"],
+        }))
+      : undefined,
+    next_cursor: typeof data?.next_cursor === "string" && data.next_cursor ? data.next_cursor : undefined,
+  };
 }
 
 /** 单币行情。榜外冷币也能查，首查稍慢（500304 = 管线暂无数据，稍后重试） */
@@ -214,25 +309,35 @@ export async function fetchTrades(
   address: string,
   opts: { limit?: number; offset?: number } = {}
 ): Promise<TradeItem[]> {
-  const { limit = 20, offset = 0 } = opts;
+  // 2026-09 起 limit 上限 200（超出服务端静默截断）；服务端缓存 30s，轮询间隔应 ≥ 30s
+  const { limit: rawLimit = 20, offset = 0 } = opts;
+  const limit = Math.min(200, Math.max(1, rawLimit));
   const data = await marketFetch<{ items?: unknown[] }>(
     `/v1/tokens/${chain}/${address}/trades`,
     { limit, offset },
-    { revalidate: 4 }
+    { revalidate: 30 }
   );
   return Array.isArray(data?.items) ? data.items.map(normalizeTrade) : [];
 }
 
+/**
+ * 持仓者列表（2026-09 口径）：
+ * - label 过滤已暂停（只接受空串，非空值回 100307）——调用方不要再传 label；
+ * - 500097 = 上游档位未开通，调用方必须走"功能暂不可用"分支，不要重试、不要渲染成空列表；
+ * - 服务端缓存 300s、上游 6 小时刷新一次——不要轮询；
+ * - 只含经 DEX 建仓的钱包，与 holders_count 本来就对不上，不要做一致性校验；
+ * - PnL / buys / sells 均为近 1 年窗口，不是全期。
+ */
 export async function fetchHolders(
   chain: string,
   address: string,
-  opts: { limit?: number; offset?: number; label?: string } = {}
+  opts: { limit?: number; offset?: number } = {}
 ): Promise<HolderItem[]> {
-  const { limit = 20, offset = 0, label } = opts;
+  const { limit = 20, offset = 0 } = opts;
   const data = await marketFetch<{ items?: unknown[] }>(
     `/v1/tokens/${chain}/${address}/holders`,
-    { limit, offset, label },
-    { revalidate: 8 }
+    { limit, offset },
+    { revalidate: 300 }
   );
   return Array.isArray(data?.items) ? data.items.map(normalizeHolder) : [];
 }

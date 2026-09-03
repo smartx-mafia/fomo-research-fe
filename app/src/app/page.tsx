@@ -1,16 +1,11 @@
 import { fetchBoard } from "@/lib/market";
-import { CHAINS, type TokenMarket } from "@/lib/types";
+import type { TokenMarket } from "@/lib/types";
 import { TokenTable } from "@/components/TokenTable";
-import { ChainFilter } from "@/components/ChainFilter";
+import { SearchBox } from "@/components/SearchBox";
 
-type SearchParams = Promise<{ chains?: string }>;
-
-export default async function Home({ searchParams }: { searchParams: SearchParams }) {
-  const sp = await searchParams;
-  const chains = sp.chains ? sp.chains.split(",").filter(Boolean) : [...CHAINS];
-
+export default async function Home() {
   // HTTP 榜单接口只做 SSR 首屏兜底（§5 推荐策略）；拉不到也不阻塞渲染，
-  // 客户端 WS subscribe 即有 snapshot。
+  // 客户端 WS subscribe 即有 snapshot。四榜均为跨链聚合榜，没有链参数。
   let initialTrending: TokenMarket[] | null = null;
   try {
     initialTrending = (await fetchBoard("trending")).items;
@@ -23,14 +18,14 @@ export default async function Home({ searchParams }: { searchParams: SearchParam
       <div>
         <h1 className="text-xl font-semibold tracking-tight text-foreground">Discover</h1>
         <p className="text-sm text-muted">
-          Live token boards — trending, new listings, bonding curves and graduated tokens, streamed in
-          real time over WebSocket.
+          Cross-chain token boards — trending, bonding curves, recently graduated tokens and top
+          crypto by FDV, streamed in real time over WebSocket.
         </p>
       </div>
 
-      <ChainFilter selected={chains} />
+      <SearchBox />
 
-      <TokenTable initialTrending={initialTrending} chains={chains} />
+      <TokenTable initialTrending={initialTrending} />
     </div>
   );
 }

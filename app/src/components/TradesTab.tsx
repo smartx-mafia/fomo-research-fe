@@ -33,14 +33,14 @@ function TradesTableSkeleton() {
 }
 
 /**
- * 最近成交流。SWR 轮询（服务端有 5–15s 缓存，5s 间隔正合适；
- * 该数据没有 WS topic，轮询是正解）。
+ * 最近成交流。SWR 轮询；该数据没有 WS topic，轮询是正解。
+ * 服务端缓存 30s（2026-09 起），轮询间隔不能小于它——5s 轮询只会拿到同一份缓存。
  */
 export default function TradesTab({ chain, address }: { chain: string; address: string }) {
   const { data: trades, error, isLoading } = useSWR<TradeItem[]>(
     ["trades", chain, address],
     () => fetchTrades(chain, address, { limit: 30 }),
-    { refreshInterval: 5000, revalidateOnFocus: true, dedupingInterval: 2000 }
+    { refreshInterval: 30_000, revalidateOnFocus: true, dedupingInterval: 10_000 }
   );
   const items = trades ?? [];
 
@@ -77,7 +77,8 @@ export default function TradesTab({ chain, address }: { chain: string; address: 
                   <td className="px-3 py-2 font-mono text-muted" title={tr.sender}>
                     {shortAddr(tr.sender)}
                   </td>
-                  <td className="px-3 py-2 text-muted">{tr.platform_name ?? "—"}</td>
+                  {/* platform_name 恒为空串（无数据源）：空字符串也是 falsy，统一显示 "—" */}
+                  <td className="px-3 py-2 text-muted">{tr.platform_name || "—"}</td>
                   <td className="tabular px-3 py-2 text-right text-muted" title={tr.tx_hash}>
                     {fmtAge(tr.date)}
                   </td>
