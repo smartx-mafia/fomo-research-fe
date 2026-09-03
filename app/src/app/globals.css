@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "tw-animate-css";
 
 :root {
   --background: #0a0b0d;
@@ -24,6 +25,22 @@
   --color-down: var(--down);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  /* 登录域（privy-login-demo 迁移）的 shadcn/ui 令牌，映射到本项目配色：
+     --color-muted 沿用本项目灰字色（bg-muted/50 因此偏灰），
+     --color-primary 复用品牌紫。 */
+  --color-card: var(--surface);
+  --color-card-foreground: var(--foreground);
+  --color-primary: var(--accent);
+  --color-primary-foreground: #ffffff;
+  --color-secondary: var(--surface-2);
+  --color-secondary-foreground: var(--foreground);
+  --color-accent-foreground: var(--foreground);
+  --color-destructive: var(--down);
+  --color-destructive-foreground: #ffffff;
+  --color-muted-foreground: var(--muted);
+  --color-input: var(--border);
+  --color-ring: var(--accent);
 }
 
 body {
