@@ -231,20 +231,24 @@ export async function getPortfolio(bearer: string, signal?: AbortSignal): Promis
 }
 
 /**
- * POSITION target_id (`chain_id:kind:token_address:round`, social.md §3.1).
- * undefined means the current cycle is not ready or a segment is ambiguous —
- * callers must disable publishing instead of eating a 100100/100102 rejection.
+ * POSITION target_id (`chain_id:kind:token_address:opened_entry_id`, social.md §3.1).
+ * The fourth segment is the trade-ledger round identity (opened_entry_id) —
+ * stable across ledger replays; the display-only `round` ordinal must not be
+ * used here. undefined means the current cycle is not ready or a segment is
+ * ambiguous — callers must disable publishing instead of eating a
+ * 100102/200103 rejection.
  */
 export function positionTargetID(position: PortfolioPosition): string | undefined {
-  const round = position.current_cycle?.round;
-  if (round === undefined || round < 1) return undefined;
+  const entry = position.current_cycle?.opened_entry_id;
+  if (entry === undefined) return undefined;
   const kind = position.asset.kind;
   const tokenAddress = position.asset.token_address;
   if (kind === '' || kind.includes(':') || tokenAddress === '' || tokenAddress.includes(':')) return undefined;
   try {
     const chainID = BigInt(String(position.asset.chain_id)).toString();
-    const roundID = BigInt(round).toString();
-    return `${chainID}:${kind}:${tokenAddress}:${roundID}`;
+    const entryID = BigInt(entry).toString();
+    if (BigInt(entryID) < BigInt(1)) return undefined;
+    return `${chainID}:${kind}:${tokenAddress}:${entryID}`;
   } catch {
     return undefined;
   }

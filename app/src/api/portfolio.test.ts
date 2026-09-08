@@ -118,16 +118,18 @@ describe('portfolio contract', () => {
     }
   });
 
-  it('builds the POSITION target id only from a ready cycle and unambiguous colon-free segments', () => {
+  it('builds the POSITION target id from the trade round identity (opened_entry_id), not the display round', () => {
     const base = {
       asset: {chain: 'bsc', chain_id: 56, kind: 'erc20', token_address: '0xabc'},
       amount_raw: '1',
-      current_cycle: {opened_entry_id: 1, round: 3},
+      current_cycle: {opened_entry_id: 9081, round: 3},
     };
-    expect(positionTargetID(base)).toBe('56:erc20:0xabc:3');
-    expect(positionTargetID({...base, asset: {...base.asset, chain_id: '056'}})).toBe('56:erc20:0xabc:3');
+    expect(positionTargetID(base)).toBe('56:erc20:0xabc:9081');
+    expect(positionTargetID({...base, asset: {...base.asset, chain_id: '056'}})).toBe('56:erc20:0xabc:9081');
+    expect(positionTargetID({...base, current_cycle: {opened_entry_id: '09081', round: 3}})).toBe('56:erc20:0xabc:9081');
     expect(positionTargetID({...base, current_cycle: undefined})).toBeUndefined();
-    expect(positionTargetID({...base, current_cycle: {opened_entry_id: 1, round: 0}})).toBeUndefined();
+    expect(positionTargetID({...base, current_cycle: {opened_entry_id: 0, round: 3}})).toBeUndefined();
+    expect(positionTargetID({...base, current_cycle: {opened_entry_id: 9081, round: 0}})).toBe('56:erc20:0xabc:9081');
     expect(positionTargetID({...base, asset: {...base.asset, token_address: '0x:abc'}})).toBeUndefined();
     expect(positionTargetID({...base, asset: {...base.asset, kind: 'erc:20'}})).toBeUndefined();
   });
