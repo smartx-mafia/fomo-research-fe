@@ -1,9 +1,13 @@
 'use client';
 
+// Must run before Privy/Solana signing code; the browser SDK reads the Node Buffer global.
+import '@/lib/buffer-shim';
+
 import {PrivyProvider} from '@privy-io/react-auth';
+import {createSolanaRpc, createSolanaRpcSubscriptions} from '@solana/kit';
 import {Component, type ReactNode} from 'react';
 
-import {PRIVY_APP_ID, PRIVY_CLIENT_ID, missingConfig} from '@/config';
+import {PRIVY_APP_ID, PRIVY_CLIENT_ID, SOLANA_RPC_URL, missingConfig} from '@/config';
 
 /**
  * 把 Privy/登录组件的异常挡在页面之外（自 privy-login-demo 的 Boundary 迁移）。
@@ -52,9 +56,22 @@ export function PrivyProviders({children}: {children: ReactNode}) {
       config={{
         // 只做登录验证，不建钱包 —— 显式写出来而不是靠 dashboard 默认值。
         embeddedWallets: {
+          // Trade confirmation is implemented by our explicit review step; signatures stay headless.
+          showWalletUIs: false,
           ethereum: {createOnLogin: 'off'},
           solana: {createOnLogin: 'off'},
         },
+        ...(SOLANA_RPC_URL ? {
+          solana: {
+            rpcs: {
+              'solana:mainnet': {
+                rpc: createSolanaRpc(SOLANA_RPC_URL) as never,
+                rpcSubscriptions: createSolanaRpcSubscriptions(SOLANA_RPC_URL.replace(/^http/, 'ws')) as never,
+                blockExplorerUrl: 'https://explorer.solana.com',
+              },
+            },
+          },
+        } : {}),
       }}
     >
       <Boundary>{children}</Boundary>

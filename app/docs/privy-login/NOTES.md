@@ -4,11 +4,9 @@
 
 ## 上线前必做
 
-- [ ] **CORS**。后端 business 不发 `Access-Control-Allow-Origin`（实测 `OPTIONS`
-      回 404，是后端已知缺口表里的活）。本项目用 dev server 同源代理绕开，
-      **那条路上线不存在**。两条正路：①网关把前端与 API 摆在同一个源下；
-      ②business 补一层可配 Origin 白名单的 CORS 中间件。
-      **不要照抄这个前端的代理去部署。**
+- [ ] **CORS 与 HTTPS**。当前测试 business 通过 `https://sm-test-api.smartx.io`
+      允许浏览器跨域，前端直接请求 `NEXT_PUBLIC_BUSINESS_API_BASE`。正式环境应把
+      CORS 收紧到正式前端域名，并继续使用 HTTPS。
 - [ ] **Privy 控制台 allowed OAuth redirect URLs**：当前**留空 = 不限制**。
       上线前必须填正式域名（要求 HTTPS、精确匹配、不许通配符/query/尾斜杠）。
 - [ ] **Privy 控制台 `allowed_domains`**：当前 `[]`（不限制）。收紧到正式域名时，

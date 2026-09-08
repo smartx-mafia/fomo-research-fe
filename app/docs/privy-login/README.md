@@ -61,17 +61,13 @@ React 19 · TypeScript · Vite 7 · Tailwind v4 · shadcn/ui · `@privy-io/react
 > `@solana/kit`、`@solana-program/*` 装了但**运行时用不到** —— 纯登录页不签任何交易，
 > 装它们只是为了让打包器解析得了 Privy 内部那些 import。
 
-## 同源代理：这是绕开 CORS，不是图方便
+## 浏览器直连 API
 
-后端 business **不发 `Access-Control-Allow-Origin`**（实测 `OPTIONS /v1/auth/login`
-直接回 404，是后端已知缺口）。浏览器里跨源打它预检就被拦下，而 fetch 抛的
-`Failed to fetch` 与「后端没起来」长得一模一样。
+当前 business 已提供 CORS，浏览器用 `NEXT_PUBLIC_BUSINESS_API_BASE` 直接访问真实后端。
+请求不再经过 Next.js rewrite，因此 DevTools Network 会显示真实 API host。
 
-所以浏览器代码**一律打相对路径 `/v1`**，由 dev server 同源代理转发。
-
-> **真上线时这条路不存在。** 要么网关把前端与 API 摆在同一个源下，
-> 要么 business 真的补 CORS —— 那是后端缺口表里的活。
-> **不要照抄这个前端的代理去部署。** 详见 `NOTES.md`。
+正式前端使用 HTTPS 时，API 也必须提供 HTTPS，否则浏览器会按混合内容拦截。
+后端收紧 CORS 白名单后，需要同时加入正式前端域名和本地调试 Origin。
 
 ## 文档
 

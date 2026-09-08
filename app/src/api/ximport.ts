@@ -70,7 +70,7 @@ export type XFollowImport = {
 };
 
 export type XBinding = {
-  /** 成功回包里恒为 true —— 没绑定时后端回的是 200104 而不是 `bound:false`。 */
+  /** 成功回包里恒为 true —— 没绑定时后端回的是 200106 而不是 `bound:false`。 */
   bound?: boolean;
   profile?: XProfile;
   follow_import?: XFollowImport;
@@ -84,35 +84,35 @@ export type XBindStartReply = {
 
 /**
  * 这个域用得到的六位码。写成常量而不是散落的字面量，是因为其中三个
- * （200104 / 400103 / 100113）**不是"报错"而是流程分支**，判错一个
+ * （200106 / 400103 / 100117）**不是"报错"而是流程分支**，判错一个
  * 就会把正常状态渲染成红色故障，或者把"要重新发起"渲染成"重试即可"。
  */
 export const X_CODE = {
   /** 请求体里的 code/state 缺失或格式非法。 */
-  paramInvalid: 100112,
+  paramInvalid: 100116,
   /** 授权码已被 X 用过或已过期 —— **重新从第 ① 步发起**，重试本请求无用。 */
-  codeInvalid: 100113,
+  codeInvalid: 100117,
   /** 没有生效的 X 绑定。**这是正常状态，不是错误。** */
-  bindingNotFound: 200104,
+  bindingNotFound: 200106,
   /** state 无效/过期/不属于当前用户 —— 重新从第 ① 步发起。 */
   stateMismatch: 400103,
   /** 近 24 小时绑定次数达上限（滚动窗口）。**不要自动重试。** */
   bindRateLimited: 420103,
   /** 当前用户已绑定，先解绑。 */
-  alreadyBound: 430106,
+  alreadyBound: 430108,
   /** 该 X 账号已被他人绑定。**不要自动重试。** */
-  accountTaken: 430107,
+  accountTaken: 430109,
   /** 上游未配置或不可用；metadata.upstream 区分是 x 还是 database。 */
   upstreamUnavailable: 500097,
   /** X 上游故障，可稍后重试。 */
-  upstreamFailure: 500104,
+  upstreamFailure: 500105,
 } as const;
 
 /**
  * POST /v1/user/x/bind/start —— 发起绑定。
  *
  * **本端点不外呼 X、不产生费用，可以安全重试**（换 token 那步才花钱）。
- * 已绑定时回 430106。下发的 `state` 有效期 10 分钟。
+ * 已绑定时回 430108。下发的 `state` 有效期 10 分钟。
  */
 export function startXBind(bearer: string) {
   return call<XBindStartReply>('/v1/user/x/bind/start', {method: 'POST', body: {}, bearer});
@@ -122,18 +122,18 @@ export function startXBind(bearer: string) {
  * POST /v1/user/x/bind —— 用回调带回的 code 完成绑定。
  *
  * `state` 必须原样回传、**不得改写也不得复用**：它在第一次提交时就被消费，
- * 同一份 {code,state} 再提交回 400103（不是 100113）。
+ * 同一份 {code,state} 再提交回 400103（不是 100117）。
  */
 export function completeXBind(bearer: string, code: string, state: string) {
   return call<XBinding>('/v1/user/x/bind', {method: 'POST', body: {code, state}, bearer});
 }
 
-/** GET /v1/user/x/binding —— 查绑定与导入进度。**无绑定时回 200104，不是空数据。** */
+/** GET /v1/user/x/binding —— 查绑定与导入进度。**无绑定时回 200106，不是空数据。** */
 export function getXBinding(bearer: string) {
   return call<XBinding>('/v1/user/x/binding', {bearer});
 }
 
-/** POST /v1/user/x/unbind —— 逻辑删除。成功回 `data: {}`，之后查询回 200104。 */
+/** POST /v1/user/x/unbind —— 逻辑删除。成功回 `data: {}`，之后查询回 200106。 */
 export function unbindX(bearer: string) {
   return call<Record<string, never>>('/v1/user/x/unbind', {method: 'POST', body: {}, bearer});
 }

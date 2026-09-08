@@ -33,7 +33,7 @@ export type LoginMeta = {
   /**
    * 这个 token 是**哪个后端**签的。
    *
-   * 切换 BUSINESS_ORIGIN 后旧 token 必然 400000。没有这条记录的话，
+   * 切换 NEXT_PUBLIC_BUSINESS_API_BASE 后旧 token 必然 400000。没有这条记录的话，
    * 人会去怀疑 JWT 验签、去比对公钥 —— 而真相只是「换了个后端」。
    */
   origin: string;

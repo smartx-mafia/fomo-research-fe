@@ -1,13 +1,13 @@
 # 症状 → 原因
 
 先跑页面上的「0 · 后端自检」。它把「后端够不够得着」从「登录能不能成」里切出来 ——
-没有这一层的话，代理没起、后端是旧构建、identity token 过期三件事症状都是「登录失败」。
+没有这一层的话，后端/CORS 不通、后端是旧构建、identity token 过期三件事症状都是「登录失败」。
 
 | 症状 | 原因 | 怎么办 |
 |---|---|---|
-| `Failed to fetch` / 自检探针1 报 network | dev server 没起，或代理目标不通 | 确认 `npm run dev` 在跑；检查 `.env.local` 的 `VITE_BUSINESS_ORIGIN`，**改完要重启 dev server** |
-| `/v1/auth/login` 回 **HTTP 404** | **这个后端是旧构建**，没有登录路由 | 指向测试服 `http://13.231.246.26:8080`。本机 `127.0.0.1:8080` 当前就是旧构建 |
-| 回包是 HTML、JSON 解析失败 | 代理目标指了 `be-test-api.smartx.io` | 那个域名挂在 Cloudflare 后，服务端代理会被 403 质询拦下。**用裸 IP** |
+| `Failed to fetch` / 自检探针1 报 network | 后端不可达、HTTPS 页面请求 HTTP 被拦，或后端 CORS 未放行 | 检查 `.env.local` 的 `NEXT_PUBLIC_BUSINESS_API_BASE` 与浏览器 Console；**改完要重启 dev server** |
+| `/v1/auth/login` 回 **HTTP 404** | **这个后端是旧构建**，没有登录路由 | 指向测试服浏览器入口 `https://sm-test-api.smartx.io` |
+| 回包是 HTML、JSON 解析失败 | API 地址指向了网页或错误网关 | 检查 Network 中的真实 Request URL 与 Response，改正 `NEXT_PUBLIC_BUSINESS_API_BASE` |
 | 登录回 `400100` | ① identity token 过期（>1h）② appId 与后端 `privy.app_id` 不一致 | 先看 Privy 卡片上「identity token 剩余」。页面会自动重取并重试**一次**；仍失败就是 appId 不匹配或 Privy 会话已死 |
 | 点「换取」报 `identity token 取不到（null）`，但 Privy 明明已登录 | 该 Privy app 没开 identity token（Dashboard 默认关） | Dashboard → User management → Authentication → Advanced → 打开「Return user data in an identity token」。坐实：带 Privy access token 打 `GET https://auth.privy.io/api/v1/users/me`，回包 `identity_token: null` 即是 |
 | 登录回 `100107` | 声称的 `auth_method` 不在 token 的 linked_accounts 里 | 看 Privy 卡片上的「绑定」列表 —— email 登的却按了 Google 就是这个码。换取按钮上标了「未绑定」的就是会撞这个码的 |
@@ -15,7 +15,7 @@
 | 登录回 `420102` | 连点了登录按钮，撞上后端防重入（锁 TTL 10s） | 等上一发返回。按钮本来就该在请求期间禁用 |
 | 登录回 `420000` | 触发限流（IP 层 20 rps / burst 40） | 退避几秒 |
 | 登录回 `500097` | 这个环境没配 Privy 或数据库 | 换后端，或找运维 |
-| `/v1/user/info` 回 `400000`，但刚登录成功 | ①切换过 `BUSINESS_ORIGIN`，旧 token 是别的后端签的 ②JWT 过期（3 天） | 页面会显示「这个 token 不是当前后端签的」。重新换取即可，**不要去查验签** |
+| `/v1/user/info` 回 `400000`，但刚登录成功 | ①切换过 `NEXT_PUBLIC_BUSINESS_API_BASE`，旧 token 是别的后端签的 ②JWT 过期（3 天） | 页面会显示「这个 token 不是当前后端签的」。重新换取即可，**不要去查验签** |
 | 同一个验证码试了几次就不行了 | 同一 OTP 最多 5 次 | 重新「发送验证码」 |
 | Google/Apple 按钮点不亮 | Privy 控制台没开 + 本地硬闸没开 | 见 `privy-setup.md`。**不是本页的 bug** |
 | 复制按钮报「复制失败」 | 当前不是安全上下文（用 `--host` 从局域网 IP 访问） | 用 `http://localhost:7500` 访问。按钮已经把失败显示出来了 —— 静默失败才是真麻烦 |

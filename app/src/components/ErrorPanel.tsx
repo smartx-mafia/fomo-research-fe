@@ -8,13 +8,13 @@ import {BUSINESS_ORIGIN_LABEL} from '@/config';
 
 /**
  * 三类失败的统一展示。它们的**颜色与文案刻意不同** —— 混成一个
- * "请求失败" 的话，「代理没起来」和「identity token 过期」会长得一样，
+ * "请求失败" 的话，「后端/CORS 不通」和「identity token 过期」会长得一样，
  * 而这两者的排查方向完全相反。
  */
 const KIND_STYLE = {
   business: {ring: 'border-red-500/40 bg-red-500/5', tag: '业务失败', hint: '请求到了，信封回来了，是后端按业务规则拒绝。看六位码。'},
   transport: {ring: 'border-orange-500/40 bg-orange-500/5', tag: '没到信封层', hint: 'HTTP 状态码不是 200 —— 请求没走到 business 的业务逻辑。'},
-  network: {ring: 'border-zinc-500/40 bg-zinc-500/5', tag: '浏览器层失败', hint: 'fetch 本身抛了：dev server 没起、代理目标不通，或代码里写了绝对 URL 撞上 CORS。'},
+  network: {ring: 'border-zinc-500/40 bg-zinc-500/5', tag: '浏览器层失败', hint: 'fetch 本身抛了：真实后端不可达、浏览器阻止混合内容，或后端 CORS 未放行当前 Origin。'},
 } as const;
 
 export function ErrorPanel({err, linkedTypes}: {err: ApiError; linkedTypes?: string[]}) {
@@ -62,9 +62,9 @@ export function ErrorPanel({err, linkedTypes}: {err: ApiError; linkedTypes?: str
         <p className="rounded border border-orange-500/40 bg-orange-500/10 p-2 text-xs">
           <strong>HTTP 404 = 这个后端是旧构建，没有这条路由。</strong>
           <br />
-          测试服是 <code className="font-mono">http://13.231.246.26:8080</code>；
+          测试服浏览器入口是 <code className="font-mono">https://sm-test-api.smartx.io</code>；
           检查 <code className="font-mono">.env.local</code> 里的{' '}
-          <code className="font-mono">VITE_BUSINESS_ORIGIN</code>，改完要重启 dev server。
+          <code className="font-mono">NEXT_PUBLIC_BUSINESS_API_BASE</code>，改完要重启 dev server。
         </p>
       )}
 

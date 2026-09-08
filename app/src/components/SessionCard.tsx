@@ -5,7 +5,7 @@ import {SecretField} from '@/components/SecretField';
 import {Badge} from '@/components/ui/badge';
 import {Button} from '@/components/ui/button';
 import {Card, CardContent, CardHeader, CardTitle} from '@/components/ui/card';
-import {BUSINESS_ORIGIN_LABEL} from '@/config';
+import {BUSINESS_ORIGIN_LABEL, sameBusinessEnvironment} from '@/config';
 import {decodeJwtPayload, humanDuration, secondsLeft} from '@/lib/jwt';
 import type {SiteSession} from '@/session/storage';
 
@@ -32,7 +32,7 @@ export function SessionCard({
   const left = secondsLeft(payload);
   const expired = left !== null && left <= 0;
   const originMismatch =
-    session?.meta?.origin !== undefined && session.meta.origin !== BUSINESS_ORIGIN_LABEL;
+    session?.meta?.origin !== undefined && !sameBusinessEnvironment(session.meta.origin, BUSINESS_ORIGIN_LABEL);
 
   return (
     <Card>

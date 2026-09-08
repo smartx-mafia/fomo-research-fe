@@ -23,7 +23,7 @@ export type XCallbackParams = {
   errorDescription?: string;
 };
 
-/** 空串一律折成 undefined：`?code=` 这种形态解析出空串，当成"有 code"会直接送出去挨 100112。 */
+/** 空串一律折成 undefined：`?code=` 这种形态解析出空串，当成"有 code"会直接送出去挨 100116。 */
 function pick(sources: URLSearchParams[], key: string): string | undefined {
   for (const s of sources) {
     const v = s.get(key);

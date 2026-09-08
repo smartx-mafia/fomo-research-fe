@@ -12,12 +12,13 @@ import { StarButton, useFavorites } from "@/components/FavoritesProvider";
 import { useSession } from "@/session/storage";
 import WatchlistPanel from "@/components/WatchlistPanel";
 
-/** 2026-09 起四榜：new/bonded 已退役，graduated = 近 7 天毕业（最新毕业在前） */
+/** 2026-09 起五榜：most_held 是候选池最多 Account 主体持有榜。 */
 const BOARD_LABELS: Record<BoardName, string> = {
   trending: "Trending",
   bonding: "Bonding",
   graduated: "Graduated",
   crypto: "Crypto",
+  most_held: "Most Held",
 };
 
 function TokenLogo({ logo, symbol }: { logo?: string; symbol: string }) {
@@ -69,7 +70,7 @@ function TableSkeleton() {
   );
 }
 
-function TokenRows({ tokens }: { tokens: TokenMarket[] }) {
+function TokenRows({ tokens, board }: { tokens: TokenMarket[]; board: BoardName }) {
   // 榜单/搜索回包没有收藏字段：登录时批量查一次星标（favorites.md §4）
   const {ensureStatus} = useFavorites();
   const session = useSession();
@@ -83,7 +84,7 @@ function TokenRows({ tokens }: { tokens: TokenMarket[] }) {
   }
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[960px] border-collapse text-sm">
+      <table className={`w-full border-collapse text-sm ${board === "most_held" ? "min-w-[1120px]" : "min-w-[960px]"}`}>
         <thead>
           <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-muted">
             <th className="w-8 px-2 py-2" />
@@ -96,6 +97,12 @@ function TokenRows({ tokens }: { tokens: TokenMarket[] }) {
             <th className="px-3 py-2 font-medium text-right">Market Cap</th>
             <th className="px-3 py-2 font-medium text-right">Liquidity</th>
             <th className="px-3 py-2 font-medium text-right">Vol 24h</th>
+            {board === "most_held" && (
+              <>
+                <th className="px-3 py-2 font-medium text-right">Held By</th>
+                <th className="px-3 py-2 font-medium text-right">Held Value</th>
+              </>
+            )}
             <th className="px-3 py-2 font-medium text-right">Holders</th>
             <th className="px-3 py-2 font-medium">Bonding</th>
           </tr>
@@ -144,6 +151,18 @@ function TokenRows({ tokens }: { tokens: TokenMarket[] }) {
               <td className="px-3 py-2 tabular text-right">
                 <Flash value={tok.volume_24h}>{fmtCompact(tok.volume_24h)}</Flash>
               </td>
+              {board === "most_held" && (
+                <>
+                  <td className="px-3 py-2 tabular text-right">
+                    <Flash value={tok.held_by_accounts}>{fmtInt(tok.held_by_accounts)}</Flash>
+                  </td>
+                  <td className="px-3 py-2 tabular text-right">
+                    <Flash value={tok.held_value_usd}>
+                      {tok.held_value_usd === undefined ? "—" : `$${fmtCompact(tok.held_value_usd)}`}
+                    </Flash>
+                  </td>
+                </>
+              )}
               <td className="px-3 py-2 tabular text-right">
                 <Flash value={tok.holders_count}>{fmtInt(tok.holders_count)}</Flash>
               </td>
@@ -160,23 +179,25 @@ function TokenRows({ tokens }: { tokens: TokenMarket[] }) {
 
 /**
  * 榜单表。主数据源是 WS（subscribe 即 snapshot，之后增量合并，见 lib/ws.ts）；
- * `initialTrending` 是 SSR 用 HTTP 拉的首屏兜底，snapshot 到达后即被替换。
+ * `initialTrending` 是可选启动快照；当前页面传 null，等待浏览器直连 WS snapshot。
  *
- * 四榜均为跨链聚合榜（2026-09 起），不做任何链筛选与客户端过滤——
- * 每榜只有 ≤20 条（crypto 60），本地过滤会让榜单看起来莫名残缺。
+ * 五榜均为跨链聚合榜（2026-09 起），不做链筛选或客户端重排；服务端已经
+ * 按各榜规则排序并限制为最多 100 条。
  */
 type Tab = BoardName | "watchlist";
 
 export function TokenTable({ initialTrending }: { initialTrending: TokenMarket[] | null }) {
   const [tab, setTab] = useState<Tab>("trending");
   const isBoard = tab !== "watchlist";
-  const { items, status } = useBoardStream(isBoard ? tab : "trending", isBoard ? initialTrending ?? undefined : undefined);
+  // 启动快照只属于 Trending：切到其它榜时绝不能拿它冒充新榜快照。
+  const initial = isBoard && tab === "trending" ? initialTrending ?? undefined : undefined;
+  const { items, status } = useBoardStream(isBoard ? tab : "trending", initial);
   const rows = items;
 
   return (
     <Card>
       <div className="flex items-center justify-between border-b border-border px-4 py-2">
-        <div className="flex items-center gap-1">
+        <div className="flex flex-wrap items-center gap-1">
           {([...BOARDS, "watchlist"] as Tab[]).map((t) => (
             <button
               key={t}
@@ -195,19 +216,23 @@ export function TokenTable({ initialTrending }: { initialTrending: TokenMarket[]
             className={`flex items-center gap-1.5 text-xs ${status === "live" ? "text-up" : "text-muted"}`}
           >
             <span
-              className={`h-1.5 w-1.5 rounded-full ${status === "live" ? "bg-up" : "animate-pulse bg-muted"}`}
+              className={`h-1.5 w-1.5 rounded-full ${
+                status === "live" ? "bg-up" : status === "rejected" ? "bg-muted" : "animate-pulse bg-muted"
+              }`}
             />
-            {status === "live" ? "Live" : "Connecting…"}
+            {status === "live" ? "Live" : status === "rejected" ? "Unavailable" : "Connecting…"}
           </span>
         )}
       </div>
 
       {tab === "watchlist" ? (
         <WatchlistPanel />
+      ) : status === "rejected" ? (
+        <EmptyState>This board is not available in the current backend environment.</EmptyState>
       ) : status !== "live" && items.length === 0 ? (
         <TableSkeleton />
       ) : (
-        <TokenRows tokens={rows} />
+        <TokenRows tokens={rows} board={tab} />
       )}
     </Card>
   );

@@ -91,7 +91,7 @@ export function XBindPage({
   }, [jwt, capture, complete, push]);
 
   const expectedRedirect = `${location.origin}${CALLBACK_PATH}`;
-  // 200104 是流程分支不是故障，hook 里已经折成 unbound 态；这里再挡一道，
+  // 200106 是流程分支不是故障，hook 里已经折成 unbound 态；这里再挡一道，
   // 免得将来有人从别处把它塞进 err 就在页面上炸出一个红框。
   const err = ctl.err?.code === X_CODE.bindingNotFound ? null : ctl.err;
 
@@ -189,7 +189,7 @@ export function XBindPage({
           说明它是 X 绑定合并<strong>之前</strong>的构建，不是鉴权问题也不是代理问题。
           2026-08-31 在 <code className="font-mono">{BUSINESS_ORIGIN_LABEL}</code> 上实测如此。
           等后端发一版带 X 绑定的再回来，或把{' '}
-          <code className="font-mono">VITE_BUSINESS_ORIGIN</code> 指到有这套路由的环境
+          <code className="font-mono">NEXT_PUBLIC_BUSINESS_API_BASE</code> 指到有这套路由的环境
           （改完要重启 dev server）。
         </p>
       )}

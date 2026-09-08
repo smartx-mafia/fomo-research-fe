@@ -42,7 +42,7 @@ export const POLL_DEADLINE_MS = 120_000;
 export type XBindState =
   /** 还没查过。**与"未绑定"是两回事**，混起来会让首屏闪一下"未绑定"。 */
   | {kind: 'idle'}
-  /** 后端明确回了 200104。 */
+  /** 后端明确回了 200106。 */
   | {kind: 'unbound'}
   | {kind: 'bound'; binding: XBinding; at: number};
 
@@ -74,7 +74,7 @@ export type XBindController = {
  * X 绑定的全部副作用都在这里，页面组件只负责画。
  *
  * 三件必须做对、做错了都不报错的事：
- *   ① **200104 不是错误**，是"这个人没绑"。当成错误弹红框的话，第一次打开
+ *   ① **200106 不是错误**，是"这个人没绑"。当成错误弹红框的话，第一次打开
  *      页面的人会以为后端坏了。
  *   ② **提交过一次就要清掉本地的 state**（无论成败）：它是一次性的，
  *      再提交回 400103。留着的话按钮还亮着，而它已经注定失败 ——
@@ -104,7 +104,7 @@ export function useXBind(jwt: string | null, log: EventLogFns): XBindController 
    *
    * 防的是一个真实存在的顺序：进本页时会先拉一次绑定态，而回调自动提交几乎
    * 同时发出。GET 大概率先回（POST 那边还要去 X 换 token），于是 GET 的
-   * 「200104 未绑定」会**盖掉**刚刚绑定成功的结果 —— 页面显示"未绑定"，
+       * 「200106 未绑定」会**盖掉**刚刚绑定成功的结果 —— 页面显示"未绑定"，
    * 而后端库里明明绑上了，人只能靠手动刷新才发现，中间那段时间会以为绑失败了。
    */
   const writeSeq = useRef(0);
@@ -138,7 +138,7 @@ export function useXBind(jwt: string | null, log: EventLogFns): XBindController 
     } catch (e) {
       const apiErr = e as ApiError;
       if (apiErr.kind === 'business' && apiErr.code === X_CODE.bindingNotFound) {
-        end('info', step, '200104 未绑定 —— 这是正常状态，不是错误', apiErr.traceID);
+        end('info', step, '200106 未绑定 —— 这是正常状态，不是错误', apiErr.traceID);
         return {ok: false, unbound: true};
       }
       end('error', step, `${apiErr.code} ${apiErr.message}`, apiErr.traceID);
@@ -296,7 +296,7 @@ export function useXBind(jwt: string | null, log: EventLogFns): XBindController 
         setState({kind: 'unbound'});
         stopPolling();
         setPollTimedOut(false);
-        end('ok', step, '已解绑（逻辑删除，之后查询回 200104）', res.traceID);
+        end('ok', step, '已解绑（逻辑删除，之后查询回 200106）', res.traceID);
       })
       .catch((e: unknown) => {
         const apiErr = e as ApiError;

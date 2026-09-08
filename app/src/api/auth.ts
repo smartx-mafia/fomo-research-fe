@@ -11,6 +11,11 @@ export type UserInfo = {
   /** Unix 秒。契约文档说是数字，但 protojson 有把 int64 编成字符串的先例，
    *  所以两种都要能吃 —— 显示时统一 Number()。 */
   created_at?: number | string;
+  username?: string;
+  privy_did?: string;
+  /** Verified canonical login email returned by the backend; preferred for fiat receipt identity. */
+  email?: string;
+  bio?: string;
 };
 
 export type LoginReply = {
@@ -46,7 +51,7 @@ export function getUserInfo(bearer: string) {
  * 探针：不带任何凭据打 /v1/user/info。
  *
  * 期望是**失败**（400000 / SYS_UNAUTHENTICATED）。拿到它就证明了三件事：
- * 代理通了、信封层活着、这个后端认得这条路由。所以调用方要把
+ * 浏览器直连通了、信封层活着、这个后端认得这条路由。所以调用方要把
  * "ApiError(business, 400000)" 当成**成功**来解读。
  */
 export function probeUnauthenticated() {

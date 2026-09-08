@@ -12,6 +12,7 @@
  *    undefined，不要用 === ''。
  */
 import {newTraceID} from '@/lib/trace';
+import {BUSINESS_API_BASE} from '@/config';
 
 /** 恒 200 信封。成功与失败共用同一个结构。 */
 export type Envelope<T> = {
@@ -21,6 +22,7 @@ export type Envelope<T> = {
   /** 失败时才有，是错误原因的枚举名，如 BIZ_IDENTITY_TOKEN_INVALID。 */
   error?: string;
   action?: {type: string};
+  metadata?: Record<string, unknown>;
   trace_id?: string;
 };
 
@@ -30,8 +32,7 @@ export type Envelope<T> = {
  * - `business`：请求到了、信封回来了，是业务拒绝。看六位码。
  * - `transport`：HTTP 状态码不是 200，**没到信封层**。最常见的是 404
  *   （后端是旧构建，没有这条路由）。
- * - `network`：fetch 本身抛了。dev server 没起、代理目标不通，
- *   或者代码里写了绝对 URL 撞上了 CORS。
+ * - `network`：fetch 本身抛了。后端不可达、浏览器拦截或 CORS 配置错误。
  */
 export type FailureKind = 'business' | 'transport' | 'network';
 
@@ -47,6 +48,8 @@ export class ApiError extends Error {
   readonly sentRequestID?: string;
   /** transport 类保留响应体前若干字符，用来认出 HTML 错误页。 */
   readonly rawBody?: string;
+  /** 业务失败的结构化细节，例如审查 rule_id；不得直接当用户文案展示。 */
+  readonly metadata?: Record<string, unknown>;
 
   constructor(
     kind: FailureKind,
@@ -56,6 +59,7 @@ export class ApiError extends Error {
     traceID?: string,
     sentRequestID?: string,
     rawBody?: string,
+    metadata?: Record<string, unknown>,
   ) {
     super(msg);
     this.name = 'ApiError';
@@ -65,6 +69,7 @@ export class ApiError extends Error {
     this.traceID = traceID;
     this.sentRequestID = sentRequestID;
     this.rawBody = rawBody;
+    this.metadata = metadata;
   }
 }
 
@@ -76,9 +81,20 @@ export type CallResult<T> = {
   sentRequestID: string;
 };
 
+/** HTTPS 页面不能直连 HTTP API；在 fetch 前给出可诊断错误，而不是浏览器泛化的 Failed to fetch。 */
+export function assertNoMixedContent(url: URL, pageProtocol?: string): void {
+  const protocol = pageProtocol ?? (typeof window === 'undefined' ? undefined : window.location.protocol);
+  if (protocol === 'https:' && url.protocol === 'http:') {
+    throw new Error(
+      `HTTPS pages cannot call the HTTP API ${url.origin}. Configure NEXT_PUBLIC_BUSINESS_API_BASE with an HTTPS origin.`,
+    );
+  }
+}
+
 type CallOptions = {
-  method?: 'GET' | 'POST';
+  method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
   body?: unknown;
+  signal?: AbortSignal;
   /**
    * 本站 JWT。**登录端点绝不能传这个**，所以它是显式参数而不是从
    * storage 里自动读 —— 自动读的话，「登录请求不带 Authorization」
@@ -89,8 +105,8 @@ type CallOptions = {
 };
 
 /**
- * 发一次请求。**一律走相对路径**（/v1/...），由 dev server 同源代理转发。
- * 写绝对 URL 会直接撞上 CORS（后端不发 Access-Control-Allow-Origin）。
+ * 发一次浏览器直连请求。传入的契约路径仍写成 /v1/...，这里统一补上
+ * NEXT_PUBLIC_BUSINESS_API_BASE，让 DevTools Network 显示真实后端地址。
  */
 export async function call<T>(path: string, opts: CallOptions = {}): Promise<CallResult<T>> {
   // 每次请求新生成，不复用（契约硬规则，复用比不传更糟）。
@@ -101,10 +117,13 @@ export async function call<T>(path: string, opts: CallOptions = {}): Promise<Cal
 
   let res: Response;
   try {
-    res = await fetch(path, {
+    const url = new URL(path, `${BUSINESS_API_BASE}/`).toString();
+    assertNoMixedContent(new URL(url));
+    res = await fetch(url, {
       method: opts.method ?? 'GET',
       headers,
       body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+      signal: opts.signal,
     });
   } catch (e) {
     throw new ApiError(
@@ -149,7 +168,16 @@ export async function call<T>(path: string, opts: CallOptions = {}): Promise<Cal
   }
 
   if (env.code !== 200) {
-    throw new ApiError('business', env.code, env.msg, env.error, env.trace_id, sentRequestID);
+    throw new ApiError(
+      'business',
+      env.code,
+      env.msg,
+      env.error,
+      env.trace_id,
+      sentRequestID,
+      undefined,
+      env.metadata,
+    );
   }
   // code=200 但 data 缺席 = 回包形状与契约不符。也当失败抛，不要让
   // undefined 一路流进 UI 变成空白字段。

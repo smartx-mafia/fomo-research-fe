@@ -58,27 +58,61 @@ export const CODES: Record<number, CodeInfo> = {
     advice: '退避几秒再试。',
     retryable: true,
   },
+  430113: {
+    text: '邀请码名额已满',
+    advice: '换一个邀请码；该码只在绑定邀请码流程中出现，不要原样重试。',
+    retryable: false,
+  },
+  430114: {
+    text: '账号已登录，但尚未完成邀请准入',
+    advice: '跳转邀请准入流程（开放期调 POST /v1/invite/bind）；不要重试，也不要当成登录失效。',
+    retryable: false,
+  },
   500097: {
     text: '上游不可用：这个环境没配 Privy / X，或数据库连不上',
     advice: '看回包 metadata.upstream 区分是哪一路（x / database）。换一个后端，或联系运维。',
     retryable: false,
   },
 
+  // ── Social（Opinion / Square / Follow）────────────────────────────
+  100100: {text: '观点正文为空或超过长度限制', advice: '修改正文后再提交。', retryable: false},
+  100101: {text: '观点附件格式无效', advice: '只保留有效的 X/Twitter 链接。', retryable: false},
+  100102: {text: '观点关联的持仓参数无效', advice: '刷新持仓上下文后重试。', retryable: false},
+  100103: {text: '分页游标已失效', advice: '丢弃游标并重新加载第一页。', retryable: true},
+  100104: {text: '幂等键无效', advice: '生成新的合法幂等键后重试。', retryable: false},
+  100105: {text: '关注目标参数无效', advice: '检查目标类型和标识，不要自动重试。', retryable: false},
+  100106: {text: 'Square Lane 参数无效', advice: '修正 Lane 参数。', retryable: false},
+  100112: {text: '备注内容或目标无效', advice: '检查目标并将备注控制在 64 个字符内。', retryable: false},
+  100113: {text: '聪明钱地址参数无效', advice: '地址须原样传递且不携带链参数。', retryable: false},
+  200100: {text: '观点不存在或已不可见', advice: '刷新当前页面。', retryable: false},
+  200101: {text: '观点版本不存在或已不可见', advice: '刷新观点内容。', retryable: false},
+  200103: {text: '关联持仓不存在', advice: '返回持仓列表并刷新。', retryable: false},
+  200104: {text: '该地址未被收录为可关注的聪明钱', advice: '不要自动重试。', retryable: false},
+  420100: {text: '同一幂等键提交了不同内容', advice: '使用新的幂等键重新提交。', retryable: false},
+  420101: {text: '观点已经在其它位置更新', advice: '重拉最新版本后再编辑。', retryable: true},
+  430100: {text: '不能关注自己', advice: '隐藏本人的关注入口。', retryable: false},
+  430101: {text: '当前用户不可参与社交操作', advice: '停止重试并联系支持。', retryable: false},
+  430103: {text: '该持仓已经发布过观点', advice: '改用 Update Opinion。', retryable: false},
+  430106: {text: '备注数量已达到上限', advice: '清理不再使用的备注后重试。', retryable: false},
+  500100: {text: '社交数据存储暂不可用', advice: '稍后重试；持续出现时联系运维。', retryable: true},
+  500101: {text: '社交数据内部状态不一致', advice: '稍后重试；持续出现时附 trace_id 报障。', retryable: true},
+  600100: {text: '观点未通过发布审查', advice: '修改正文或链接后重新提交。', retryable: false},
+
   // ── X（Twitter）账号绑定域 ──────────────────────────────────────────
-  // 这一域里有三个码**不是"报错"而是流程分支**（200104 / 400103 / 100113），
+  // 这一域里有三个码**不是"报错"而是流程分支**（200106 / 400103 / 100117），
   // 把它们当普通错误展示会把正常状态渲染成故障，或者把"必须重新发起"
   // 说成"重试即可" —— 后者最坑：重试一百次都是同一个码。
-  100112: {
+  100116: {
     text: 'code / state 缺失或格式非法',
     advice: '检查请求体：多半是从回调 URL 里只解析出了半边。',
     retryable: false,
   },
-  100113: {
+  100117: {
     text: 'X 授权码已被用过或已过期',
     advice: '**重新从 bind/start 发起**，不要重试本次请求 —— 授权码是一次性的。',
     retryable: false,
   },
-  200104: {
+  200106: {
     text: '没有生效的 X 绑定',
     advice: '这是正常状态不是错误：展示未绑定态，引导去绑定。',
     retryable: false,
@@ -94,17 +128,17 @@ export const CODES: Record<number, CodeInfo> = {
     advice: '稍后再试。**不要自动重试** —— 重试只会把窗口继续填满。',
     retryable: false,
   },
-  430106: {
+  430108: {
     text: '当前用户已经绑定了 X 账号',
     advice: '先解绑再绑；同时刷新本地绑定态（本地显示"未绑定"说明它是陈旧的）。',
     retryable: false,
   },
-  430107: {
+  430109: {
     text: '该 X 账号已被其他用户绑定',
     advice: '换一个 X 账号，或让原主先解绑。**不要自动重试。**',
     retryable: false,
   },
-  500104: {
+  500105: {
     text: 'X 上游故障',
     advice: '可稍后重试；持续如此附 trace_id 报障。',
     retryable: true,

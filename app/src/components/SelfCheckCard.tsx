@@ -12,7 +12,7 @@ type Probe = {ok: boolean; text: string; detail?: string};
  * 后端自检 —— **不碰 Privy、不需要登录**。
  *
  * 它把"后端够不够得着"从"登录能不能成"里切出来。没有这一层的话，
- * 代理没起、后端是旧构建、identity token 过期这三件事，症状都是
+ * 后端/CORS 不通、后端是旧构建、identity token 过期这三件事，症状都是
  * "登录失败"，而排查方向完全不同。
  */
 export function SelfCheckCard({
@@ -30,7 +30,7 @@ export function SelfCheckCard({
     setRoute(null);
 
     // 探针 1：不带任何凭据打 /v1/user/info。**期望失败**（400000）——
-    // 拿到它就证明代理通了、信封层活着、这个后端认得这条路由。
+    // 拿到它就证明浏览器直连通了、信封层活着、这个后端认得这条路由。
     try {
       await probeUnauthenticated();
       const p = {ok: false, text: '异常：匿名请求竟然成功了，这不符合契约（该端点是 Required 档）'};
@@ -42,7 +42,7 @@ export function SelfCheckCard({
         const p = {
           ok: true,
           text: '通过：拿到 400000 / SYS_UNAUTHENTICATED',
-          detail: `代理通、信封层活着、路由存在。trace_id=${err.traceID ?? '-'}`,
+          detail: `浏览器直连通、信封层活着、路由存在。trace_id=${err.traceID ?? '-'}`,
         };
         setEnvelope(p);
         onEvent('ok', '探针1 匿名 /v1/user/info', p.detail);
@@ -52,7 +52,7 @@ export function SelfCheckCard({
           text: `未通过：${err.kind} / ${err.code} — ${err.message}`,
           detail:
             err.kind === 'network'
-              ? 'dev server 没起，或代理目标不通。检查 .env.local 的 VITE_BUSINESS_ORIGIN 并重启。'
+              ? '真实后端不可达、混合内容被拦或 CORS 未放行。检查 .env.local 的 NEXT_PUBLIC_BUSINESS_API_BASE。'
               : err.rawBody,
         };
         setEnvelope(p);
@@ -82,7 +82,7 @@ export function SelfCheckCard({
           ok: false,
           text: 'HTTP 404 —— 这个后端是旧构建，没有 /v1/auth/login 路由',
           detail:
-            '测试服是 http://13.231.246.26:8080。改 .env.local 的 VITE_BUSINESS_ORIGIN 后重启 dev server。',
+            '测试服浏览器入口是 https://sm-test-api.smartx.io。改 .env.local 的 NEXT_PUBLIC_BUSINESS_API_BASE 后重启 dev server。',
         };
         setRoute(p);
         onEvent('error', '探针2 /v1/auth/login 存在性', p.text);
@@ -111,7 +111,7 @@ export function SelfCheckCard({
         <p className="text-muted-foreground text-xs">
           先跑这个。它不碰 Privy，只回答「后端够不够得着、是不是带登录的那个构建」。
           当前目标：<code className="font-mono">{BUSINESS_ORIGIN_LABEL}</code>
-          （请求走同源代理 <code className="font-mono">/v1</code>）。
+          （浏览器直接请求该地址，不经过 Next.js 转发）。
         </p>
         <Button size="sm" onClick={() => void runAll()} disabled={busy}>
           {busy ? '检测中…' : '运行自检'}

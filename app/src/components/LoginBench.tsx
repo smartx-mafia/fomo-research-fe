@@ -59,7 +59,8 @@ export function LoginBench() {
     return () => window.removeEventListener('storage', onStorage);
   }, []);
 
-  const linkedTypes = (user?.linkedAccounts ?? []).map((a) => a.type);
+  // 同时有 EVM/Solana 钱包时 type 都是 wallet；去重避免重复 React key 与重复徽章。
+  const linkedTypes = [...new Set((user?.linkedAccounts ?? []).map((a) => a.type))];
 
   /** OAuth 回跳收尾：接线常驻在页面层，否则跳回来时组件没挂载，收不了尾。 */
   const oauth = useLoginWithOAuth({
@@ -244,7 +245,9 @@ export function LoginBench() {
 
       <SelfCheckCard onEvent={(l, s, d) => log.push(l, s, d)} />
 
-      {authenticated && <WalletProvisionCard onEvent={(l, s, d) => log.push(l, s, d)} />}
+      {ready && authenticated && user ? (
+        <WalletProvisionCard key={user.id} onEvent={(l, s, d) => log.push(l, s, d)} />
+      ) : null}
 
       {!authenticated && ready && (
         <div className="grid gap-4 md:grid-cols-2">

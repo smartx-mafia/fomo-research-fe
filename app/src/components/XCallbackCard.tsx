@@ -77,7 +77,7 @@ export function XCallbackCard({
           </Button>
           <p className="text-muted-foreground text-xs">
             这一步<strong>不外呼 X、不产生费用</strong>，可以安全重试；
-            真正花钱的是下一步的换 token。已绑定时回 430106。
+            真正花钱的是下一步的换 token。已绑定时回 430108。
           </p>
         </div>
 
@@ -144,7 +144,7 @@ export function XCallbackCard({
 
           <p className="text-muted-foreground text-[11px]">
             <strong>同一份 {'{code, state}'} 只能提交一次。</strong>
-            第二次回 <code className="font-mono">400103</code>（不是 100113）——
+            第二次回 <code className="font-mono">400103</code>（不是 100117）——
             state 在第一次提交时就被消费掉了，连换 token 那步都走不到。
             两种情况都要从第 2 步重新发起。
           </p>

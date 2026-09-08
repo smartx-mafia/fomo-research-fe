@@ -53,7 +53,7 @@ export function XBindingCard({
           )}
           1 · 当前绑定状态
           <Badge variant={bound ? 'default' : 'secondary'}>
-            {state.kind === 'idle' ? '未查询' : bound ? '已绑定' : '未绑定（200104）'}
+            {state.kind === 'idle' ? '未查询' : bound ? '已绑定' : '未绑定（200106）'}
           </Badge>
           <Button
             variant="ghost"
@@ -74,7 +74,7 @@ export function XBindingCard({
 
         {state.kind === 'unbound' && (
           <p className="text-muted-foreground text-xs">
-            后端明确回了 <code className="font-mono">200104 / BIZ_X_BINDING_NOT_FOUND</code>。
+            后端明确回了 <code className="font-mono">200106 / BIZ_X_BINDING_NOT_FOUND</code>。
             <strong>这是正常状态，不是错误</strong> —— 这套契约里"没绑定"是一个六位码而不是空数据。
             往下走第 2 步发起绑定。
           </p>
@@ -99,7 +99,7 @@ export function XBindingCard({
               </span>
             </div>
             <p className="text-muted-foreground text-[11px]">
-              解绑是<strong>逻辑删除</strong>：绑定关系失效，之后查询回 200104；
+              解绑是<strong>逻辑删除</strong>：绑定关系失效，之后查询回 200106；
               可以重新绑定（同一个或另一个 X 账号），重绑会重新导入一次关注列表。
             </p>
             <details className="text-xs">

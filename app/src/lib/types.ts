@@ -17,10 +17,10 @@ export const CHAINS = ["bsc", "solana", "base", "robinhood", "ethereum"] as cons
 export type Chain = (typeof CHAINS)[number];
 
 /**
- * 榜单集合（2026-09 起）：四榜，全部是跨链聚合榜，没有链变体。
- * new / bonded 已退役（board=bonded 会回 100303，不要用）；graduated = 近 7 天毕业。
+ * 榜单集合（2026-09 起）：五榜，全部是跨链聚合榜，没有链变体。
+ * new / bonded 已退役；most_held 是候选池最多主体持有榜。
  */
-export const BOARDS = ["trending", "bonding", "graduated", "crypto"] as const;
+export const BOARDS = ["trending", "bonding", "graduated", "crypto", "most_held"] as const;
 export type BoardName = (typeof BOARDS)[number];
 
 /**
@@ -55,6 +55,10 @@ export interface TokenMarket {
   created_at?: string;
   /** unix 毫秒，服务端盖章——判断数据新鲜度用它 */
   updated_at?: number;
+  /** 仅 most_held 榜及其 WS update 有值；达标 Account 主体数，不是全网 holders_count。 */
+  held_by_accounts?: number;
+  /** 仅 most_held 榜及其 WS update 有值；达标主体持仓价值之和（USD）。 */
+  held_value_usd?: number;
 }
 
 /** /v1/boards/{board} 回包 data（§2.1），WS snapshot 帧的 data 同形 */
@@ -130,10 +134,10 @@ export interface SearchItem {
   market?: TokenMarket;
 }
 
-/** 搜索范围（scope 参数）：Token 与 People 两态，前端统一用字面名 */
-export type SearchScope = "SEARCH_SCOPE_TOKEN" | "SEARCH_SCOPE_PEOPLE";
+/** 搜索范围（scope 参数）：Token 与 Account 两态，前端统一用字面名。 */
+export type SearchScope = "SEARCH_SCOPE_TOKEN" | "SEARCH_SCOPE_ACCOUNT";
 
-/** /v1/search scope=PEOPLE 的 people[] 条目（§2.2） */
+/** /v1/search scope=ACCOUNT 的用户条目。关注态不在搜索回包里。 */
 export interface SearchPerson {
   identifier: string;
   /** handle，未设置缺席 */
@@ -141,15 +145,36 @@ export interface SearchPerson {
   /** 昵称原值，未设置缺席——不得用 identifier 伪造，空则回退 username/identifier 缩写 */
   nickname?: string;
   avatar_url?: string;
-  /** 1=UNKNOWN(匿名) 2=未关注 3=已关注 4=本人；永不为 0 */
-  follow_state?: 1 | 2 | 3 | 4;
 }
 
-/** /v1/search 回包 data：tokens/people 按scope二选一出现，零值键整个缺席 */
+/** 聪明钱逐链快照；金额保持后端十进制字符串，缺席不等于 0。 */
+export interface SearchSmartMoneyChain {
+  chain: string;
+  total_profit?: string;
+  realized_profit?: string;
+  buy?: number;
+  sell?: number;
+  /** unix 秒；缺席/0 表示没有快照。 */
+  snapshot_at?: number;
+}
+
+/** ACCOUNT 搜索中的聪明钱结果：一个原始地址聚合多条链。 */
+export interface SearchSmartMoney {
+  address: string;
+  chains: SearchSmartMoneyChain[];
+}
+
+/** ACCOUNT 搜索结果。两个子结构按 target_type 二选一。 */
+export type SearchAccountEntry =
+  | { target_type: "user"; user: SearchPerson; smart_money?: never }
+  | { target_type: "smart_money"; smart_money: SearchSmartMoney; user?: never };
+
+/** /v1/search 回包 data：tokens/accounts 按 scope 二选一出现，零值键整个缺席。 */
 export interface SearchData {
+  scope?: 1 | 4;
   tokens?: SearchItem[];
-  people?: SearchPerson[];
-  /** 只有 PEOPLE 给；缺席 = 到底了。与 phrase 绑定，换词必须丢弃 */
+  accounts?: SearchAccountEntry[];
+  /** 只有 ACCOUNT 给；只翻用户侧。缺席 = 到底了，与 phrase 绑定。 */
   next_cursor?: string;
 }
 

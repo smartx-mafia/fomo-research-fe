@@ -133,13 +133,13 @@ export function getMarketSocket(): MarketSocket {
   return singleton;
 }
 
-export type StreamStatus = "connecting" | "live";
+export type StreamStatus = "connecting" | "live" | "rejected";
 
 /**
  * 订阅一个榜单 topic，维护 snapshot + update/remove 合并后的列表。
- * `initial` 是 SSR 首屏兜底数据，只在首次挂载时生效，snapshot 到达即被替换。
+ * `initial` 是可选启动快照，只在首次挂载时生效，WS snapshot 到达即被替换。
  *
- * 2026-09 起榜单只有四个跨链聚合 topic（board:{trending|bonding|graduated|crypto}），
+ * 2026-09 起榜单只有五个跨链聚合 topic（另含 board:most_held），
  * 链变体 topic（board:{board}:{chain}）已被网关删除，订阅会收到 op=error 帧。
  */
 export function useBoardStream(board: BoardName, initial?: TokenMarket[]) {
@@ -151,7 +151,7 @@ export function useBoardStream(board: BoardName, initial?: TokenMarket[]) {
     const topic = `board:${board}`;
     const sock = getMarketSocket();
     // StrictMode 下 effect 会跑两遍，initial 只能消费一次：
-    // 用 prop 快照而非可变 ref，第二遍仍能拿到 SSR 兜底数据
+    // 用 prop 快照而非可变 ref，第二遍仍能拿到同一份启动数据
     const initialItems = initial;
 
     // 列表本体放在闭包里，setItems 只发副本，避免并发帧覆盖彼此的 state 更新
@@ -159,7 +159,7 @@ export function useBoardStream(board: BoardName, initial?: TokenMarket[]) {
     let lastSeq: number | null = null;
     let hasSnapshot = false;
 
-    // SSR 兜底只用一次（切 tab 回来不再用，等 snapshot）
+    // 启动快照只用一次（切 tab 回来不再用，等 WS snapshot）
     if (initialRef.current) {
       list = [...initialRef.current];
       initialRef.current = undefined;
@@ -181,6 +181,7 @@ export function useBoardStream(board: BoardName, initial?: TokenMarket[]) {
       // 只有 kind:"error"（stream reset）才走下面 reset() 的重订路径。
       if (f.op === "error") {
         console.warn(`[market-ws] subscribe rejected (${topic}):`, f.reason);
+        setStatus("rejected");
         return;
       }
 
