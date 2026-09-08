@@ -187,22 +187,26 @@ export function SecuritySettingsView() {
                 className="max-w-md font-mono text-xs"
               />
             </div>
-            <Button
-              size="sm"
-              disabled={busy || exportAddr.trim() === ''}
-              onClick={() => {
-                setBusy(true);
-                void recordKeyExport(jwt, exportChain, exportAddr.trim())
-                  .then((res) => setSettings((s) => (s ? {...s, key_export: res.data} : s)))
-                  .catch((e: unknown) => setErr(e as ApiError))
-                  .finally(() => setBusy(false));
-              }}
-            >
-              记录一次导出
-            </Button>
+              <Button
+                size="sm"
+                disabled={busy || exportAddr.trim() === ''}
+                onClick={() => {
+                  setBusy(true);
+                  // 0X 大写前缀后端必拒（hex 体才大小写不敏感），本地归一掉，
+                  // 免得用户吃一发没必要的 100123。
+                  const addr = exportAddr.trim().replace(/^0X/, '0x');
+                  void recordKeyExport(jwt, exportChain, addr)
+                    .then((res) => setSettings((s) => (s ? {...s, key_export: res.data} : s)))
+                    .catch((e: unknown) => setErr(e as ApiError))
+                    .finally(() => setBusy(false));
+                }}
+              >
+                记录一次导出
+              </Button>
           </div>
           <p className="text-muted-foreground text-[11px]">
             地址必须是本人的 Privy 托管钱包（服务端按账户表校验），否则 100123。
+            EVM 的 hex 体大小写不敏感；0X 前缀会本地归一成 0x 再发。
           </p>
         </CardContent>
       </Card>

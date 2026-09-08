@@ -71,7 +71,9 @@ export function TradingSettingsView() {
   };
 
   const currentPct = settings ? (Number(settings.default_slippage) * 100).toFixed(Number(settings.default_slippage) < 0.01 ? 3 : 2).replace(/0+$/, '').replace(/\.$/, '') : '';
-  const customInvalid = custom !== '' ? validateSlippage(custom) : null;
+  // 空串必须算无效：validateSlippage('') 本身回「请输入数字」，
+  // 不给「清空后仍可点保存」留口子（那会把空串发给后端吃 100123）。
+  const customInvalid = customMode ? validateSlippage(custom) : null;
 
   return (
     <div className="space-y-4">

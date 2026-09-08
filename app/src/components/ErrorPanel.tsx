@@ -46,7 +46,12 @@ export function ErrorPanel({err, linkedTypes}: {err: ApiError; linkedTypes?: str
         </span>
       </div>
 
-      <p className="text-sm">{info?.text ?? err.message}</p>
+      {/* 具体错因优先：本地校验拒绝（如「简介最多 512 个字符」）和后端 msg
+          都比码表通用描述可操作。两者都有且不同时，通用描述降级为辅助行。 */}
+      <p className="text-sm">{err.message || info?.text}</p>
+      {info && info.text !== err.message && (
+        <p className="text-muted-foreground text-xs">{info.text}</p>
+      )}
       <p className="text-muted-foreground text-xs">{style.hint}</p>
 
       {info?.advice && <p className="text-xs">建议：{info.advice}</p>}
