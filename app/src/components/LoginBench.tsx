@@ -7,10 +7,12 @@ import {
   usePrivy,
 } from '@privy-io/react-auth';
 import Link from 'next/link';
-import {useCallback, useEffect, useState} from 'react';
+import {useCallback, useEffect, useRef, useState} from 'react';
 
-import {getUserInfo, login, type AuthMethod, type UserInfo} from '@/api/auth';
+import {getUserInfo, login, type AuthMethod, type LoginCodes, type UserInfo} from '@/api/auth';
 import {ApiError} from '@/api/envelope';
+import {firstPrompt, getOnboarding, type OnboardingItem} from '@/api/onboarding';
+import {AdmissionGateCard} from '@/components/AdmissionGateCard';
 import {EmailOtpCard} from '@/components/EmailOtpCard';
 import {ErrorPanel} from '@/components/ErrorPanel';
 import {EventLog} from '@/components/EventLog';
@@ -30,6 +32,27 @@ import {clearSite, readSite, writeSite, type SiteSession} from '@/session/storag
 const OAUTH_PENDING = 'smartx-login-fe.oauth_pending';
 
 /**
+ * 登录域的准入错误码（user.md §1 第 4 步的表）：这些码意味着「注册没发生、
+ * 没有 JWT」，处置是**带码重调**（同一个 identity token），不是失败终点。
+ */
+function admissionGateFor(code: number): {kind: 'invite' | 'entry'; reason: string} | null {
+  switch (code) {
+    case 430115:
+      return {kind: 'invite', reason: '后端：不带邀请码且服务端没开默认绑定（430115）。填邀请码后重调登录。'};
+    case 430116:
+      return {kind: 'invite', reason: '后端：邀请码不存在 / 不可作上级（430116）。核对后重输。'};
+    case 430113:
+      return {kind: 'invite', reason: '后端：这个邀请码的名额已满（430113）。请换一个码，不要重试同一个。'};
+    case 430117:
+      return {kind: 'entry', reason: '后端：当前阶段需要入场码（430117）。输入运营发给你的 16 位入场码。'};
+    case 430118:
+      return {kind: 'entry', reason: '后端：入场码不存在 / 已撤销 / 已过期（430118）。核对后重输。'};
+    default:
+      return null;
+  }
+}
+
+/**
  * 登录联调台（自 privy-login-demo 的 App.tsx 迁移；X 绑定拆到 /login/x）。
  * 路径不变量：OAuth / X 的回调都整页跳回 /login*，由 Privy SDK 在此收尾。
  */
@@ -47,6 +70,17 @@ export function LoginBench() {
   const [infoResult, setInfoResult] = useState<UserInfo | null>(null);
   const [storageFailed, setStorageFailed] = useState(false);
   const [oauthBusy, setOauthBusy] = useState(false);
+  /** 准入凭据门：后端回 430115/430116/430113/430117/430118 时设置。 */
+  const [gate, setGate] = useState<{kind: 'invite' | 'entry'; reason: string} | null>(null);
+  /** 登录成功后的引导判定（onboarding.md：冷启动调一次，取首个 should_prompt）。 */
+  const [prompt, setPrompt] = useState<OnboardingItem | null>(null);
+
+  /**
+   * 带码重调时**复用**最近一次的 identity token 与 auth_method：
+ * 重调不该重走 Privy（token 还在 1 小时有效期内，user.md §1）。
+   */
+  const idtRef = useRef<string | null>(null);
+  const methodRef = useRef<AuthMethod>('AUTH_METHOD_EMAIL');
 
   const missing = missingConfig();
 
@@ -85,19 +119,35 @@ export function LoginBench() {
    *
    * **必须现取 identity token，不能用 useIdentityToken() 的渲染快照** ——
    * 闭包里那个串可能已过期，后端回 400100，排查方向会被带偏。
+   * 例外：带码重调（codes 非空）时复用 idtRef 里那份 —— 那正是准入分支
+   * 的设计（user.md §1：同一个 identity token 重调，不要重走 Privy）。
    */
   const exchange = useCallback(
-    async (method: AuthMethod): Promise<void> => {
+    async (method: AuthMethod, codes: LoginCodes = {}): Promise<void> => {
       setExchanging(true);
       setErr(null);
       setInfoResult(null);
+      setGate(null);
+      methodRef.current = method;
       try {
         // 第二轮只为 400100 而存在，且只有一次：token 过期（重取能自愈）与
         // app 不匹配（永远不会自愈）要区分开，无限重试只会打满 Privy 限流。
         for (let attempt = 0; attempt < 2; attempt++) {
           try {
             log.begin('换取本站 token');
-            const idt = await getIdentityToken();
+            let idt: string | null;
+            if (codes.inviteCode !== undefined || codes.entryCode !== undefined) {
+              idt = idtRef.current;
+              if (!idt) {
+                // 理论到不了：门只在一次失败登录之后出现，那时 idtRef 必有值。
+                setErr(new ApiError('network', 0, '缓存的 identity token 已丢失，请重新发起一次登录'));
+                return;
+              }
+              log.push('info', '用同一个 identity token 带码重调（不重走 Privy）');
+            } else {
+              idt = await getIdentityToken();
+              idtRef.current = idt;
+            }
             if (!idt) {
               const detail = authenticated
                 ? 'Privy 已登录却拿不到 identity token —— 多半是该 app 没开 identity token（Dashboard → User management → Authentication → Advanced → 「Return user data in an identity token」）'
@@ -106,7 +156,7 @@ export function LoginBench() {
               setErr(new ApiError('network', 0, `identity token 取不到（null）：${detail}`));
               return;
             }
-            const res = await login(method, idt);
+            const res = await login(method, idt, codes);
             const meta = {
               at: Date.now(),
               is_new: res.data.is_new,
@@ -123,10 +173,34 @@ export function LoginBench() {
               `identifier=${res.data.user.identifier} is_new=${String(res.data.is_new)}`,
               res.traceID,
             );
+            // 登录成功 ≠ 引导完成：invite.md §2.4 要求登录后判引导。
+            // 拉失败不拦使用（onboarding.md：查不出来时宁可少弹一次）。
+            try {
+              const ob = await getOnboarding(res.data.token);
+              const first = firstPrompt(ob.data.items);
+              setPrompt(first);
+              if (first) {
+                log.push('info', '引导判定', `首个待办：${first.feature}`);
+              }
+            } catch {
+              setPrompt(null);
+            }
             return;
           } catch (e) {
             const apiErr = e as ApiError;
             log.end('error', '换取本站 token', `${apiErr.code} ${apiErr.message}`, apiErr.traceID);
+
+            // 准入分支：这些码不是失败终点，弹码门后由用户带码重调。
+            const gateFor = admissionGateFor(apiErr.code);
+            if (gateFor) {
+              setGate(gateFor);
+              return;
+            }
+            // 已注册账号带入场码登录：认领只能发生在建号之前 —— 去掉码静默重登。
+            if (apiErr.kind === 'business' && apiErr.code === 430111 && codes.entryCode !== undefined) {
+              log.push('warn', '430111：该账号已注册，入场码用不上 —— 去掉入场码重调');
+              return await exchange(method);
+            }
             const retriable =
               apiErr.kind === 'business' && apiErr.code === 400100 && attempt === 0;
             if (!retriable) {
@@ -166,6 +240,8 @@ export function LoginBench() {
     setSession(null);
     setInfoResult(null);
     setErr(null);
+    setGate(null);
+    setPrompt(null);
     log.push('info', '已清除本站 token（Privy 会话保持不变）');
   }
 
@@ -176,6 +252,8 @@ export function LoginBench() {
     setSession(null);
     setInfoResult(null);
     setErr(null);
+    setGate(null);
+    setPrompt(null);
     sessionStorage.removeItem(OAUTH_PENDING);
     // **不手删 privy: 开头的键** —— 那会让 SDK 的内存态与存储不一致。
     await logout();
@@ -224,6 +302,44 @@ export function LoginBench() {
           <strong>写不进 localStorage</strong>（隐私模式或企业策略）。
           当前会话只在内存里，刷新即失 —— 不是登录失败。
         </p>
+      )}
+
+      {/* 准入凭据门：后端回 430115/430116/430113（邀请码）或 430117/430118（入场码）后出现。 */}
+      {gate && (
+        <AdmissionGateCard
+          kind={gate.kind}
+          reason={gate.reason}
+          busy={exchanging}
+          onSubmit={(code) =>
+            void exchange(
+              methodRef.current,
+              gate.kind === 'invite' ? {inviteCode: code} : {entryCode: code},
+            )
+          }
+          onSkip={() => void exchange(methodRef.current)}
+        />
+      )}
+
+      {/* 登录成功 ≠ 引导完成：invite.md §2.4，判引导在登录之后。 */}
+      {prompt && !gate && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              登录成功，还有引导待完成
+              <span className="rounded bg-amber-500/15 px-1.5 py-0.5 font-mono text-[11px] text-amber-500">
+                {prompt.feature}
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-wrap items-center gap-3 text-sm">
+            <p className="text-muted-foreground text-xs">
+              服务端引导判定（GET /v1/user/onboarding）的首个待办。完成 / 跳过在引导页进行。
+            </p>
+            <Link href="/onboarding">
+              <Button size="sm">进入引导</Button>
+            </Link>
+          </CardContent>
+        </Card>
       )}
 
       <div className="grid gap-4 md:grid-cols-2">
