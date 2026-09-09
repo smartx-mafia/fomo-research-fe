@@ -10,6 +10,21 @@
  * `undefined` for UI code.
  */
 import {call} from './envelope';
+import {normalizePortfolioPosition, positionTargetID, type PortfolioPosition} from './portfolio';
+
+function socialCall(path: string, options: Parameters<typeof call>[1] = {}) {
+  return call<unknown>(path, {...options, preserveInt64Fields: SOCIAL_INT64_FIELDS});
+}
+
+const SOCIAL_INT64_FIELDS = ['opinion_id', 'version_id', 'base_version_id', 'opened_entry_id', 'chain_id'] as const;
+
+export function socialID(value: unknown): string {
+  if (typeof value === 'number' && (!Number.isSafeInteger(value) || value <= 0)) throw new SocialContentShapeError('Unsafe social ID');
+  if ((typeof value !== 'string' && typeof value !== 'number') || !/^[1-9]\d{0,18}$/.test(String(value)) || BigInt(value) > BigInt('9223372036854775807')) {
+    throw new SocialContentShapeError('Invalid social ID');
+  }
+  return String(value);
+}
 
 export const SQUARE_LANES = {
   NEWEST: 'SQUARE_LANE_NEWEST',
@@ -49,7 +64,7 @@ export type OpinionAttachmentInput = {
 };
 
 export type OpinionVersion = {
-  versionID: number;
+  versionID: string;
   versionNo: number;
   body: string;
   items: OpinionAttachment[];
@@ -59,7 +74,7 @@ export type OpinionVersion = {
 };
 
 export type Opinion = {
-  opinionID: number;
+  opinionID: string;
   authorIdentifier: string;
   targetType: OpinionTargetType;
   targetID: string;
@@ -75,18 +90,13 @@ export type UserActor = {
   avatarURL?: string;
 };
 
-/** Missing strings remain missing: unavailable PnL or symbol is not zero. */
-export type PositionSummary = {
-  pnlPercent?: string;
-  tokenSymbol?: string;
-  quality?: string;
-};
+export type PositionToken = {chain: string; address: string; symbol: string; name: string; decimals: number};
 
 export type OpinionFeedContent = {
   kind: 'opinion';
   opinion: Opinion;
-  /** Whole message missing means the position summary is unavailable. */
-  position?: PositionSummary;
+  position: PortfolioPosition;
+  token?: PositionToken;
 };
 
 export type SquareFeedItem = {
@@ -150,7 +160,7 @@ export type CreateOpinionInput = {
 };
 
 export type UpdateOpinionInput = {
-  baseVersionID: number;
+  baseVersionID: string;
   body: string;
   items?: readonly OpinionAttachmentInput[];
   idempotencyKey: string;
@@ -241,12 +251,9 @@ function normalizeVersion(value: unknown, field = 'version'): OpinionVersion {
   const row = record(value);
   if (!row) throw new SocialContentShapeError(`${field} is not an object`);
 
-  const versionID = safeInteger(row.version_id);
+  const versionID = socialID(row.version_id);
   const versionNo = safeInteger(row.version_no);
   const body = nonEmptyString(row.body);
-  if (versionID === undefined || versionID <= 0) {
-    throw new SocialContentShapeError(`${field}.version_id is missing or invalid`);
-  }
   if (versionNo === undefined || versionNo <= 0) {
     throw new SocialContentShapeError(`${field}.version_no is missing or invalid`);
   }
@@ -274,12 +281,9 @@ function normalizeOpinion(value: unknown): Opinion {
   const row = record(value);
   if (!row) throw new SocialContentShapeError('opinion is not an object');
 
-  const opinionID = safeInteger(row.opinion_id);
+  const opinionID = socialID(row.opinion_id);
   const authorIdentifier = nonEmptyString(row.author_identifier);
   const targetID = nonEmptyString(row.target_id);
-  if (opinionID === undefined || opinionID <= 0) {
-    throw new SocialContentShapeError('opinion.opinion_id is missing or invalid');
-  }
   if (!authorIdentifier) throw new SocialContentShapeError('opinion.author_identifier is missing');
   if (row.target_type !== 1) throw new SocialContentShapeError('opinion.target_type is not POSITION');
   if (!targetID) throw new SocialContentShapeError('opinion.target_id is missing');
@@ -310,20 +314,25 @@ function normalizeActor(value: unknown): UserActor {
   };
 }
 
-function normalizePosition(value: unknown): PositionSummary | undefined {
-  // 规则 10：未设置的 message 展开成全零对象；三个字段全空 = 摘要不可用。
-  if (value === undefined || value === null) return undefined;
-  const row = record(value);
-  if (!row) throw new SocialContentShapeError('feed opinion position is not an object');
-  const pnlPercent = nonEmptyString(row.pnl_percent);
-  const tokenSymbol = nonEmptyString(row.token_symbol);
-  const quality = nonEmptyString(row.quality);
-  if (!pnlPercent && !tokenSymbol && !quality) return undefined;
-  return {
-    ...(pnlPercent ? {pnlPercent} : {}),
-    ...(tokenSymbol ? {tokenSymbol} : {}),
-    ...(quality ? {quality} : {}),
-  };
+function normalizePositionToken(card: UnknownRecord, position: PortfolioPosition): PositionToken | undefined {
+  if (card.token_ready === false) return undefined;
+  const token = record(card.token);
+  if (card.token_ready !== true || !token || token.chain !== position.asset.chain || token.address !== position.asset.token_address ||
+      token.symbol !== (position.symbol ?? '') || token.decimals !== position.decimals || typeof token.name !== 'string' || typeof token.symbol !== 'string' ||
+      typeof token.decimals !== 'number' || !Number.isInteger(token.decimals) || token.decimals < 0 || token.decimals > 255) {
+    throw new SocialContentShapeError('feed token does not match position');
+  }
+  return token as PositionToken;
+}
+
+function normalizeOpinionCard(value: unknown): OpinionFeedContent {
+  const card = record(value);
+  if (!card) throw new SocialContentShapeError('opinion card is missing');
+  const opinion = normalizeOpinion(card.opinion);
+  const position = normalizePortfolioPosition(card.position, true);
+  if (positionTargetID(position) !== opinion.targetID) throw new SocialContentShapeError('opinion position identity mismatch');
+  const token = normalizePositionToken(card, position);
+  return {kind: 'opinion', opinion, position, ...(token ? {token} : {})};
 }
 
 function normalizeFeedItem(value: unknown): SquareFeedItem | undefined {
@@ -340,19 +349,19 @@ function normalizeFeedItem(value: unknown): SquareFeedItem | undefined {
   // oneof content 平铺成字段名 opinion（README 规则）；未选中时线上是 null。
   const opinionCard = record(row.opinion);
   if (!opinionCard) throw new SocialContentShapeError('feed item.opinion card is missing');
-  const position = normalizePosition(opinionCard.position);
+  const content = normalizeOpinionCard(opinionCard);
+  const actor = normalizeActor(row.actor);
+  if (content.opinion.authorIdentifier !== actorIdentifier || sourceID !== content.opinion.opinionID || actor.identifier !== actorIdentifier) {
+    throw new SocialContentShapeError('feed position, author or opinion identity mismatch');
+  }
 
   return {
     type: 1,
     sourceID,
     actorIdentifier,
-    actor: normalizeActor(row.actor),
+    actor,
     sortTime: normalizeTimestamp(row.sort_time, 'feed item.sort_time'),
-    content: {
-      kind: 'opinion',
-      opinion: normalizeOpinion(opinionCard.opinion),
-      ...(position ? {position} : {}),
-    },
+    content,
   };
 }
 
@@ -430,12 +439,12 @@ function normalizeDeleteResult(value: unknown): DeleteOpinionResult {
   };
 }
 
-function opinionPath(opinionID: number): string {
-  return `/v1/social/opinions/${encodeURIComponent(String(opinionID))}`;
+function opinionPath(opinionID: string): string {
+  return `/v1/social/opinions/${encodeURIComponent(socialID(opinionID))}`;
 }
 
-function versionPath(versionID: number, action: 'like' | 'unlike'): string {
-  return `/v1/social/opinions/versions/${encodeURIComponent(String(versionID))}/${action}`;
+function versionPath(versionID: string, action: 'like' | 'unlike'): string {
+  return `/v1/social/opinions/versions/${encodeURIComponent(socialID(versionID))}/${action}`;
 }
 
 export async function listSquareFeedPage(
@@ -445,7 +454,7 @@ export async function listSquareFeedPage(
   const query = new URLSearchParams({lane});
   if (options.cursor) query.set('cursor', options.cursor);
   if (options.limit !== undefined) query.set('limit', String(options.limit));
-  const response = await call<unknown>(`/v1/social/square/feed?${query.toString()}`, {
+  const response = await socialCall(`/v1/social/square/feed?${query.toString()}`, {
     bearer: options.bearer,
     signal: options.signal,
   });
@@ -464,7 +473,7 @@ export async function getSquareFeedUpdates(
 ): Promise<SquareUpdatesData> {
   const query = new URLSearchParams({lane});
   if (options.anchor) query.set('anchor', options.anchor);
-  const response = await call<unknown>(`/v1/social/square/feed/updates?${query.toString()}`, {
+  const response = await socialCall(`/v1/social/square/feed/updates?${query.toString()}`, {
     bearer: options.bearer,
     signal: options.signal,
   });
@@ -472,22 +481,27 @@ export async function getSquareFeedUpdates(
 }
 
 export async function getOpinion(
-  opinionID: number,
+  opinionID: string,
   options: OpinionReadOptions = {},
 ): Promise<Opinion> {
-  const response = await call<unknown>(opinionPath(opinionID), {bearer: options.bearer});
-  return normalizeOpinionReply(response.data);
+  return (await getOpinionCard(opinionID, options)).opinion;
+}
+
+/** Detail/share consumers use exactly the same card contract as Square. */
+export async function getOpinionCard(opinionID: string, options: OpinionReadOptions = {}): Promise<OpinionFeedContent> {
+  const response = await socialCall(opinionPath(opinionID), {bearer: options.bearer});
+  return normalizeOpinionCard(response.data);
 }
 
 export async function getOpinionHistory(
-  opinionID: number,
+  opinionID: string,
   options: OpinionHistoryOptions = {},
 ): Promise<OpinionHistoryData> {
   const query = new URLSearchParams();
   if (options.cursor) query.set('cursor', options.cursor);
   if (options.limit !== undefined) query.set('limit', String(options.limit));
   const suffix = query.size > 0 ? `?${query.toString()}` : '';
-  const response = await call<unknown>(`${opinionPath(opinionID)}/history${suffix}`, {
+  const response = await socialCall(`${opinionPath(opinionID)}/history${suffix}`, {
     bearer: options.bearer,
   });
   return normalizeHistoryData(response.data);
@@ -499,12 +513,12 @@ export async function getOpinionByTarget(
   targetID: string,
 ): Promise<Opinion> {
   const query = new URLSearchParams({target_type: targetType, target_id: targetID});
-  const response = await call<unknown>(`/v1/social/opinion-by-target?${query.toString()}`, {bearer});
-  return normalizeOpinionReply(response.data);
+  const response = await socialCall(`/v1/social/opinion-by-target?${query.toString()}`, {bearer});
+  return normalizeOpinionCard(response.data).opinion;
 }
 
 export async function createOpinion(bearer: string, input: CreateOpinionInput): Promise<Opinion> {
-  const response = await call<unknown>('/v1/social/opinions', {
+  const response = await socialCall('/v1/social/opinions', {
     method: 'POST',
     bearer,
     body: {
@@ -520,14 +534,14 @@ export async function createOpinion(bearer: string, input: CreateOpinionInput): 
 
 export async function updateOpinion(
   bearer: string,
-  opinionID: number,
+  opinionID: string,
   input: UpdateOpinionInput,
 ): Promise<Opinion> {
-  const response = await call<unknown>(opinionPath(opinionID), {
+  const response = await socialCall(opinionPath(opinionID), {
     method: 'PUT',
     bearer,
     body: {
-      base_version_id: input.baseVersionID,
+      base_version_id: socialID(input.baseVersionID),
       body: input.body,
       items: input.items ?? [],
       idempotency_key: input.idempotencyKey,
@@ -536,24 +550,24 @@ export async function updateOpinion(
   return normalizeOpinionReply(response.data);
 }
 
-export async function likeOpinionVersion(bearer: string, versionID: number): Promise<LikeMutationResult> {
-  const response = await call<unknown>(versionPath(versionID, 'like'), {
+export async function likeOpinionVersion(bearer: string, versionID: string): Promise<LikeMutationResult> {
+  const response = await socialCall(versionPath(versionID, 'like'), {
     method: 'POST',
     bearer,
   });
   return normalizeLikeResult(response.data);
 }
 
-export async function unlikeOpinionVersion(bearer: string, versionID: number): Promise<LikeMutationResult> {
-  const response = await call<unknown>(versionPath(versionID, 'unlike'), {
+export async function unlikeOpinionVersion(bearer: string, versionID: string): Promise<LikeMutationResult> {
+  const response = await socialCall(versionPath(versionID, 'unlike'), {
     method: 'POST',
     bearer,
   });
   return normalizeLikeResult(response.data);
 }
 
-export async function deleteOpinion(bearer: string, opinionID: number): Promise<DeleteOpinionResult> {
-  const response = await call<unknown>(opinionPath(opinionID), {
+export async function deleteOpinion(bearer: string, opinionID: string): Promise<DeleteOpinionResult> {
+  const response = await socialCall(opinionPath(opinionID), {
     method: 'DELETE',
     bearer,
   });

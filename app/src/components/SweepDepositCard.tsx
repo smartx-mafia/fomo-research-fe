@@ -11,9 +11,10 @@ import {
   submitDepositSweep,
   type DepositSweep,
   type PrepareSweepReply,
+  type DepositAddress,
 } from '@/api/deposit';
 import {ApiError} from '@/api/envelope';
-import type {PortfolioAsset} from '@/api/portfolio';
+import {sweepCandidates, type SweepCandidate} from '@/lib/sweep-routes';
 import {expiryHasMargin} from '@/lib/deposit';
 import {abortablePollDelay, waitForVisibleDocument} from '@/lib/deposit-polling';
 import {signDepositSweepCalibur} from '@/lib/deposit-signing';
@@ -24,10 +25,6 @@ import {checkAuthorizationDigest, parseCaliburSignData} from '@/lib/trade-calibu
 type PendingSubmit = {sweepID: string; signature: string; expiresAt?: string; actorContext: string};
 type SweepAttempt = {version: 1; ownerKey: string; originChain: string; originToken: string; sweepID?: string};
 
-// A sweep needs independently verified on-chain balances/capabilities. Trade
-// ledger positions from Portfolio are deliberately not assignable to this type.
-type SweepPosition = {asset: PortfolioAsset; symbol?: string; decimals?: number; amount_raw: string; sweep?: {status: number; min_amount_raw?: string}};
-
 function text(error: unknown) {
   if (error instanceof ApiError) return `Sweep request failed · code ${error.code} · trace ${error.traceID ?? 'unavailable'}`;
   return error instanceof Error ? error.message : String(error);
@@ -35,11 +32,11 @@ function text(error: unknown) {
 function terminal(sweep: DepositSweep) {
   return sweep.lifecycle === 'confirmed' || sweep.lifecycle === 'failed';
 }
-export function SweepDepositCard({bearer, ownerKey, identityMatched, positions, resumeID, onProtectedError}: {bearer: string; ownerKey: string; identityMatched: boolean; positions?: SweepPosition[]; resumeID?: string; onProtectedError: (error: unknown) => boolean}) {
+export function SweepDepositCard({bearer, ownerKey, identityMatched, addresses, resumeID, onProtectedError}: {bearer: string; ownerKey: string; identityMatched: boolean; addresses?: DepositAddress[]; resumeID?: string; onProtectedError: (error: unknown) => boolean}) {
   const {ready, authenticated, user} = usePrivy();
   const {wallets, ready: walletsReady} = useEthereumWallets();
-  const candidates = positions?.filter((position) => position.asset.kind === 'erc20' && position.sweep) ?? [];
-  const [review, setReview] = useState<SweepPosition>();
+  const candidates = sweepCandidates(addresses);
+  const [review, setReview] = useState<SweepCandidate>();
   const [sweep, setSweep] = useState<DepositSweep>();
   const [nextAction, setNextAction] = useState<string>();
   const [pending, setPending] = useState<PendingSubmit>();
@@ -127,7 +124,11 @@ export function SweepDepositCard({bearer, ownerKey, identityMatched, positions, 
   }, [actorContext, bearer, ownerKey, resumeID, storageKey]);
 
   const confirmCreate = async () => {
-    if (!review || !ownerKey || !actorContext || review.sweep?.status !== 1 || lockRef.current || storageBlocked || !recoveryReady || sweep && !terminal(sweep)) return;
+    if (!review || !ownerKey || !actorContext || lockRef.current || storageBlocked || !recoveryReady || sweep && !terminal(sweep)) return;
+    if (!candidates.some((candidate) => candidate.asset.chain === review.asset.chain && candidate.asset.token_address === review.asset.token_address)) {
+      setReview(undefined); setError('This deposit route is no longer available. Refresh the supported assets before creating a sweep.'); return;
+    }
+    if (attempt && (attempt.sweepID || attempt.originChain !== review.asset.chain || attempt.originToken.toLowerCase() !== review.asset.token_address.toLowerCase())) return;
     const marker: SweepAttempt = {version: 1, ownerKey, originChain: review.asset.chain, originToken: review.asset.token_address};
     if (!writeAttempt(marker)) {setStorageBlocked(true); setError('Could not persist Sweep recovery metadata. No Create request was sent.'); return;}
     lockRef.current = true;
@@ -136,8 +137,13 @@ export function SweepDepositCard({bearer, ownerKey, identityMatched, positions, 
     try {
       const result = await createDepositSweep(bearer, review.asset.chain, review.asset.token_address, controller.signal);
       if (controller.signal.aborted) return;
+      setSweep(result.sweep); setReview(undefined);
+      if (!writeAttempt({...marker, sweepID: result.sweep.sweep_id})) {
+        setStorageBlocked(true);
+        setError(`Sweep ${result.sweep.sweep_id} was created, but recovery storage is unavailable. Keep this ID; signing is paused.`);
+        return;
+      }
       const recovered = await getDepositSweep(bearer, result.sweep.sweep_id, controller.signal);
-      writeAttempt({...marker, sweepID: result.sweep.sweep_id});
       setSweep(recovered.sweep); setNextAction(recovered.next_action); setPending(undefined); setPrepared(undefined); setConfirmed(false); setNeedsAuthorization(false); setReview(undefined);
       if (terminal(recovered.sweep)) clearAttempt();
       setNotice(result.duplicate ? 'An existing active sweep was recovered; no second sweep was created.' : 'Sweep intent created. Review it below before signing.');
@@ -186,7 +192,7 @@ export function SweepDepositCard({bearer, ownerKey, identityMatched, positions, 
   };
 
   const prepareOnly = async () => {
-    if (!sweep || terminal(sweep) || !actorContext || lockRef.current || (nextAction !== 'prepare' && nextAction !== 'sign')) return;
+    if (!sweep || terminal(sweep) || !actorContext || lockRef.current || storageBlocked || (nextAction !== 'prepare' && nextAction !== 'sign')) return;
     lockRef.current = true;
     const controller = startOperation();
     setBusy(true); setError(undefined); setNotice(undefined);
@@ -209,7 +215,7 @@ export function SweepDepositCard({bearer, ownerKey, identityMatched, positions, 
   };
 
   const signAndSubmitPrepared = async () => {
-    if (!prepared || !confirmed || !actorContext || lockRef.current) return;
+    if (!prepared || !confirmed || !actorContext || lockRef.current || storageBlocked) return;
     if (!expiryHasMargin(prepared.expires_at)) {setPrepared(undefined); setConfirmed(false); setNeedsAuthorization(false); setNotice('Prepared sweep expired. Prepare the same sweep again.'); return;}
     const wallet = wallets.find((candidate) => candidate.address.toLowerCase() === prepared.wallet_address.toLowerCase());
     if (!wallet) {setError(`Backend selected ${prepared.wallet_address}, which is not loaded in the current Privy EVM signer.`); return;}
@@ -279,18 +285,18 @@ export function SweepDepositCard({bearer, ownerKey, identityMatched, positions, 
   const hasActive = !!attempt || (!!sweep && !terminal(sweep));
   return (
     <section className="rounded-lg border border-border bg-surface p-4">
-      <div><h2 className="font-semibold text-foreground">EVM full-balance sweep</h2><p className="mt-1 text-xs text-muted">Sweep requires verified wallet balances and supported assets. Prepare rereads the complete latest balance; there is no amount input.</p></div>
+      <div><h2 className="font-semibold text-foreground">EVM full-balance sweep</h2><p className="mt-1 text-xs text-muted">Choose a supported deposit asset. Prepare checks your complete latest balance and the minimum amount before you sign.</p></div>
       {review ? <div className="mt-4 rounded-md border border-accent/40 bg-accent/5 p-3"><p className="text-sm text-foreground">Create a sweep for the complete latest balance of <strong>{review.symbol ?? shortAddr(review.asset.token_address)}</strong> on {chainLabel(review.asset.chain)}?</p><p className="mt-1 text-xs text-muted">Selected identity: <span className="font-mono">{review.asset.chain} · {review.asset.token_address}</span>. The backend controls recipient, refund path and minimum output.</p><div className="mt-3 flex gap-2"><button type="button" onClick={() => setReview(undefined)} className="rounded border border-border px-3 py-2 text-xs text-muted">Cancel</button><button type="button" onClick={() => void confirmCreate()} className="rounded bg-accent px-3 py-2 text-xs font-semibold text-white">Create sweep intent</button></div></div> : null}
       <div className="mt-4 space-y-2">
-        {candidates.length === 0 ? <p className="text-sm text-muted">{positions === undefined ? 'Sweep asset discovery is temporarily unavailable. Existing sweep recovery remains available below.' : 'No verified wallet asset currently has a sweep capability.'}</p> : candidates.map((position) => {
+        {candidates.length === 0 ? <p className="text-sm text-muted">{addresses === undefined ? 'Deposit routes are temporarily unavailable. Existing sweep recovery remains available below.' : 'No EVM deposit assets are currently supported.'}</p> : candidates.map((position) => {
           const exactRecovery = !!attempt && !attempt.sweepID && attempt.originChain === position.asset.chain &&
             (position.asset.token_address.startsWith('0x')
               ? attempt.originToken.toLowerCase() === position.asset.token_address.toLowerCase()
               : attempt.originToken === position.asset.token_address);
           return (
-            <div key={`${position.asset.chain_id}:${position.asset.token_address}`} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-background p-3">
-              <div><p className="text-sm font-medium text-foreground">{position.symbol ?? shortAddr(position.asset.token_address)} · {chainLabel(position.asset.chain)}</p><p className="mt-1 font-mono text-xs text-muted">{formatBaseUnitsExact(position.amount_raw, position.decimals)} · {shortAddr(position.asset.token_address, 7, 6)}</p>{position.sweep?.status === 2 ? <p className="mt-1 text-xs text-accent">Below minimum: {position.sweep.min_amount_raw ?? 'unknown'} base units</p> : position.sweep?.status === 3 ? <p className="mt-1 text-xs text-muted">Route disabled</p> : null}</div>
-              <button type="button" disabled={position.sweep?.status !== 1 || (hasActive && !exactRecovery) || busy || !recoveryReady || storageBlocked || !actorContext} onClick={() => setReview(position)} className="rounded-md border border-border px-3 py-2 text-xs text-accent disabled:opacity-50">{exactRecovery ? 'Recover exact Create' : 'Review sweep'}</button>
+            <div key={`${position.asset.chain}:${position.asset.token_address}`} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-background p-3">
+              <div><p className="text-sm font-medium text-foreground">{position.symbol || shortAddr(position.asset.token_address)} · {chainLabel(position.asset.chain)}</p><p className="mt-1 font-mono text-xs text-muted">{shortAddr(position.asset.token_address, 7, 6)}</p>{position.minAmountRaw ? <p className="mt-1 text-xs text-muted">Minimum: {formatBaseUnitsExact(position.minAmountRaw, position.decimals)} {position.symbol}</p> : null}</div>
+              <button type="button" disabled={(hasActive && !exactRecovery) || busy || !recoveryReady || storageBlocked || !actorContext} onClick={() => setReview(position)} className="rounded-md border border-border px-3 py-2 text-xs text-accent disabled:opacity-50">{exactRecovery ? 'Recover exact Create' : 'Review sweep'}</button>
             </div>
           );
         })}

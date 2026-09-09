@@ -196,7 +196,7 @@ export function DepositView() {
       />
       <div className="grid items-start gap-4 xl:grid-cols-2">
         <FiatDepositCard key={`fiat:${bearer}:${privyActor ?? 'no-privy'}`} bearer={bearer!} ownerKey={accountInfo.data?.identifier ?? session.user?.identifier ?? ''} receiptEmail={receiptEmail} canonicalSolanaAddress={solanaAddress} identityMatched={identityMatched} onProtectedError={handleProtectedError} onOrderCompleted={refreshPortfolioAfterCacheWindow} />
-        <SweepDepositCard key={`sweep:${bearer}:${privyActor ?? 'no-privy'}:${identityMatched ? 'matched' : 'unmatched'}`} bearer={bearer!} ownerKey={accountInfo.data?.identifier ?? session.user?.identifier ?? ''} identityMatched={identityMatched} onProtectedError={handleProtectedError} />
+        <SweepDepositCard key={`sweep:${bearer}:${privyActor ?? 'no-privy'}:${identityMatched ? 'matched' : 'unmatched'}`} bearer={bearer!} ownerKey={accountInfo.data?.identifier ?? session.user?.identifier ?? ''} identityMatched={identityMatched} addresses={addresses.error ? undefined : addresses.data} onProtectedError={handleProtectedError} />
       </div>
       <p className="rounded-lg border border-border bg-surface p-4 text-xs text-muted">The retired Deposit list is no longer queried. Finalized direct Solana USDC movements are available under <Link href="/portfolio" className="text-accent hover:underline">Portfolio → USDC in / out</Link>; active fiat and Sweep recovery remains scoped to the known order ID saved by this browser.</p>
     </div>

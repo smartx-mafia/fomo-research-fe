@@ -148,7 +148,7 @@ function timestamp(value: unknown): ProtoTimestamp | undefined {
   return {seconds: row.seconds, ...(typeof row.nanos === 'number' ? {nanos: row.nanos} : {})};
 }
 
-function position(value: unknown): PortfolioPosition {
+export function normalizePortfolioPosition(value: unknown, allowClosed = false): PortfolioPosition {
   const row = object(value);
   const asset = object(row?.asset);
   if (!row || !asset) throw new Error('Portfolio returned an invalid position identity.');
@@ -158,7 +158,7 @@ function position(value: unknown): PortfolioPosition {
   const chainID = nonnegativeIntegerString(asset.chain_id, 'asset.chain_id');
   if (chainID === '0') throw new Error('Portfolio returned an invalid asset.chain_id.');
   const shares = requiredString(row.shares_raw, 'shares_raw');
-  if (!/^\d+$/.test(shares) || shares.length > 256 || BigInt(shares) <= BigInt(0)) {
+  if (!/^\d+$/.test(shares) || shares.length > 256 || (!allowClosed && BigInt(shares) === BigInt(0))) {
     throw new Error('Portfolio returned invalid Trade ledger shares_raw.');
   }
   const entry = nonnegativeIntegerString(row.opened_entry_id ?? 0, 'opened_entry_id');
@@ -260,7 +260,7 @@ export function normalizePortfolio(value: unknown): PortfolioReply {
     total_assets_usd: optionalDecimal(row.total_assets_usd, 'total_assets_usd'),
     cash_observed_at: timestamp(row.cash_observed_at),
     pnl,
-    positions: Array.isArray(row.positions) ? row.positions.map(position) : [],
+    positions: Array.isArray(row.positions) ? row.positions.map((item) => normalizePortfolioPosition(item)) : [],
     partial_errors: errors,
     observed_at: timestamp(row.observed_at),
   };

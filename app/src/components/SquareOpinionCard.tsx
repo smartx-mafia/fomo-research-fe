@@ -4,7 +4,8 @@ import Image from 'next/image';
 import {ExternalLink, Heart, LoaderCircle} from 'lucide-react';
 import {useState} from 'react';
 import type {SquareFeedItem} from '@/api/social-content';
-import {opinionAge, opinionPnl} from '@/lib/opinion-card-display';
+import {opinionAge, opinionCycleReturn} from '@/lib/opinion-card-display';
+import {formatDecimalExact} from '@/lib/exact-decimal';
 import styles from './SquareOpinionCard.module.css';
 import type {TokenMarket} from '@/lib/types';
 
@@ -21,10 +22,15 @@ export function SquareOpinionCard({item, token, remark, likePending, onToggleLik
   const {actor, content} = item;
   const version = content.opinion.latestVersion;
   const name = actor.nickname || actor.username || `${actor.identifier.slice(0, 10)}…`;
-  const pnl = opinionPnl(content.position?.pnlPercent);
-  const symbol = token?.symbol || content.position?.tokenSymbol;
-  const tokenName = token?.name || symbol;
-  const logo = token?.logo && /^https?:\/\//i.test(token.logo) ? token.logo : undefined;
+  const position = content.position;
+  const pnl = opinionCycleReturn(position.pnl_ratio);
+  const symbol = content.token?.symbol || position.symbol;
+  const tokenName = content.token?.name || symbol;
+  const sameToken = token?.chain === position.asset.chain && (position.asset.chain === 'solana'
+    ? token?.address === position.asset.token_address
+    : token?.address?.toLowerCase() === position.asset.token_address.toLowerCase());
+  const logo = sameToken && token?.logo && /^https?:\/\//i.test(token.logo) ? token.logo : undefined;
+  const href = `/token/${encodeURIComponent(position.asset.chain)}/${encodeURIComponent(position.asset.token_address)}`;
   const xLinks = version.items.filter((entry) => entry.kind === 'x_link');
   const published = new Date(item.sortTime.seconds * 1000);
 
@@ -59,18 +65,17 @@ export function SquareOpinionCard({item, token, remark, likePending, onToggleLik
               onError={() => setFailedTokenLogo(logo)} /> : symbol?.slice(0, 1).toUpperCase() || '—'}
           </span>
           <div className={styles.tokenInfo}>
-            <div className={styles.positionLabel}>Position<span className={styles.dot} aria-hidden="true" /></div>
-            <p className={styles.symbol} title={token ? `${tokenName} (${symbol}) · ${token.chain}:${token.address}` : symbol}>
+            <div className={styles.positionLabel}>{BigInt(position.shares_raw) === BigInt(0) ? 'Closed position' : 'Position'}<span className={styles.dot} aria-hidden="true" /></div>
+            <p className={styles.symbol} title={`${tokenName ?? 'Token'} · ${position.asset.chain}:${position.asset.token_address}`}>
               {/* 路径式详情页在静态导出下无客户端路由，走整页加载经 _redirects 重写 */}
-              {token ? <a href={`/token/${encodeURIComponent(token.chain)}/${encodeURIComponent(token.address)}`}>{tokenName}</a> : tokenName || '—'}
+              <a href={href}>{tokenName || position.asset.token_address}</a>
             </p>
           </div>
           <div className={styles.values}>
-            {/* Market value is not part of the current Square contract. Missing is not $0. */}
-            <span className={styles.value} title="Position value is not available yet">
-              <span aria-hidden="true">—</span><span className="sr-only">Position value unavailable</span>
+            <span className={styles.value} title={position.market_value_usd === undefined ? 'Position value unavailable' : 'Position market value (USD)'}>
+              {position.market_value_usd === undefined ? '—' : `$${formatDecimalExact(position.market_value_usd)}`}
             </span>
-            <span className={`${styles.pnl} ${pnl.direction === 'down' ? styles.down : pnl.direction === 'up' ? styles.up : ''}`}>
+            <span title="Cycle return: total cycle PnL divided by cumulative buy value" className={`${styles.pnl} ${pnl.direction === 'down' ? styles.down : pnl.direction === 'up' ? styles.up : ''}`}>
               <span className="sr-only">{pnl.label}</span>
               <span className={styles.pnlVisual} aria-hidden="true">
                 {pnl.direction !== 'flat' ? <span className={styles.triangle}>{pnl.direction === 'down' ? '▾' : '▴'}</span> : null}

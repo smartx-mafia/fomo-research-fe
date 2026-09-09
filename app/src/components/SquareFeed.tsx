@@ -59,7 +59,7 @@ type LaneStates = Record<SquareLaneSlug, LaneState>;
 type LikeSnapshot = {
   lane: SquareLaneSlug;
   sourceID: string;
-  versionID: number;
+  versionID: string;
   liked: boolean;
   count: number;
 };
@@ -146,7 +146,7 @@ function actorInitial(actor: UserActor): string {
 
 function withUpdatedVersion(
   item: SquareFeedItem,
-  versionID: number,
+  versionID: string,
   liked: boolean,
   likeCount: number,
 ): SquareFeedItem {
@@ -253,7 +253,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
   }, []);
   const [activeLane, setActiveLane] = useState<SquareLaneSlug>(initialLane);
   const [laneStates, setLaneStates] = useState<LaneStates>(initialLaneStates);
-  const [pendingLikes, setPendingLikes] = useState<Record<number, boolean>>({});
+  const [pendingLikes, setPendingLikes] = useState<Record<string, boolean>>({});
   const [remarks, setRemarks] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState<Notice>();
   /** §6.2 当前 activeLane 的未读气泡数据；切 lane 即弃，由轮询 effect 重新查询。 */
@@ -643,7 +643,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
     requestAnimationFrame(() => window.scrollTo({top: scrollByLaneRef.current[lane]}));
   };
 
-  const updateAllVersions = (versionID: number, liked: boolean, count: number) => {
+  const updateAllVersions = (versionID: string, liked: boolean, count: number) => {
     setLaneStates((states) => {
       const next = {...states};
       for (const lane of LANE_ORDER) {
