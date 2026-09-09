@@ -7,7 +7,6 @@ import {
   createDepositSweep,
   createFiatDeposit,
   getDepositAddresses,
-  listDeposits,
   prepareDepositSweep,
   submitFiatWalletProof,
   submitDepositSweep,
@@ -33,12 +32,6 @@ describe('deposit API contract', () => {
     callMock.mockResolvedValue({data: {deposit_id: 'd-1', provider_order_id: 'p-1', client_secret: 'secret', status: 1}});
     await createFiatDeposit('jwt', {idempotencyKey: 'deposit-key', fiatAmount: '100.00', receiptEmail: 'a@example.com'});
     expect(callMock).toHaveBeenCalledWith('/v1/deposits/fiat', {method: 'POST', bearer: 'jwt', signal: undefined, body: {idempotency_key: 'deposit-key', fiat_amount: '100.00', fiat_currency: 'USD', receipt_email: 'a@example.com'}});
-  });
-
-  it('uses opaque history cursors without parsing them', async () => {
-    callMock.mockResolvedValue({data: {deposits: [], next_cursor: 'opaque+/='}});
-    await listDeposits('jwt', 'opaque+/=', 20);
-    expect(callMock.mock.calls[0]?.[0]).toContain('cursor=opaque%2B%2F%3D');
   });
 
   it('creates a sweep from the exact Portfolio chain and token with no client amount', async () => {

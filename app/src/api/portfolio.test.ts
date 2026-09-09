@@ -3,7 +3,7 @@ import {beforeEach, describe, expect, it, vi} from 'vitest';
 const {callMock} = vi.hoisted(() => ({callMock: vi.fn()}));
 vi.mock('./envelope', () => ({call: callMock}));
 
-import {getPortfolio, normalizePortfolio, positionTargetID} from './portfolio';
+import {getGlobalPortfolioTrades, getPortfolio, normalizePortfolio, normalizePortfolioTradePage, positionTargetID} from './portfolio';
 
 describe('portfolio contract', () => {
   beforeEach(() => callMock.mockReset());
@@ -132,5 +132,40 @@ describe('portfolio contract', () => {
     expect(positionTargetID({...base, current_cycle: {opened_entry_id: 9081, round: 0}})).toBe('56:erc20:0xabc:9081');
     expect(positionTargetID({...base, asset: {...base.asset, token_address: '0x:abc'}})).toBeUndefined();
     expect(positionTargetID({...base, asset: {...base.asset, kind: 'erc:20'}})).toBeUndefined();
+  });
+
+  it('loads global real trades with all cycle scope parameters omitted and an exact cursor', async () => {
+    callMock.mockResolvedValue({data: {trades: [], next_cursor: '0'}});
+    await expect(getGlobalPortfolioTrades('jwt', '9007199254740997', 50)).resolves.toEqual({trades: [], next_cursor: undefined});
+    expect(callMock).toHaveBeenCalledWith('/v1/portfolio/position/trades?limit=50&before_id=9007199254740997', {
+      bearer: 'jwt', signal: undefined, preserveInt64Fields: ['next_cursor', 'cycle_opened_entry_id'],
+    });
+  });
+
+  it('normalizes exact global trade fields without inventing USD values or missing amounts', () => {
+    expect(normalizePortfolioTradePage({
+      trades: [{
+        trade_id: 'trade-1', side: 'buy', chain: 'solana', token: 'mint', quote_token: 'usdc',
+        amount_in_actual: '900719925474099312345', amount_out: '', status: 'SUCCESS', lifecycle: 'confirmed',
+        tx_hash: 'sig', tx_chain: 'solana', created_at: '2026-09-08T01:02:03Z', confirmed_at: '',
+        fee_app: '1234', fee_currency: 'usdc', cycle_opened_entry_id: '9007199254740995',
+      }],
+      next_cursor: '9007199254740993',
+    })).toEqual({
+      trades: [{
+        trade_id: 'trade-1', side: 'buy', chain: 'solana', token: 'mint', quote_token: 'usdc',
+        amount_in_actual: '900719925474099312345', amount_out: undefined, status: 'SUCCESS', lifecycle: 'confirmed',
+        tx_hash: 'sig', tx_chain: 'solana', created_at: '2026-09-08T01:02:03Z', confirmed_at: undefined,
+        fee_app: '1234', fee_currency: 'usdc', cycle_opened_entry_id: '9007199254740995',
+      }],
+      next_cursor: '9007199254740993',
+    });
+  });
+
+  it('rejects malformed global trade identities, amounts, and incomplete fee pairs', () => {
+    const base = {trade_id: 't', side: 'sell', chain: 'base', token: '0xt', quote_token: '0xq', status: 'SUCCESS', lifecycle: 'included', created_at: '2026-09-08T01:02:03Z', cycle_opened_entry_id: 0};
+    expect(() => normalizePortfolioTradePage({trades: [{...base, amount_out: '1.5'}]})).toThrow(/amount_out/);
+    expect(() => normalizePortfolioTradePage({trades: [{...base, fee_app: '1'}]})).toThrow(/incomplete trade fee/);
+    expect(() => normalizePortfolioTradePage({trades: [{...base, cycle_opened_entry_id: Number.MAX_SAFE_INTEGER + 1}]})).toThrow(/cycle_opened_entry_id/);
   });
 });

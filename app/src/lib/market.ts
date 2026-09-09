@@ -70,7 +70,7 @@ interface Envelope {
 async function marketFetch<T>(
   path: string,
   query: Record<string, string | number | undefined> = {},
-  opts: { revalidate?: number; timeoutMs?: number } = {}
+  opts: { revalidate?: number; timeoutMs?: number; signal?: AbortSignal } = {}
 ): Promise<T> {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(query)) {
@@ -82,7 +82,9 @@ async function marketFetch<T>(
   // 超时避免浏览器请求长期挂起；失败由页面或 WS 数据源接管展示。
   const res = await fetch(url, {
     next: { revalidate: opts.revalidate ?? 5 },
-    signal: AbortSignal.timeout(opts.timeoutMs ?? 10_000),
+    signal: opts.signal
+      ? AbortSignal.any([opts.signal, AbortSignal.timeout(opts.timeoutMs ?? 10_000)])
+      : AbortSignal.timeout(opts.timeoutMs ?? 10_000),
   });
   if (!res.ok) {
     // 协议上恒 200，非 200 说明根本没到业务层（网关/网络）
@@ -209,9 +211,10 @@ export async function fetchBoard(
 export async function fetchTokenMarket(
   chain: string,
   address: string,
-  revalidate = 5
+  revalidate = 5,
+  signal?: AbortSignal,
 ): Promise<TokenMarket> {
-  const data = await marketFetch<unknown>(`/v1/tokens/${chain}/${address}/market`, {}, { revalidate });
+  const data = await marketFetch<unknown>(`/v1/tokens/${encodeURIComponent(chain)}/${encodeURIComponent(address)}/market`, {}, { revalidate, signal });
   return normalizeTokenMarket(data);
 }
 

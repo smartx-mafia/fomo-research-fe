@@ -68,12 +68,62 @@ export type PortfolioReply = {
   observed_at?: ProtoTimestamp;
 };
 
+export type PortfolioTrade = {
+  trade_id: string;
+  side: 'buy' | 'sell';
+  chain: string;
+  token: string;
+  quote_token: string;
+  amount_in_actual?: string;
+  amount_out?: string;
+  status: string;
+  lifecycle: string;
+  tx_hash?: string;
+  created_at: string;
+  confirmed_at?: string;
+  fee_app?: string;
+  fee_currency?: string;
+  tx_chain?: string;
+  cycle_opened_entry_id: string;
+};
+
+export type PortfolioTradePage = {trades: PortfolioTrade[]; next_cursor?: string};
+
 function object(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value !== '' ? value : undefined;
+}
+
+function requiredString(value: unknown, field: string): string {
+  const output = optionalString(value);
+  if (!output) throw new Error(`Portfolio returned an invalid ${field}.`);
+  return output;
+}
+
+function nonnegativeIntegerString(value: unknown, field: string): string {
+  const validNumber = typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
+  const validString = typeof value === 'string' && /^\d+$/.test(value);
+  if (!validNumber && !validString) throw new Error(`Portfolio returned an invalid ${field}.`);
+  return BigInt(value as number | string).toString();
+}
+
+function optionalUnsignedAmount(value: unknown, field: string): string | undefined {
+  const output = optionalString(value);
+  if (output !== undefined && !/^\d+$/.test(output)) throw new Error(`Portfolio returned an invalid ${field}.`);
+  return output;
+}
+
+function rfc3339(value: unknown, field: string, required = false): string | undefined {
+  const output = optionalString(value);
+  if (!output) {
+    if (required) throw new Error(`Portfolio returned an invalid ${field}.`);
+    return undefined;
+  }
+  if (!Number.isFinite(Date.parse(output))) throw new Error(`Portfolio returned an invalid ${field}.`);
+  return output;
 }
 
 function optionalDecimal(value: unknown, field: string): string | undefined {
@@ -228,6 +278,53 @@ export function normalizePortfolio(value: unknown): PortfolioReply {
 export async function getPortfolio(bearer: string, signal?: AbortSignal): Promise<PortfolioReply> {
   const response = await call<unknown>('/v1/portfolio', {bearer, signal});
   return normalizePortfolio(response.data);
+}
+
+export function normalizePortfolioTradePage(value: unknown): PortfolioTradePage {
+  const row = object(value);
+  if (!row || (row.trades !== undefined && !Array.isArray(row.trades))) throw new Error('Portfolio trade history response is invalid.');
+  const trades = (row.trades as unknown[] | undefined ?? []).map((item) => {
+    const trade = object(item);
+    if (!trade || (trade.side !== 'buy' && trade.side !== 'sell')) throw new Error('Portfolio returned an invalid trade side.');
+    const feeApp = optionalUnsignedAmount(trade.fee_app, 'trade.fee_app');
+    const feeCurrency = optionalString(trade.fee_currency);
+    if ((feeApp === undefined) !== (feeCurrency === undefined)) throw new Error('Portfolio returned an incomplete trade fee.');
+    return {
+      trade_id: requiredString(trade.trade_id, 'trade.trade_id'),
+      side: trade.side,
+      chain: requiredString(trade.chain, 'trade.chain'),
+      token: requiredString(trade.token, 'trade.token'),
+      quote_token: requiredString(trade.quote_token, 'trade.quote_token'),
+      amount_in_actual: optionalUnsignedAmount(trade.amount_in_actual, 'trade.amount_in_actual'),
+      amount_out: optionalUnsignedAmount(trade.amount_out, 'trade.amount_out'),
+      status: requiredString(trade.status, 'trade.status'),
+      lifecycle: requiredString(trade.lifecycle, 'trade.lifecycle'),
+      tx_hash: optionalString(trade.tx_hash),
+      created_at: rfc3339(trade.created_at, 'trade.created_at', true)!,
+      confirmed_at: rfc3339(trade.confirmed_at, 'trade.confirmed_at'),
+      fee_app: feeApp,
+      fee_currency: feeCurrency,
+      tx_chain: optionalString(trade.tx_chain),
+      cycle_opened_entry_id: nonnegativeIntegerString(trade.cycle_opened_entry_id, 'trade.cycle_opened_entry_id'),
+    } satisfies PortfolioTrade;
+  });
+  const cursor = nonnegativeIntegerString(row.next_cursor ?? 0, 'trade next_cursor');
+  return {trades, next_cursor: cursor === '0' ? undefined : cursor};
+}
+
+/** Global mode: intentionally omit chain/asset/opened_entry_id. */
+export async function getGlobalPortfolioTrades(bearer: string, beforeID = '0', limit = 50, signal?: AbortSignal): Promise<PortfolioTradePage> {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw new Error('Portfolio trade history limit must be between 1 and 200.');
+  if (!/^\d+$/.test(beforeID)) throw new Error('Portfolio trade history cursor is invalid.');
+  const cursor = BigInt(beforeID).toString();
+  const query = new URLSearchParams({limit: String(limit)});
+  if (cursor !== '0') query.set('before_id', cursor);
+  const response = await call<unknown>(`/v1/portfolio/position/trades?${query}`, {
+    bearer,
+    signal,
+    preserveInt64Fields: ['next_cursor', 'cycle_opened_entry_id'],
+  });
+  return normalizePortfolioTradePage(response.data);
 }
 
 /**

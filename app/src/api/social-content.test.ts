@@ -6,8 +6,9 @@ vi.mock('./envelope', () => ({call: callMock}));
 import {
   SQUARE_LANES,
   deleteOpinion,
-  fetchSquareFeed,
-  fetchSquareFeedUpdates,
+  getSquareFeedUpdates,
+  listSquareFeedPage,
+  type SquareRefreshAnchor,
 } from './social-content';
 
 describe('social content delete contract', () => {
@@ -30,7 +31,7 @@ describe('social content square feed contract', () => {
 
   it('parses the opaque refresh anchor out of a feed page', async () => {
     callMock.mockResolvedValue({data: {items: [], refresh_anchor: 'anchor-1'}});
-    await expect(fetchSquareFeed(SQUARE_LANES.NEWEST)).resolves.toEqual({
+    await expect(listSquareFeedPage(SQUARE_LANES.NEWEST)).resolves.toEqual({
       items: [],
       refreshAnchor: 'anchor-1',
     });
@@ -39,9 +40,21 @@ describe('social content square feed contract', () => {
     });
   });
 
+  it('passes cancellation only to the request options, never into the query', async () => {
+    const controller = new AbortController();
+    callMock.mockResolvedValue({data: {items: [], refresh_anchor: 'anchor-1'}});
+
+    await listSquareFeedPage(SQUARE_LANES.NEWEST, {limit: 20, signal: controller.signal});
+
+    expect(callMock).toHaveBeenCalledWith(
+      '/v1/social/square/feed?lane=SQUARE_LANE_NEWEST&limit=20',
+      {bearer: undefined, signal: controller.signal},
+    );
+  });
+
   it('keeps the refresh anchor absent when the page omits it', async () => {
     callMock.mockResolvedValue({data: {}});
-    await expect(fetchSquareFeed(SQUARE_LANES.FOR_YOU)).resolves.toEqual({items: []});
+    await expect(listSquareFeedPage(SQUARE_LANES.FOR_YOU)).resolves.toEqual({items: []});
   });
 
   it('parses the 2026-09-07 wire format: flattened oneof, explicit zero scalars, and zero-expansion folding', async () => {
@@ -77,7 +90,7 @@ describe('social content square feed contract', () => {
       refresh_anchor: '',
       as_of: {seconds: 0, nanos: 0},
     }});
-    const page = await fetchSquareFeed(SQUARE_LANES.FOR_YOU);
+    const page = await listSquareFeedPage(SQUARE_LANES.FOR_YOU);
     expect(page.nextCursor).toBeUndefined();
     expect(page.refreshAnchor).toBeUndefined();
     expect(page.asOf).toBeUndefined();
@@ -98,27 +111,47 @@ describe('social content square feed updates contract', () => {
 
   it('always sends the lane and only appends a non-empty anchor to the query', async () => {
     callMock.mockResolvedValue({data: {}});
-    await fetchSquareFeedUpdates(SQUARE_LANES.FOR_YOU, {anchor: 'anchor-9', bearer: 'jwt'});
+    await getSquareFeedUpdates(SQUARE_LANES.FOR_YOU, {
+      anchor: 'anchor-9' as SquareRefreshAnchor,
+      bearer: 'jwt',
+    });
     expect(callMock).toHaveBeenCalledWith(
       '/v1/social/square/feed/updates?lane=SQUARE_LANE_FOR_YOU&anchor=anchor-9',
       {bearer: 'jwt'},
     );
 
-    await fetchSquareFeedUpdates(SQUARE_LANES.FRIENDS);
+    await getSquareFeedUpdates(SQUARE_LANES.FRIENDS);
     expect(callMock.mock.lastCall?.[0]).toBe('/v1/social/square/feed/updates?lane=SQUARE_LANE_FRIENDS');
     expect(callMock.mock.lastCall?.[1]).toEqual({bearer: undefined});
 
-    await fetchSquareFeedUpdates(SQUARE_LANES.NEWEST, {anchor: ''});
+    await getSquareFeedUpdates(SQUARE_LANES.NEWEST);
     expect(callMock.mock.lastCall?.[0]).toBe('/v1/social/square/feed/updates?lane=SQUARE_LANE_NEWEST');
   });
 
   it('normalizes omitted count, has_more, and actors to 0, false, and an empty list', async () => {
     callMock.mockResolvedValue({data: {}});
-    await expect(fetchSquareFeedUpdates(SQUARE_LANES.NEWEST, {anchor: 'anchor-9'})).resolves.toEqual({
+    await expect(getSquareFeedUpdates(SQUARE_LANES.NEWEST, {
+      anchor: 'anchor-9' as SquareRefreshAnchor,
+    })).resolves.toEqual({
       count: 0,
       hasMore: false,
       actors: [],
     });
+  });
+
+  it('passes the opaque anchor and cancellation signal to the updates request', async () => {
+    const controller = new AbortController();
+    callMock.mockResolvedValue({data: {}});
+
+    await getSquareFeedUpdates(SQUARE_LANES.NEWEST, {
+      anchor: 'anchor-9' as SquareRefreshAnchor,
+      signal: controller.signal,
+    });
+
+    expect(callMock).toHaveBeenCalledWith(
+      '/v1/social/square/feed/updates?lane=SQUARE_LANE_NEWEST&anchor=anchor-9',
+      {bearer: undefined, signal: controller.signal},
+    );
   });
 
   it('normalizes the capped count, has_more, and deduplicated actors from a full payload', async () => {
@@ -132,7 +165,7 @@ describe('social content square feed updates contract', () => {
         ],
       },
     });
-    await expect(fetchSquareFeedUpdates(SQUARE_LANES.NEWEST)).resolves.toEqual({
+    await expect(getSquareFeedUpdates(SQUARE_LANES.NEWEST)).resolves.toEqual({
       count: 99,
       hasMore: true,
       actors: [
@@ -144,14 +177,14 @@ describe('social content square feed updates contract', () => {
 
   it('rejects a payload whose count is not a safe JSON integer', async () => {
     callMock.mockResolvedValue({data: {count: 'many'}});
-    await expect(fetchSquareFeedUpdates(SQUARE_LANES.NEWEST)).rejects.toThrow(
+    await expect(getSquareFeedUpdates(SQUARE_LANES.NEWEST)).rejects.toThrow(
       'count is not a safe JSON integer',
     );
   });
 
   it('rejects a payload whose actors field is not an array', async () => {
     callMock.mockResolvedValue({data: {actors: {}}});
-    await expect(fetchSquareFeedUpdates(SQUARE_LANES.NEWEST)).rejects.toThrow(
+    await expect(getSquareFeedUpdates(SQUARE_LANES.NEWEST)).rejects.toThrow(
       'updates data.actors is not an array',
     );
   });
