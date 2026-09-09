@@ -16,7 +16,7 @@ describe('Sweep creation and recovery', () => {
     api.create.mockResolvedValue({sweep: {sweep_id: 'sweep-1', origin_chain: 'base', origin_token: token, lifecycle: 'created'}});
     api.get.mockRejectedValue(new Error('Temporary GET failure'));
     const props = {bearer: 'jwt', ownerKey: 'alice', identityMatched: true, onProtectedError: () => false};
-    const view = render(<SweepDepositCard {...props} addresses={[{chain: 'base', address, address_format: 'evm', accepted_tokens: [{symbol: 'USDC', address: token, decimals: 6}], min_sweep_amount: '1000000'}]} />);
+    const view = render(<SweepDepositCard {...props} addresses={[{chain: 'base', address, address_format: 'evm', accepted_tokens: [{symbol: 'USDC', address: token, decimals: 6}], min_sweep_amount: '1000000', deposit_mode: 'sweep', balance_raw: '1000000', balance_meets_minimum: true}]} />);
     await waitFor(() => expect((screen.getByText('Review sweep') as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByText('Review sweep'));
     fireEvent.click(screen.getByText('Create sweep intent'));

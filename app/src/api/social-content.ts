@@ -90,7 +90,7 @@ export type UserActor = {
   avatarURL?: string;
 };
 
-export type PositionToken = {chain: string; address: string; symbol: string; name: string; decimals: number};
+export type PositionToken = {chain: string; address: string; symbol: string; name: string; decimals: number; logo?: string; creator?: string; twitter?: string; website?: string; launchpad?: string; launchpad_name?: string; launchpad_logo?: string};
 
 export type OpinionFeedContent = {
   kind: 'opinion';
@@ -322,7 +322,8 @@ function normalizePositionToken(card: UnknownRecord, position: PortfolioPosition
       typeof token.decimals !== 'number' || !Number.isInteger(token.decimals) || token.decimals < 0 || token.decimals > 255) {
     throw new SocialContentShapeError('feed token does not match position');
   }
-  return token as PositionToken;
+  return {chain: position.asset.chain, address: position.asset.token_address, symbol: token.symbol, name: token.name, decimals: token.decimals,
+    ...Object.fromEntries(['logo', 'creator', 'twitter', 'website', 'launchpad', 'launchpad_name', 'launchpad_logo'].map((key) => [key, nonEmptyString(token[key])]))};
 }
 
 function normalizeOpinionCard(value: unknown): OpinionFeedContent {

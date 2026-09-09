@@ -10,8 +10,6 @@ import {
 import {useCallback, useEffect, useRef, useState} from 'react';
 
 import {SquareOpinionCard} from './SquareOpinionCard';
-import {useSquareTokenData} from '@/hooks/useSquareTokenData';
-import {squareTokenKey, squareTokenRef} from '@/lib/square-token-data';
 
 import {ApiError} from '@/api/envelope';
 import {
@@ -578,7 +576,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
     let controller: AbortController | undefined;
 
     const check = async () => {
-      if (stopped || checking) return;
+      if (stopped || checking || document.visibilityState === 'hidden') return;
       if (activeLaneRef.current !== lane || sessionJWTRef.current !== jwt) return;
       checking = true;
       controller = new AbortController();
@@ -738,7 +736,6 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
   };
 
   const state = laneStates[activeLane];
-  const tokens = useSquareTokenData(state.items);
   const isFriendsLocked = activeLane === 'friends' && !session;
 
   return (
@@ -871,11 +868,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
               now={displayNow}
               key={`${item.type}:${item.sourceID}`}
               item={item}
-              token={(() => {
-                const ref = squareTokenRef(item.content.opinion.targetID);
-                return ref ? tokens[squareTokenKey(ref)] : undefined;
-              })()}
-              remark={remarks[item.actor.identifier]}
+              remark={item.actor.identifier === session?.user?.identifier ? undefined : remarks[item.actor.identifier]}
               likePending={!!pendingLikes[item.content.opinion.latestVersion.versionID]}
               onToggleLike={(candidate) => void toggleLike(candidate)}
             />

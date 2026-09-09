@@ -6,7 +6,7 @@ import Link from 'next/link';
 import {useEffect, useRef, useState} from 'react';
 import useSWR from 'swr';
 
-import {getDepositAddresses} from '@/api/deposit';
+import {depositAddressesFromCashBalances} from '@/lib/sweep-routes';
 import {getUserInfo} from '@/api/auth';
 import {ApiError} from '@/api/envelope';
 import {getPortfolio} from '@/api/portfolio';
@@ -50,16 +50,28 @@ export function DepositView() {
       throw error;
     }
   };
-  const addresses = useSWR(
-    bearer ? ['deposit-addresses', bearer] : null,
-    () => fetchWithSessionGuard((jwt) => getDepositAddresses(jwt)),
-    {dedupingInterval: 12_000, revalidateOnFocus: true, shouldRetryOnError: false},
-  );
   const portfolio = useSWR(
-    bearer ? ['deposit-portfolio-ledger-v2', bearer] : null,
+    bearer ? ['deposit-portfolio-cash-v3', bearer] : null,
     () => fetchWithSessionGuard((jwt) => getPortfolio(jwt)),
     {dedupingInterval: 12_000, revalidateOnFocus: true, shouldRetryOnError: false},
   );
+  const [cashRefreshError, setCashRefreshError] = useState<Error>();
+  useEffect(() => setCashRefreshError(undefined), [bearer]);
+  const partialErrors = portfolio.data?.partial_errors ?? [];
+  const discoveryUnavailable = !!portfolio.data && !portfolio.data.cash_balances?.length && partialErrors.length > 0;
+  const addresses = {data: portfolio.data && !discoveryUnavailable ? depositAddressesFromCashBalances(portfolio.data.cash_balances) : undefined,
+    error: portfolio.error ?? cashRefreshError ?? (discoveryUnavailable ? new Error('Cash discovery unavailable') : undefined), isLoading: portfolio.isLoading};
+  const [refreshingCash, setRefreshingCash] = useState(false);
+  const refreshCash = async () => {
+    if (!bearer || refreshingCash) return;
+    setRefreshingCash(true);
+    setCashRefreshError(undefined);
+    try {
+      const next = await getPortfolio(bearer, undefined, true);
+      if (readSite()?.jwt === bearer) await portfolio.mutate(next, {revalidate: false});
+    } catch (error) { if (readSite()?.jwt === bearer && !handleProtectedError(error)) setCashRefreshError(error instanceof Error ? error : new Error('Cash refresh failed')); }
+    finally {setRefreshingCash(false);}
+  };
   const accountInfo = useSWR(
     bearer ? ['deposit-account-info', bearer] : null,
     () => fetchWithSessionGuard((jwt) => getUserInfo(jwt).then((result) => result.data)),
@@ -181,8 +193,9 @@ export function DepositView() {
   const solanaAddress = solanaRoute?.address;
   return (
     <div className="space-y-4">
-      <header><h1 className="text-2xl font-semibold tracking-tight text-foreground">Deposit</h1><p className="mt-1 text-sm text-muted">Fund your canonical SmartX wallets by direct transfer, EVM sweep or Crossmint fiat onramp.</p></header>
+      <header><h1 className="text-2xl font-semibold tracking-tight text-foreground">Deposit</h1><p className="mt-1 text-sm text-muted">Fund your canonical SmartX wallets by direct transfer, EVM sweep or Crossmint fiat onramp.</p><button type="button" disabled={refreshingCash} onClick={() => void refreshCash()} className="mt-2 text-sm text-accent disabled:opacity-50">{refreshingCash ? 'Refreshing balances…' : 'Refresh five-chain balances'}</button></header>
       {addresses.error ? <p role="alert" className="rounded border border-down/40 bg-down/5 p-3 text-sm text-down">Deposit routes unavailable{addresses.error instanceof ApiError ? ` · code ${addresses.error.code} · trace ${addresses.error.traceID ?? 'unavailable'}` : ''}.</p> : null}
+      {partialErrors.length ? <div role="status" className="rounded border border-accent/40 bg-accent/5 p-3 text-sm text-muted"><p>Some Portfolio data is unavailable. Missing balances are not zero; refresh to check again.</p><ul>{partialErrors.map((error, index) => <li key={`${error.chain}:${error.token_address}:${index}`}>{error.chain || 'Portfolio'}: {error.reason === 'metadata_or_price_unavailable' ? 'Position valuation unavailable' : 'Balance or wallet unavailable'}</li>)}</ul></div> : null}
       {accountInfo.error ? <p role="alert" className="rounded border border-down/40 bg-down/5 p-3 text-sm text-down">Current SmartX/Privy identity could not be verified{accountInfo.error instanceof ApiError ? ` · code ${accountInfo.error.code} · trace ${accountInfo.error.traceID ?? 'unavailable'}` : ''}.</p> : null}
       {!accountInfo.isLoading && !identityMatched ? <p role="alert" className="rounded border border-accent/40 bg-accent/5 p-3 text-sm text-accent">SmartX JWT and the current Privy session could not be proven to belong to the same DID. Re-login and exchange a fresh SmartX token before any fiat or Sweep action.</p> : null}
       {portfolio.error ? <p role="status" className="rounded border border-border p-3 text-xs text-muted">Cash balance refresh is unavailable. Automatic arrival checks are paused; existing order recovery remains available.</p> : null}

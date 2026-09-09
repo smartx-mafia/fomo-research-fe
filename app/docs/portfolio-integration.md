@@ -1,5 +1,7 @@
 # Portfolio contract migration
 
+2026-09-09: Portfolio includes five-chain `cash_balances[]`, now the sole Deposit discovery source. Retired address endpoints are no longer called. User-initiated refresh sends `force_refresh=true`; automatic checks retain the cache window. Missing wallets or failed balances remain partial data and do not hide other chains or ledger positions. See [current funds contract](https://github.com/smartx-mafia/smartx-backend/blob/master/docs/contracts/funds-integration.md).
+
 The deployed backend at `930d3d3a` removed `amount_raw`, `trade_basis`, `sweep` and `current_cycle` from `/v1/portfolio`. The old frontend rejected successful responses because it required `amount_raw`, then hid the parser exception behind “Could not load portfolio”.
 
 ## Current consumption
