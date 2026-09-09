@@ -9,6 +9,7 @@
 
 import { num } from "./format";
 import {normalizeTokenOverview, type TokenOverview} from './token-overview';
+import {normalizeChartBars} from './chart-data';
 import type {
   BoardData,
   BoardName,
@@ -232,15 +233,16 @@ export async function fetchTokenOverview(chain: string, address: string, signal?
 export async function fetchOhlcv(
   chain: string,
   address: string,
-  opts: { period?: OhlcvPeriod; from?: number; to?: number } = {}
+  opts: { period?: OhlcvPeriod; from?: number; to?: number; signal?: AbortSignal } = {}
 ): Promise<OhlcvBar[]> {
   const { period = "5m", from, to } = opts;
-  const data = await marketFetch<{ bars?: OhlcvBar[] }>(
-    `/v1/tokens/${chain}/${address}/ohlcv`,
+  const data = await marketFetch<{ bars?: unknown }>(
+    `/v1/tokens/${encodeURIComponent(chain)}/${encodeURIComponent(address)}/ohlcv`,
     { period, from, to },
-    { revalidate: 10 }
+    { revalidate: 0, signal: opts.signal, cache: 'no-store' }
   );
-  return Array.isArray(data?.bars) ? data.bars : [];
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Missing chart response.');
+  return normalizeChartBars(data.bars, period);
 }
 
 export async function fetchTrades(

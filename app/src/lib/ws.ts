@@ -263,7 +263,10 @@ export function useTokenLive(chain: string, address: string, initial?: TokenMark
       if (f.kind === "update") {
         // token topic 的 update 数组通常只有一条，是最新全量态；取最后一条覆盖即可
         const raw = Array.isArray(f.data) ? f.data[f.data.length - 1] : f.data;
-        setData(normalizeTokenMarket(raw));
+        const incoming = normalizeTokenMarket(raw);
+        const expectedAddress = chain === 'solana' ? address : address.toLowerCase();
+        if (incoming.chain !== chain || incoming.address !== expectedAddress || !incoming.updated_at) return;
+        setData((previous) => previous?.updated_at && incoming.updated_at! < previous.updated_at ? previous : incoming);
         setLive(true);
       } else if (f.kind === "error") {
         setLive(false);

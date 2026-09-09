@@ -76,7 +76,7 @@ export interface OhlcvBar {
   h: number;
   l: number;
   c: number;
-  v: number;
+  v: number | null;
   t: number;
 }
 
