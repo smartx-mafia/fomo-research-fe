@@ -46,6 +46,8 @@ export default function TokenDetailClient({chain, address}: {chain: string; addr
         <PriceChart chain={chain} address={address} createdAt={market.created_at} />
       </TokenLive>
 
+      <DetailTabs key={`details:${chain}:${address}`} chain={chain} address={address} />
+
       {PRIVY_APP_ID ? (
         <TradePanel chain={chain} address={address} symbol={market.symbol} />
       ) : (
@@ -54,7 +56,6 @@ export default function TokenDetailClient({chain, address}: {chain: string; addr
         </section>
       )}
 
-      <DetailTabs chain={chain} address={address} />
     </div>
   );
 }

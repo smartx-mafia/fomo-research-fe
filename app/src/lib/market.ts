@@ -8,6 +8,7 @@
  */
 
 import { num } from "./format";
+import {normalizeTokenOverview, type TokenOverview} from './token-overview';
 import type {
   BoardData,
   BoardName,
@@ -70,7 +71,7 @@ interface Envelope {
 async function marketFetch<T>(
   path: string,
   query: Record<string, string | number | undefined> = {},
-  opts: { revalidate?: number; timeoutMs?: number; signal?: AbortSignal } = {}
+  opts: { revalidate?: number; timeoutMs?: number; signal?: AbortSignal; cache?: RequestCache } = {}
 ): Promise<T> {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(query)) {
@@ -81,6 +82,7 @@ async function marketFetch<T>(
 
   // 超时避免浏览器请求长期挂起；失败由页面或 WS 数据源接管展示。
   const res = await fetch(url, {
+    cache: opts.cache,
     next: { revalidate: opts.revalidate ?? 5 },
     signal: opts.signal
       ? AbortSignal.any([opts.signal, AbortSignal.timeout(opts.timeoutMs ?? 10_000)])
@@ -216,6 +218,15 @@ export async function fetchTokenMarket(
 ): Promise<TokenMarket> {
   const data = await marketFetch<unknown>(`/v1/tokens/${encodeURIComponent(chain)}/${encodeURIComponent(address)}/market`, {}, { revalidate, signal });
   return normalizeTokenMarket(data);
+}
+
+/** Optional public snapshot: no fallback to /market, /holders, bars or trading endpoints. */
+export async function fetchTokenOverview(chain: string, address: string, signal?: AbortSignal): Promise<TokenOverview> {
+  const data = await marketFetch<unknown>(
+    `/v1/tokens/${encodeURIComponent(chain)}/${encodeURIComponent(address)}/overview`,
+    {}, {revalidate: 0, timeoutMs: 8_000, signal, cache: 'no-store'},
+  );
+  return normalizeTokenOverview(data, chain, address);
 }
 
 export async function fetchOhlcv(

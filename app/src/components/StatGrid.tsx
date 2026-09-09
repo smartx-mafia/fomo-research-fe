@@ -15,7 +15,7 @@ export default function StatGrid({ data }: { data: TokenMarket }) {
 
   return (
     <Card>
-      <CardHeader>Overview</CardHeader>
+      <CardHeader>Market stats</CardHeader>
       <div className="grid grid-cols-2 gap-2 p-4 sm:grid-cols-3 lg:grid-cols-4">
         <LiveCell label="Market Cap" raw={data.market_cap} text={fmtUsd(data.market_cap)} />
         <LiveCell label="FDV" raw={data.market_cap_diluted} text={fmtUsd(data.market_cap_diluted)} />
