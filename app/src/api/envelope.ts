@@ -8,8 +8,8 @@
  *    调用方看见 Response 对象的机会。
  * ② 失败分三类，视觉与处理都不同（见 FailureKind）：混在一起的话，
  *    "代理没起来"和"identity token 过期"会长得一模一样。
- * ③ 零值字段**不出现**（protojson 的 omitempty），所以可选字段判空要用
- *    undefined，不要用 === ''。
+ * ③ 当前 HTTP 编码会显式输出 protobuf 零值；各领域 normalizer 必须把
+ *    `""`、`0` 与全零嵌套对象按契约折叠，不能直接当成有效业务数据。
  */
 import {newTraceID} from '@/lib/trace';
 import {BUSINESS_API_BASE} from '@/config';
@@ -96,6 +96,12 @@ type CallOptions = {
   body?: unknown;
   signal?: AbortSignal;
   /**
+   * This backend currently emits selected protobuf int64 values as JSON
+   * numbers. Quote only those known fields before JSON.parse so cursors and
+   * identities above Number.MAX_SAFE_INTEGER stay exact.
+   */
+  preserveInt64Fields?: readonly string[];
+  /**
    * 本站 JWT。**登录端点绝不能传这个**，所以它是显式参数而不是从
    * storage 里自动读 —— 自动读的话，「登录请求不带 Authorization」
    * 这条红线就只剩一句口头约定，而违反它不报错：带着过期 token 打登录
@@ -103,6 +109,13 @@ type CallOptions = {
    */
   bearer?: string;
 };
+
+function preserveIntegerFields(text: string, fields: readonly string[]): string {
+  if (fields.length === 0) return text;
+  const names = fields.map((field) => field.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|');
+  const pattern = new RegExp(`([,{]\\s*)("(?:${names})"\\s*:\\s*)(-?\\d+)(?=\\s*[,}])`, 'g');
+  return text.replace(pattern, '$1$2"$3"');
+}
 
 /**
  * 发一次浏览器直连请求。传入的契约路径仍写成 /v1/...，这里统一补上
@@ -154,7 +167,7 @@ export async function call<T>(path: string, opts: CallOptions = {}): Promise<Cal
 
   let env: Envelope<T>;
   try {
-    env = JSON.parse(text) as Envelope<T>;
+    env = JSON.parse(preserveIntegerFields(text, opts.preserveInt64Fields ?? [])) as Envelope<T>;
   } catch {
     throw new ApiError(
       'transport',

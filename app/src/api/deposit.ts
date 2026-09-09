@@ -166,15 +166,6 @@ export async function getDeposit(bearer: string, depositID: string, signal?: Abo
   return {deposit_id: entry.deposit_id, status: entry.status, deposit: entry, next_action: optionalString(row.next_action), wallet_proof: challenge(row.wallet_proof), client_secret: optionalString(row.client_secret)};
 }
 
-export async function listDeposits(bearer: string, cursor = '', limit = 20, signal?: AbortSignal) {
-  const query = new URLSearchParams({limit: String(limit)});
-  if (cursor) query.set('cursor', cursor);
-  const response = await call<unknown>(`/v1/deposits?${query}`, {bearer, signal});
-  const row = record(response.data);
-  if (!row || (row.deposits !== undefined && !Array.isArray(row.deposits))) throw new Error('Deposit history response is invalid.');
-  return {deposits: (row.deposits as unknown[] | undefined ?? []).map(depositEntry), next_cursor: optionalString(row.next_cursor)};
-}
-
 export async function createDepositSweep(bearer: string, originChain: string, originTokenAddress: string, signal?: AbortSignal) {
   if (!originChain || !originTokenAddress) throw new Error('Sweep origin chain and token are required.');
   const response = await call<unknown>('/v1/deposit-sweeps', {method: 'POST', bearer, signal, body: {origin_chain: originChain, origin_token_address: originTokenAddress}});

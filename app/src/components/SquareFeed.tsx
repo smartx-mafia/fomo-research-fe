@@ -1,10 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import {useSearchParams} from 'next/navigation';
 import {
-  ExternalLink,
-  Heart,
   LoaderCircle,
   LockKeyhole,
   RefreshCw,
@@ -12,17 +9,23 @@ import {
 } from 'lucide-react';
 import {useCallback, useEffect, useRef, useState} from 'react';
 
+import {SquareOpinionCard} from './SquareOpinionCard';
+import {useSquareTokenData} from '@/hooks/useSquareTokenData';
+import {squareTokenKey, squareTokenRef} from '@/lib/square-token-data';
+
 import {ApiError} from '@/api/envelope';
 import {
   SQUARE_LANES,
-  fetchSquareFeed,
-  fetchSquareFeedUpdates,
+  getSquareFeedUpdates,
   likeOpinionVersion,
+  listSquareFeedPage,
   unlikeOpinionVersion,
   type LikeMutationResult,
   type ProtoTimestamp,
   type SquareFeedItem,
   type SquareLane,
+  type SquarePageCursor,
+  type SquareRefreshAnchor,
   type SquareUpdatesData,
   type UserActor,
 } from '@/api/social-content';
@@ -38,11 +41,11 @@ type LaneRequestError = {
 
 type LaneState = {
   items: SquareFeedItem[];
-  nextCursor?: string;
+  nextCursor?: SquarePageCursor;
   batchID?: string;
   asOf?: ProtoTimestamp;
   /** §6.2 不透明轮询锚点；每页覆盖，下拉刷新/点气泡重拉首屏后由新首屏推进。 */
-  refreshAnchor?: string;
+  refreshAnchor?: SquareRefreshAnchor;
   hydrated: boolean;
   loadingInitial: boolean;
   refreshing: boolean;
@@ -139,19 +142,6 @@ function actorName(actor: UserActor): string {
 
 function actorInitial(actor: UserActor): string {
   return actorName(actor).trim().slice(0, 1).toUpperCase() || '?';
-}
-
-function pnlTone(value?: string): string {
-  if (!value) return 'text-muted';
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed === 0) return 'text-muted';
-  return parsed > 0 ? 'text-up' : 'text-down';
-}
-
-function formatPnl(value: string): string {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return value;
-  return `${parsed > 0 ? '+' : ''}${parsed.toFixed(2)}%`;
 }
 
 function withUpdatedVersion(
@@ -252,118 +242,15 @@ function InlineNotice({notice, onDismiss}: {notice: Notice; onDismiss: () => voi
   );
 }
 
-function OpinionCard({
-  item,
-  remark,
-  likePending,
-  onToggleLike,
-}: {
-  item: SquareFeedItem;
-  remark?: string;
-  likePending: boolean;
-  onToggleLike: (item: SquareFeedItem) => void;
-}) {
-  const version = item.content.opinion.latestVersion;
-  const position = item.content.position;
-  const xLinks = version.items.filter((entry) => entry.kind === 'x_link');
-
-  return (
-    <article className="rounded-xl border border-border bg-surface p-4 transition-colors hover:border-border/80 hover:bg-surface/90">
-      <div className="flex gap-3">
-        {item.actor.avatarURL ? (
-          // The actor URL is backend-owned runtime data; this PoC does not have a fixed remote image allowlist.
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={item.actor.avatarURL}
-            alt=""
-            className="h-10 w-10 shrink-0 rounded-full bg-surface-2 object-cover"
-          />
-        ) : (
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-surface-2 text-sm font-semibold text-muted">
-            {actorInitial(item.actor)}
-          </div>
-        )}
-
-        <div className="min-w-0 flex-1">
-          <header className="flex flex-wrap items-start justify-between gap-x-3 gap-y-1">
-            <div className="min-w-0">
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="truncate text-sm font-semibold text-foreground">{actorName(item.actor)}</span>
-                {remark ? (
-                  <span className="max-w-32 truncate rounded bg-accent/10 px-1.5 py-0.5 text-[10px] text-accent" title={remark}>
-                    {remark}
-                  </span>
-                ) : null}
-                {item.actor.username ? <span className="truncate text-xs text-muted">@{item.actor.username}</span> : null}
-              </div>
-              <p className="truncate text-[11px] text-muted" title={item.actor.identifier}>
-                {compactIdentifier(item.actor.identifier)}
-              </p>
-            </div>
-            <time className="shrink-0 text-xs text-muted" dateTime={new Date(item.sortTime.seconds * 1000).toISOString()}>
-              {formatTime(item.sortTime)}
-            </time>
-          </header>
-
-          <p className="mt-3 whitespace-pre-wrap break-words text-[15px] leading-6 text-foreground">
-            {version.body}
-          </p>
-
-          {position?.tokenSymbol || position?.pnlPercent ? (
-            <div className="mt-3 inline-flex items-center gap-2 rounded-md border border-border bg-surface-2 px-2.5 py-1.5 text-xs">
-              {position.tokenSymbol ? <span className="font-semibold text-foreground">${position.tokenSymbol}</span> : null}
-              {position.pnlPercent ? <span className={`tabular font-medium ${pnlTone(position.pnlPercent)}`}>{formatPnl(position.pnlPercent)}</span> : null}
-            </div>
-          ) : null}
-
-          {xLinks.length > 0 ? (
-            <div className="mt-3 flex flex-wrap gap-2">
-              {xLinks.map((link) => (
-                <a
-                  key={link.url}
-                  href={link.url}
-                  target="_blank"
-                  rel="noreferrer noopener"
-                  className="inline-flex max-w-full items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted hover:border-muted hover:text-foreground"
-                >
-                  <ExternalLink className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-                  <span className="truncate">View on X</span>
-                </a>
-              ))}
-            </div>
-          ) : null}
-
-          <footer className="mt-4 flex items-center gap-3 border-t border-border/70 pt-3">
-            <button
-              type="button"
-              disabled={likePending}
-              aria-pressed={version.viewerLike}
-              aria-label={version.viewerLike ? 'Unlike this opinion' : 'Like this opinion'}
-              onClick={() => onToggleLike(item)}
-              className={`inline-flex min-w-16 items-center gap-1.5 rounded-md px-2 py-1 text-xs transition-colors disabled:cursor-wait disabled:opacity-60 ${
-                version.viewerLike ? 'bg-down/10 text-down' : 'text-muted hover:bg-surface-2 hover:text-foreground'
-              }`}
-            >
-              {likePending ? (
-                <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden="true" />
-              ) : (
-                <Heart className={`h-4 w-4 ${version.viewerLike ? 'fill-current' : ''}`} aria-hidden="true" />
-              )}
-              <span className="tabular">{version.likeCount}</span>
-            </button>
-            {version.versionNo > 1 ? (
-              <span className="text-[11px] text-muted">Updated {version.versionNo - 1} times</span>
-            ) : null}
-          </footer>
-        </div>
-      </div>
-    </article>
-  );
-}
-
 export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
   const session = useSession();
-  const searchParams = useSearchParams();
+  const [displayNow, setDisplayNow] = useState(() => Date.now());
+  useEffect(() => {
+    const update = () => { if (document.visibilityState === 'visible') setDisplayNow(Date.now()); };
+    const timer = window.setInterval(update, 60_000);
+    document.addEventListener('visibilitychange', update);
+    return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', update); };
+  }, []);
   const [activeLane, setActiveLane] = useState<SquareLaneSlug>(initialLane);
   const [laneStates, setLaneStates] = useState<LaneStates>(initialLaneStates);
   const [pendingLikes, setPendingLikes] = useState<Record<number, boolean>>({});
@@ -377,6 +264,9 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
   const scrollByLaneRef = useRef<Record<SquareLaneSlug, number>>({'for-you': 0, newest: 0, friends: 0});
   const requestGenerationRef = useRef<Record<SquareLaneSlug, number>>({'for-you': 0, newest: 0, friends: 0});
   const requestInFlightRef = useRef<Record<SquareLaneSlug, boolean>>({'for-you': false, newest: false, friends: false});
+  const requestAbortRef = useRef<Partial<Record<SquareLaneSlug, AbortController>>>({});
+  const remarksAbortRef = useRef<Set<AbortController>>(new Set());
+  const mountedRef = useRef(false);
   /** 与点赞写入重叠的旧 Feed 快照不得覆盖 mutation 的最终状态。 */
   const likeMutationEpochRef = useRef(0);
   const activeLikeMutationsRef = useRef(0);
@@ -386,6 +276,13 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
 
   activeLaneRef.current = activeLane;
   sessionJWTRef.current = session?.jwt;
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   const replaceLane = useCallback((lane: SquareLaneSlug, updater: (state: LaneState) => LaneState) => {
     setLaneStates((states) => ({...states, [lane]: updater(states[lane])}));
@@ -402,11 +299,17 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
       {length: Math.ceil(identifiers.length / 100)},
       (_, index) => identifiers.slice(index * 100, (index + 1) * 100),
     );
+    const controller = new AbortController();
+    remarksAbortRef.current.add(controller);
     try {
       const responses = await Promise.all(
-        batches.map((userIdentifiers) => getRelations(bearer, {userIdentifiers, addresses: []})),
+        batches.map((userIdentifiers) => getRelations(
+          bearer,
+          {userIdentifiers, addresses: []},
+          controller.signal,
+        )),
       );
-      if (sessionJWTRef.current !== bearer) return;
+      if (!mountedRef.current || sessionJWTRef.current !== bearer) return;
       const next: Record<string, string> = {};
       responses.forEach((response, batchIndex) => {
         batches[batchIndex].forEach((identifier, index) => {
@@ -416,9 +319,12 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
       });
       setRemarks((current) => ({...current, ...next}));
     } catch (error) {
+      if (controller.signal.aborted || !mountedRef.current) return;
       identifiers.forEach((identifier) => queriedRemarksRef.current.delete(identifier));
       if (error instanceof ApiError && error.code === 400000 && sessionJWTRef.current === bearer) clearSite();
       // Private labels are optional viewer enrichment. Their failure must not hide the public feed.
+    } finally {
+      remarksAbortRef.current.delete(controller);
     }
   }, []);
 
@@ -428,11 +334,14 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
     if (requestInFlightRef.current[lane]) {
       if (!refresh) return;
       // A user refresh supersedes pagination. The older response is ignored by generation.
+      requestAbortRef.current[lane]?.abort();
       requestGenerationRef.current[lane] += 1;
       requestInFlightRef.current[lane] = false;
     }
 
     requestInFlightRef.current[lane] = true;
+    const controller = new AbortController();
+    requestAbortRef.current[lane] = controller;
     const generation = ++requestGenerationRef.current[lane];
     const likeEpoch = likeMutationEpochRef.current;
     replaceLane(lane, (state) => ({
@@ -445,8 +354,12 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
     }));
 
     try {
-      const data = await fetchSquareFeed(LANE_META[lane].apiLane, {bearer, limit: 20});
-      if (requestGenerationRef.current[lane] !== generation || sessionJWTRef.current !== bearer) return;
+      const data = await listSquareFeedPage(LANE_META[lane].apiLane, {
+        bearer,
+        limit: 20,
+        signal: controller.signal,
+      });
+      if (!mountedRef.current || requestGenerationRef.current[lane] !== generation || sessionJWTRef.current !== bearer) return;
       if (likeMutationEpochRef.current !== likeEpoch) {
         replaceLane(lane, (state) => ({...state, loadingInitial: false, refreshing: false}));
         if (activeLikeMutationsRef.current > 0) {
@@ -476,7 +389,8 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
         }
       }
     } catch (error) {
-      if (requestGenerationRef.current[lane] !== generation || sessionJWTRef.current !== bearer) return;
+      if (controller.signal.aborted) return;
+      if (!mountedRef.current || requestGenerationRef.current[lane] !== generation || sessionJWTRef.current !== bearer) return;
       const normalized = requestError(error);
       if (error instanceof ApiError && error.code === 400000) clearSite();
       replaceLane(lane, (state) => ({
@@ -488,6 +402,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
     } finally {
       if (requestGenerationRef.current[lane] === generation && sessionJWTRef.current === bearer) {
         requestInFlightRef.current[lane] = false;
+        if (requestAbortRef.current[lane] === controller) delete requestAbortRef.current[lane];
       }
     }
   }, [ensureRemarks, replaceLane]);
@@ -498,17 +413,20 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
     if (!state.nextCursor || requestInFlightRef.current[lane] || (lane === 'friends' && !bearer)) return;
 
     requestInFlightRef.current[lane] = true;
+    const controller = new AbortController();
+    requestAbortRef.current[lane] = controller;
     const generation = ++requestGenerationRef.current[lane];
     const likeEpoch = likeMutationEpochRef.current;
     replaceLane(lane, (current) => ({...current, loadingMore: true, loadMoreError: undefined}));
 
     try {
-      const data = await fetchSquareFeed(LANE_META[lane].apiLane, {
+      const data = await listSquareFeedPage(LANE_META[lane].apiLane, {
         bearer,
         cursor: state.nextCursor,
         limit: 20,
+        signal: controller.signal,
       });
-      if (requestGenerationRef.current[lane] !== generation || sessionJWTRef.current !== bearer) return;
+      if (!mountedRef.current || requestGenerationRef.current[lane] !== generation || sessionJWTRef.current !== bearer) return;
       if (likeMutationEpochRef.current !== likeEpoch) {
         replaceLane(lane, (current) => ({...current, loadingMore: false}));
         if (activeLikeMutationsRef.current > 0) {
@@ -533,7 +451,8 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
       });
       void ensureRemarks(data.items);
     } catch (error) {
-      if (requestGenerationRef.current[lane] !== generation || sessionJWTRef.current !== bearer) return;
+      if (controller.signal.aborted) return;
+      if (!mountedRef.current || requestGenerationRef.current[lane] !== generation || sessionJWTRef.current !== bearer) return;
       if (error instanceof ApiError && error.code === 100103) {
         requestInFlightRef.current[lane] = false;
         replaceLane(lane, (current) => ({...current, loadingMore: false, nextCursor: undefined}));
@@ -549,6 +468,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
     } finally {
       if (requestGenerationRef.current[lane] === generation && sessionJWTRef.current === bearer) {
         requestInFlightRef.current[lane] = false;
+        if (requestAbortRef.current[lane] === controller) delete requestAbortRef.current[lane];
       }
     }
   }, [ensureRemarks, laneStates, loadFirstPage, replaceLane]);
@@ -569,9 +489,13 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
     previousSessionRef.current = currentJWT;
 
     for (const lane of LANE_ORDER) {
+      requestAbortRef.current[lane]?.abort();
+      delete requestAbortRef.current[lane];
       requestGenerationRef.current[lane] += 1;
       requestInFlightRef.current[lane] = false;
     }
+    for (const controller of remarksAbortRef.current) controller.abort();
+    remarksAbortRef.current.clear();
     likeMutationEpochRef.current += 1;
     activeLikeMutationsRef.current = 0;
     staleReadsAfterLikeRef.current = {};
@@ -625,17 +549,6 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
     return () => window.removeEventListener('popstate', onPopState);
   }, []);
 
-  // Next Link 到同一路由的新 query 不一定重挂载客户端树；以 URL 为准同步 Lane。
-  useEffect(() => {
-    const value = searchParams.get('lane');
-    if (value !== 'for-you' && value !== 'newest' && value !== 'friends') return;
-    if (value === activeLaneRef.current) return;
-    scrollByLaneRef.current[activeLaneRef.current] = window.scrollY;
-    activeLaneRef.current = value;
-    setActiveLane(value);
-    requestAnimationFrame(() => window.scrollTo({top: scrollByLaneRef.current[value]}));
-  }, [searchParams]);
-
   useEffect(() => {
     const sentinel = loadMoreSentinelRef.current;
     const state = laneStates[activeLane];
@@ -652,7 +565,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
 
   // §6.2 未读轮询：仅跟踪 activeLane，有锚点（即已 hydrate）才开；30s 一次，
   // 回前台立即补一次，切 lane / 新锚点（含下拉刷新、点气泡后的新首屏）会立即重查。
-  // 失败一律静默（不进 notice 体系）：100103 丢锚点等下次首屏、400000 清会话并停本轮轮询。
+  // 失败不进 notice 体系：100103 丢锚点并立即重拉首屏，400000 清会话并停本轮轮询。
   const activeRefreshAnchor = laneStates[activeLane].refreshAnchor;
 
   useEffect(() => {
@@ -661,19 +574,30 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
     const jwt = session?.jwt;
     if (!anchor || (lane === 'friends' && !jwt)) return;
     let stopped = false;
+    let checking = false;
+    let controller: AbortController | undefined;
 
     const check = async () => {
-      if (stopped) return;
+      if (stopped || checking) return;
       if (activeLaneRef.current !== lane || sessionJWTRef.current !== jwt) return;
+      checking = true;
+      controller = new AbortController();
       try {
-        const updates = await fetchSquareFeedUpdates(LANE_META[lane].apiLane, {bearer: jwt, anchor});
+        const updates = await getSquareFeedUpdates(LANE_META[lane].apiLane, {
+          bearer: jwt,
+          anchor,
+          signal: controller.signal,
+        });
         if (stopped || activeLaneRef.current !== lane || sessionJWTRef.current !== jwt) return;
         setUnreads(updates.count > 0 ? updates : undefined);
       } catch (error) {
+        if (controller.signal.aborted) return;
         if (stopped || activeLaneRef.current !== lane || sessionJWTRef.current !== jwt) return;
         if (error instanceof ApiError && error.code === 100103) {
-          // 锚点损坏/过期/跨 lane：丢弃锚点，轮询自然停到下次首屏刷新带回新锚点。
+          // 契约要求丢弃失效锚点并立即重拉首屏，不能停在失去未读能力的旧会话。
+          setUnreads(undefined);
           replaceLane(lane, (current) => ({...current, refreshAnchor: undefined}));
+          void loadFirstPage(lane, true);
           return;
         }
         if (error instanceof ApiError && error.code === 400000) {
@@ -683,6 +607,8 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
           return;
         }
         // 其余错误静默忽略，等下一轮。
+      } finally {
+        checking = false;
       }
     };
 
@@ -694,10 +620,11 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
     document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
       stopped = true;
+      controller?.abort();
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [activeLane, activeRefreshAnchor, replaceLane, session?.jwt]);
+  }, [activeLane, activeRefreshAnchor, loadFirstPage, replaceLane, session?.jwt]);
 
   // 未读气泡只属于当前 lane：切换即清掉，轮询 effect 重新查询。
   useEffect(() => {
@@ -766,10 +693,10 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
       const result: LikeMutationResult = await (optimisticLiked
         ? likeOpinionVersion(bearer, version.versionID)
         : unlikeOpinionVersion(bearer, version.versionID));
-      if (sessionJWTRef.current !== bearer) return;
+      if (!mountedRef.current || sessionJWTRef.current !== bearer) return;
       updateAllVersions(version.versionID, result.liked, result.likeCount);
     } catch (error) {
-      if (sessionJWTRef.current !== bearer) return;
+      if (!mountedRef.current || sessionJWTRef.current !== bearer) return;
       setLaneStates((states) => {
         const next = {...states};
         for (const lane of LANE_ORDER) {
@@ -790,7 +717,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
       if (error instanceof ApiError && error.code === 400000) clearSite();
       setNotice(normalized);
     } finally {
-      if (sessionJWTRef.current !== bearer) return;
+      if (!mountedRef.current || sessionJWTRef.current !== bearer) return;
       likeMutationEpochRef.current += 1;
       activeLikeMutationsRef.current = Math.max(0, activeLikeMutationsRef.current - 1);
       setPendingLikes((pending) => {
@@ -811,10 +738,11 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
   };
 
   const state = laneStates[activeLane];
+  const tokens = useSquareTokenData(state.items);
   const isFriendsLocked = activeLane === 'friends' && !session;
 
   return (
-    <section className="mx-auto w-full max-w-3xl pb-12">
+    <section className="mx-auto w-full max-w-xl pb-12">
       <header className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
@@ -934,14 +862,19 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
           </div>
         </div>
       ) : (
-        <div className="flex flex-col gap-3" aria-busy={state.refreshing}>
+        <div className="flex flex-col bg-black" aria-busy={state.refreshing}>
           {state.error ? (
             <InlineNotice notice={state.error} onDismiss={() => replaceLane(activeLane, (current) => ({...current, error: undefined}))} />
           ) : null}
           {state.items.map((item) => (
-            <OpinionCard
+            <SquareOpinionCard
+              now={displayNow}
               key={`${item.type}:${item.sourceID}`}
               item={item}
+              token={(() => {
+                const ref = squareTokenRef(item.content.opinion.targetID);
+                return ref ? tokens[squareTokenKey(ref)] : undefined;
+              })()}
               remark={remarks[item.actor.identifier]}
               likePending={!!pendingLikes[item.content.opinion.latestVersion.versionID]}
               onToggleLike={(candidate) => void toggleLike(candidate)}

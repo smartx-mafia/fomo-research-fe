@@ -32,10 +32,12 @@ export type RelationsBatchReply = {
 export function getRelations(
   bearer: string,
   targets: {userIdentifiers: string[]; addresses: string[]},
+  signal?: AbortSignal,
 ) {
   return call<RelationsBatchReply>('/v1/social/relations/batch', {
     method: 'POST',
     bearer,
+    signal,
     body: {
       ...(targets.userIdentifiers.length > 0 ? {user_identifiers: targets.userIdentifiers} : {}),
       ...(targets.addresses.length > 0 ? {addresses: targets.addresses} : {}),

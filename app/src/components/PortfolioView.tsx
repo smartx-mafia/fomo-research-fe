@@ -8,6 +8,7 @@ import useSWR from 'swr';
 import {ApiError} from '@/api/envelope';
 import {getPortfolio, positionTargetID, type PortfolioPosition, type ProtoTimestamp} from '@/api/portfolio';
 import {OpinionComposer} from '@/components/OpinionComposer';
+import {PortfolioActivity} from '@/components/PortfolioActivity';
 import {
   addDecimalStrings,
   decimalSign,
@@ -260,6 +261,8 @@ export function PortfolioView() {
           <div className="p-10 text-center text-sm text-muted">No non-zero on-chain positions were returned for your canonical wallets.</div>
         )}
       </section>
+
+      <PortfolioActivity bearer={session.jwt} />
 
       {opinionTarget ? (
         <OpinionComposer

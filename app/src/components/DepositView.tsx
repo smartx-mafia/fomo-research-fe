@@ -11,7 +11,6 @@ import {getUserInfo} from '@/api/auth';
 import {ApiError} from '@/api/envelope';
 import {getPortfolio} from '@/api/portfolio';
 import {DepositAddresses} from '@/components/DepositAddresses';
-import {DepositHistory} from '@/components/DepositHistory';
 import {FiatDepositCard} from '@/components/FiatDepositCard';
 import {SweepDepositCard} from '@/components/SweepDepositCard';
 import {receiptEmailForAuth} from '@/lib/deposit';
@@ -33,8 +32,6 @@ function isAdmissionError(error: unknown) {
 export function DepositView() {
   const session = useSession();
   const {ready, authenticated, user} = usePrivy();
-  const [resumeFiatID, setResumeFiatID] = useState<string>();
-  const [resumeSweepID, setResumeSweepID] = useState<string>();
   const [manualAdmissionError, setManualAdmissionError] = useState<ApiError>();
   const [solanaMonitor, setSolanaMonitor] = useState<SolanaBalanceMonitor>({state: 'idle', attempts: 0});
   const solanaMonitorController = useRef<AbortController | undefined>(undefined);
@@ -197,10 +194,10 @@ export function DepositView() {
         onStopSolanaMonitor={stopSolanaMonitor}
       />
       <div className="grid items-start gap-4 xl:grid-cols-2">
-        <FiatDepositCard key={`fiat:${bearer}:${privyActor ?? 'no-privy'}:${resumeFiatID ?? 'default'}`} bearer={bearer!} ownerKey={accountInfo.data?.identifier ?? session.user?.identifier ?? ''} receiptEmail={receiptEmail} canonicalSolanaAddress={solanaAddress} identityMatched={identityMatched} resumeID={resumeFiatID} onProtectedError={handleProtectedError} onOrderCompleted={refreshPortfolioAfterCacheWindow} />
-        {portfolio.isLoading ? <section className="rounded-lg border border-border bg-surface p-4 text-sm text-muted" role="status">Loading Portfolio sweep capabilities…</section> : portfolio.error ? <section className="rounded-lg border border-down/40 bg-down/5 p-4 text-sm text-down" role="alert">Portfolio sweep capabilities could not be loaded. No absence of sweep routes has been inferred.</section> : <SweepDepositCard key={`sweep:${bearer}:${privyActor ?? 'no-privy'}:${identityMatched ? 'matched' : 'unmatched'}:${resumeSweepID ?? 'default'}`} bearer={bearer!} ownerKey={accountInfo.data?.identifier ?? session.user?.identifier ?? ''} identityMatched={identityMatched} positions={portfolio.data?.positions ?? []} resumeID={resumeSweepID} onProtectedError={handleProtectedError} />}
+        <FiatDepositCard key={`fiat:${bearer}:${privyActor ?? 'no-privy'}`} bearer={bearer!} ownerKey={accountInfo.data?.identifier ?? session.user?.identifier ?? ''} receiptEmail={receiptEmail} canonicalSolanaAddress={solanaAddress} identityMatched={identityMatched} onProtectedError={handleProtectedError} onOrderCompleted={refreshPortfolioAfterCacheWindow} />
+        {portfolio.isLoading ? <section className="rounded-lg border border-border bg-surface p-4 text-sm text-muted" role="status">Loading Portfolio sweep capabilities…</section> : portfolio.error ? <section className="rounded-lg border border-down/40 bg-down/5 p-4 text-sm text-down" role="alert">Portfolio sweep capabilities could not be loaded. No absence of sweep routes has been inferred.</section> : <SweepDepositCard key={`sweep:${bearer}:${privyActor ?? 'no-privy'}:${identityMatched ? 'matched' : 'unmatched'}`} bearer={bearer!} ownerKey={accountInfo.data?.identifier ?? session.user?.identifier ?? ''} identityMatched={identityMatched} positions={portfolio.data?.positions ?? []} onProtectedError={handleProtectedError} />}
       </div>
-      <DepositHistory bearer={bearer!} onProtectedError={handleProtectedError} onResumeFiat={(id) => {setResumeFiatID(id); setResumeSweepID(undefined);}} onResumeSweep={(id) => {setResumeSweepID(id); setResumeFiatID(undefined);}} />
+      <p className="rounded-lg border border-border bg-surface p-4 text-xs text-muted">The retired Deposit list is no longer queried. Finalized direct Solana USDC movements are available under <Link href="/portfolio" className="text-accent hover:underline">Portfolio → USDC in / out</Link>; active fiat and Sweep recovery remains scoped to the known order ID saved by this browser.</p>
     </div>
   );
 }

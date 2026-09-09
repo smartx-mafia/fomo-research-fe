@@ -33,4 +33,18 @@ describe('business API browser-direct transport', () => {
     expect(sameBusinessEnvironment('http://35.78.100.24', 'https://sm-test-api.smartx.io/')).toBe(true);
     expect(sameBusinessEnvironment('https://api.example', 'https://other.example')).toBe(false);
   });
+
+  it('preserves selected int64 response fields before JSON.parse rounds them', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      '{"code":200,"msg":"success","data":{"next_cursor":9007199254740997,"rows":[{"cycle_opened_entry_id":9007199254740995}]},"trace_id":"t"}',
+      {status: 200, headers: {'content-type': 'application/json'}},
+    ));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await call<{next_cursor: string; rows: Array<{cycle_opened_entry_id: string}>}>('/v1/test', {
+      preserveInt64Fields: ['next_cursor', 'cycle_opened_entry_id'],
+    });
+
+    expect(result.data).toEqual({next_cursor: '9007199254740997', rows: [{cycle_opened_entry_id: '9007199254740995'}]});
+  });
 });

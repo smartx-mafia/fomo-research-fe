@@ -1,0 +1,50 @@
+.card {
+  --card-muted: #717171;
+  display: flex;
+  gap: 10px;
+  padding: 14px 12px 12px;
+  background: #000;
+  color: #f2f2f2;
+}
+.avatar { width: 36px; height: 36px; flex: 0 0 36px; border-radius: 50%; overflow: hidden; background: #534a77; display: grid; place-items: center; font-size: 20px; font-weight: 600; }
+.avatar img { width: 100%; height: 100%; object-fit: cover; }
+.content, .identity, .tokenInfo { min-width: 0; }
+.content { flex: 1; }
+.header { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.nameRow { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.name { font-size: 14px; font-weight: 600; line-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.handle { color: var(--card-muted); font-size: 12px; line-height: 18px; margin-top: 1px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.remark { max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: #bbb; }
+.time { flex-shrink: 0; color: var(--card-muted); font-size: 12px; line-height: 20px; }
+.body { margin: 10px 0 10px; font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.position { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 8px 10px; border: 1px solid #262626; border-radius: 15px; background: #0e0e0e; }
+.tokenAvatar { display: grid; place-items: center; width: 32px; height: 32px; flex: 0 0 32px; border-radius: 50%; background: #252525; color: #a5a5a5; font-size: 18px; }
+.tokenInfo { flex: 1; }
+.positionLabel { display: flex; align-items: center; gap: 5px; color: var(--card-muted); font-size: 12px; line-height: 18px; }
+/* Decorative label marker from the design; not a claim about open/closed status. */
+.dot { width: 6px; height: 6px; border-radius: 50%; background: #00cdae; box-shadow: 0 0 0 1px #164c43; }
+.symbol { font-size: 14px; font-weight: 500; line-height: 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.values { flex: 0 0 auto; max-width: 48%; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; font-variant-numeric: tabular-nums; }
+.value { font-size: 15px; line-height: 20px; font-weight: 650; }
+.pnl { display: flex; align-items: center; gap: 4px; font-size: 12px; line-height: 18px; color: var(--card-muted); overflow-wrap: anywhere; }
+.down { color: #ff6374; }
+.pnlVisual { display: inline-flex; align-items: center; gap: 4px; }
+.up { color: #00cdae; }
+.triangle { font-size: 12px; }
+.footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; margin-top: 4px; }
+.like { display: inline-flex; align-items: center; gap: 9px; min-height: 44px; color: var(--card-muted); cursor: pointer; font-size: 12px; font-variant-numeric: tabular-nums; }
+.like svg { width: 20px; height: 20px; }
+.like .liked { color: #ff6374; }
+.like:hover svg { color: #ff6374; }
+.like:disabled { cursor: wait; opacity: .6; }
+.like:focus-visible, .links a:focus-visible { outline: 2px solid #00cdae; outline-offset: 4px; border-radius: 4px; }
+.links { display: flex; flex-wrap: wrap; gap: 6px; }
+.links a { display: inline-flex; align-items: center; gap: 6px; padding: 5px 9px; border: 1px solid #262626; border-radius: 8px; background: #0e0e0e; color: var(--card-muted); font-size: 12px; }
+.links a:hover { color: #f2f2f2; }
+.spinner { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+.tokenAvatar { overflow: hidden; }
+.tokenAvatar img { width: 100%; height: 100%; object-fit: cover; }
+.symbol a:hover { text-decoration: underline; }
+.symbol a:focus-visible { outline: 2px solid #00cdae; outline-offset: 2px; }

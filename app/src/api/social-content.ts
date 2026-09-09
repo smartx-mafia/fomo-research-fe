@@ -22,6 +22,15 @@ export type OpinionTargetName = 'POSITION';
 export type OpinionTargetType = 1;
 export type SquareItemType = 1;
 
+declare const squarePageCursorBrand: unique symbol;
+declare const squareRefreshAnchorBrand: unique symbol;
+
+/** Opaque pagination position. It is accepted only by the feed endpoint. */
+export type SquarePageCursor = string & {[squarePageCursorBrand]: true};
+
+/** Opaque unread baseline. It is accepted only by the updates endpoint. */
+export type SquareRefreshAnchor = string & {[squareRefreshAnchorBrand]: true};
+
 export type ProtoTimestamp = {
   /** Unix seconds. The Go encoder omits this when it is zero. */
   seconds: number;
@@ -93,17 +102,18 @@ export type SquareFeedData = {
   /** The encoder returns data={} for an empty page. */
   items: SquareFeedItem[];
   /** Missing or empty means pagination is exhausted. */
-  nextCursor?: string;
+  nextCursor?: SquarePageCursor;
   /** FOR_YOU only. */
   batchID?: string;
   /** FOR_YOU only. */
   asOf?: ProtoTimestamp;
   /**
-   * Opaque feed updates anchor (§6.2). Every page of a session returns the
-   * same value; a cursor-less first-page refresh advances it. Expires in 24h
-   * and is bound to the lane. Empty pages still carry it.
+   * Opaque feed updates anchor (§6.2). It represents the session cutoff and
+   * is separate from the pagination cursor. Store the latest opaque token
+   * returned by each page; a cursor-less first-page refresh advances the
+   * cutoff. It expires in 24h and is bound to the lane.
    */
-  refreshAnchor?: string;
+  refreshAnchor?: SquareRefreshAnchor;
 };
 
 /** §6.2 unread summary for one lane, relative to the stored refresh anchor. */
@@ -149,8 +159,17 @@ export type UpdateOpinionInput = {
 export type SquareFeedOptions = {
   /** Optional for NEWEST/FOR_YOU; required by the backend for FRIENDS. */
   bearer?: string;
-  cursor?: string;
+  cursor?: SquarePageCursor;
   limit?: number;
+  signal?: AbortSignal;
+};
+
+export type SquareFeedUpdatesOptions = {
+  /** Optional for NEWEST/FOR_YOU; required by the backend for FRIENDS. */
+  bearer?: string;
+  /** The refreshAnchor returned by listSquareFeedPage for the same lane. */
+  anchor?: SquareRefreshAnchor;
+  signal?: AbortSignal;
 };
 
 export type OpinionReadOptions = {
@@ -343,12 +362,12 @@ function normalizeFeedData(value: unknown): SquareFeedData {
   if (row.items !== undefined && !Array.isArray(row.items)) {
     throw new SocialContentShapeError('feed data.items is not an array');
   }
-  const nextCursor = nonEmptyString(row.next_cursor);
+  const nextCursor = nonEmptyString(row.next_cursor) as SquarePageCursor | undefined;
   const batchID = nonEmptyString(row.batch_id);
   const asOfRaw = row.as_of === undefined ? undefined : normalizeTimestamp(row.as_of, 'feed data.as_of');
   // 全零时间戳（seconds === 0）是"未设置"的新编码，不是 1970 年。
   const asOf = asOfRaw && asOfRaw.seconds > 0 ? asOfRaw : undefined;
-  const refreshAnchor = nonEmptyString(row.refresh_anchor);
+  const refreshAnchor = nonEmptyString(row.refresh_anchor) as SquareRefreshAnchor | undefined;
 
   return {
     items: (row.items ?? [])
@@ -419,7 +438,7 @@ function versionPath(versionID: number, action: 'like' | 'unlike'): string {
   return `/v1/social/opinions/versions/${encodeURIComponent(String(versionID))}/${action}`;
 }
 
-export async function fetchSquareFeed(
+export async function listSquareFeedPage(
   lane: SquareLane,
   options: SquareFeedOptions = {},
 ): Promise<SquareFeedData> {
@@ -428,6 +447,7 @@ export async function fetchSquareFeed(
   if (options.limit !== undefined) query.set('limit', String(options.limit));
   const response = await call<unknown>(`/v1/social/square/feed?${query.toString()}`, {
     bearer: options.bearer,
+    signal: options.signal,
   });
   return normalizeFeedData(response.data);
 }
@@ -438,14 +458,15 @@ export async function fetchSquareFeed(
  * count=0); never fake one from next_cursor. Errors: 100103 stale/broken
  * anchor (drop it and reload the first page), 400000 bad session.
  */
-export async function fetchSquareFeedUpdates(
+export async function getSquareFeedUpdates(
   lane: SquareLane,
-  options: SquareFeedOptions & {anchor?: string} = {},
+  options: SquareFeedUpdatesOptions = {},
 ): Promise<SquareUpdatesData> {
   const query = new URLSearchParams({lane});
   if (options.anchor) query.set('anchor', options.anchor);
   const response = await call<unknown>(`/v1/social/square/feed/updates?${query.toString()}`, {
     bearer: options.bearer,
+    signal: options.signal,
   });
   return normalizeUpdatesData(response.data);
 }
