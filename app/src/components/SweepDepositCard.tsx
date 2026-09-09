@@ -13,7 +13,7 @@ import {
   type PrepareSweepReply,
 } from '@/api/deposit';
 import {ApiError} from '@/api/envelope';
-import type {PortfolioPosition} from '@/api/portfolio';
+import type {PortfolioAsset} from '@/api/portfolio';
 import {expiryHasMargin} from '@/lib/deposit';
 import {abortablePollDelay, waitForVisibleDocument} from '@/lib/deposit-polling';
 import {signDepositSweepCalibur} from '@/lib/deposit-signing';
@@ -24,6 +24,10 @@ import {checkAuthorizationDigest, parseCaliburSignData} from '@/lib/trade-calibu
 type PendingSubmit = {sweepID: string; signature: string; expiresAt?: string; actorContext: string};
 type SweepAttempt = {version: 1; ownerKey: string; originChain: string; originToken: string; sweepID?: string};
 
+// A sweep needs independently verified on-chain balances/capabilities. Trade
+// ledger positions from Portfolio are deliberately not assignable to this type.
+type SweepPosition = {asset: PortfolioAsset; symbol?: string; decimals?: number; amount_raw: string; sweep?: {status: number; min_amount_raw?: string}};
+
 function text(error: unknown) {
   if (error instanceof ApiError) return `Sweep request failed · code ${error.code} · trace ${error.traceID ?? 'unavailable'}`;
   return error instanceof Error ? error.message : String(error);
@@ -31,11 +35,11 @@ function text(error: unknown) {
 function terminal(sweep: DepositSweep) {
   return sweep.lifecycle === 'confirmed' || sweep.lifecycle === 'failed';
 }
-export function SweepDepositCard({bearer, ownerKey, identityMatched, positions, resumeID, onProtectedError}: {bearer: string; ownerKey: string; identityMatched: boolean; positions?: PortfolioPosition[]; resumeID?: string; onProtectedError: (error: unknown) => boolean}) {
+export function SweepDepositCard({bearer, ownerKey, identityMatched, positions, resumeID, onProtectedError}: {bearer: string; ownerKey: string; identityMatched: boolean; positions?: SweepPosition[]; resumeID?: string; onProtectedError: (error: unknown) => boolean}) {
   const {ready, authenticated, user} = usePrivy();
   const {wallets, ready: walletsReady} = useEthereumWallets();
   const candidates = positions?.filter((position) => position.asset.kind === 'erc20' && position.sweep) ?? [];
-  const [review, setReview] = useState<PortfolioPosition>();
+  const [review, setReview] = useState<SweepPosition>();
   const [sweep, setSweep] = useState<DepositSweep>();
   const [nextAction, setNextAction] = useState<string>();
   const [pending, setPending] = useState<PendingSubmit>();
@@ -275,10 +279,10 @@ export function SweepDepositCard({bearer, ownerKey, identityMatched, positions, 
   const hasActive = !!attempt || (!!sweep && !terminal(sweep));
   return (
     <section className="rounded-lg border border-border bg-surface p-4">
-      <div><h2 className="font-semibold text-foreground">EVM full-balance sweep</h2><p className="mt-1 text-xs text-muted">Only Portfolio-approved assets can be swept. Prepare rereads the complete latest balance; there is no amount input.</p></div>
+      <div><h2 className="font-semibold text-foreground">EVM full-balance sweep</h2><p className="mt-1 text-xs text-muted">Sweep requires verified wallet balances and supported assets. Prepare rereads the complete latest balance; there is no amount input.</p></div>
       {review ? <div className="mt-4 rounded-md border border-accent/40 bg-accent/5 p-3"><p className="text-sm text-foreground">Create a sweep for the complete latest balance of <strong>{review.symbol ?? shortAddr(review.asset.token_address)}</strong> on {chainLabel(review.asset.chain)}?</p><p className="mt-1 text-xs text-muted">Selected identity: <span className="font-mono">{review.asset.chain} · {review.asset.token_address}</span>. The backend controls recipient, refund path and minimum output.</p><div className="mt-3 flex gap-2"><button type="button" onClick={() => setReview(undefined)} className="rounded border border-border px-3 py-2 text-xs text-muted">Cancel</button><button type="button" onClick={() => void confirmCreate()} className="rounded bg-accent px-3 py-2 text-xs font-semibold text-white">Create sweep intent</button></div></div> : null}
       <div className="mt-4 space-y-2">
-        {candidates.length === 0 ? <p className="text-sm text-muted">No Portfolio position has an EVM sweep capability.</p> : candidates.map((position) => {
+        {candidates.length === 0 ? <p className="text-sm text-muted">{positions === undefined ? 'Sweep asset discovery is temporarily unavailable. Existing sweep recovery remains available below.' : 'No verified wallet asset currently has a sweep capability.'}</p> : candidates.map((position) => {
           const exactRecovery = !!attempt && !attempt.sweepID && attempt.originChain === position.asset.chain &&
             (position.asset.token_address.startsWith('0x')
               ? attempt.originToken.toLowerCase() === position.asset.token_address.toLowerCase()

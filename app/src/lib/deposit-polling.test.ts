@@ -9,12 +9,13 @@ import {
   shouldAutoPollFiatOrder,
   solanaAcceptedBalanceChanged,
   solanaAcceptedBalanceSnapshot,
+  SOLANA_CASH_MINT,
   waitForVisibleDocument,
 } from './deposit-polling';
 
-const mint = 'So11111111111111111111111111111111111111112';
+const mint = SOLANA_CASH_MINT;
 const portfolio = (amount?: string, partialErrors: PortfolioReply['partial_errors'] = []): PortfolioReply => ({
-  positions: amount ? [{asset: {chain: 'solana', chain_id: '101', kind: 'spl', token_address: mint}, amount_raw: amount}] : [],
+  positions: [], cash_balance_usd: amount, cash_observed_at: {seconds: 1788939800},
   partial_errors: partialErrors,
 });
 
@@ -49,8 +50,12 @@ describe('deposit polling policy', () => {
   });
 
   it('fails closed when the accepted Solana balance is incomplete', () => {
+    expect(solanaAcceptedBalanceSnapshot(portfolio(), [mint])).toBeUndefined();
+    expect(solanaAcceptedBalanceSnapshot(portfolio('1'), ['unknown-mint'])).toBeUndefined();
+    expect(solanaAcceptedBalanceSnapshot(portfolio('1', [{reason: 'cash_unavailable'}]), [mint])).toBeUndefined();
+    expect(solanaAcceptedBalanceSnapshot(portfolio('1.00'), [mint])).toBe(solanaAcceptedBalanceSnapshot(portfolio('1.00000000'), [mint]));
     expect(solanaAcceptedBalanceSnapshot(portfolio(undefined, [{chain: 'solana', reason: 'rpc unavailable'}]), [mint])).toBeUndefined();
     expect(solanaAcceptedBalanceSnapshot(portfolio(undefined, [{token_address: mint, reason: 'mint read failed'}]), [mint])).toBeUndefined();
-    expect(solanaAcceptedBalanceSnapshot(portfolio(undefined, [{chain: 'base', reason: 'unrelated'}]), [mint])).toBeTypeOf('string');
+    expect(solanaAcceptedBalanceSnapshot(portfolio('0', [{chain: 'base', reason: 'unrelated'}]), [mint])).toBeTypeOf('string');
   });
 });

@@ -2,26 +2,24 @@
 
 import {AlertTriangle, LoaderCircle, RefreshCw, WalletCards} from 'lucide-react';
 import Link from 'next/link';
-import {useState} from 'react';
+import {useEffect, useState} from 'react';
 import useSWR from 'swr';
 
 import {ApiError} from '@/api/envelope';
-import {getPortfolio, positionTargetID, type PortfolioPosition, type ProtoTimestamp} from '@/api/portfolio';
+import {getPortfolio, PortfolioDataError, positionTargetID, type PortfolioPosition, type ProtoTimestamp} from '@/api/portfolio';
 import {OpinionComposer} from '@/components/OpinionComposer';
 import {PortfolioActivity} from '@/components/PortfolioActivity';
 import {
-  addDecimalStrings,
   decimalSign,
   formatBaseUnitsExact,
   formatDecimalExact,
-  marketValueFromBaseUnits,
-  subtractDecimalStrings,
 } from '@/lib/exact-decimal';
 import {chainLabel, shortAddr} from '@/lib/format';
 import {clearSite, readSite, useSession} from '@/session/storage';
 
 function usd(value: string | undefined, digits = 2) {
-  const formatted = formatDecimalExact(value, digits);
+  let formatted = formatDecimalExact(value, digits);
+  if (formatted === '0' && decimalSign(value) !== 0) formatted = formatDecimalExact(value, 20);
   return formatted === '—' ? formatted : `$${formatted}`;
 }
 
@@ -37,63 +35,44 @@ function time(value: ProtoTimestamp | undefined) {
   return new Date(seconds * 1000 + (value.nanos ?? 0) / 1_000_000).toLocaleString();
 }
 
-function metrics(position: PortfolioPosition) {
-  const marketValue = position.decimals !== undefined && position.price_usd
-    ? marketValueFromBaseUnits(position.amount_raw, position.decimals, position.price_usd)
-    : undefined;
-  const matched = position.trade_basis?.status === 1;
-  const unrealized = matched && marketValue && position.trade_basis?.cost_basis_usd
-    ? subtractDecimalStrings(marketValue, position.trade_basis.cost_basis_usd)
-    : undefined;
-  const cyclePnl = unrealized && position.current_cycle?.realized_pnl_usd
-    ? addDecimalStrings(unrealized, position.current_cycle.realized_pnl_usd)
-    : undefined;
-  return {marketValue, unrealized, cyclePnl};
-}
-
 function StatusBadge({position}: {position: PortfolioPosition}) {
-  if (!position.trade_basis) return <span className="text-muted">On-chain only</span>;
-  if (position.trade_basis.status === 1) return <span className="text-up">Matched</span>;
-  if (position.trade_basis.status === 2) return <span className="text-accent">Balance mismatch</span>;
-  return <span className="text-muted">Basis pending</span>;
+  return <span className={position.cycle_status === 'ready' ? 'text-up' : 'text-muted'}>
+    {position.cycle_status === 'ready' ? 'Ready' : position.cycle_status === 'pending' ? 'Calculating' : 'Unavailable'}
+  </span>;
 }
 
 function PositionRow({position, onOpenOpinion}: {position: PortfolioPosition; onOpenOpinion: (targetID: string, label?: string) => void}) {
-  const {marketValue, unrealized, cyclePnl} = metrics(position);
   const targetID = positionTargetID(position);
   const tokenHref = `/token/${encodeURIComponent(position.asset.chain)}/${encodeURIComponent(position.asset.token_address)}`;
   return (
     <tr className="border-t border-border align-top">
       <td className="px-3 py-3">
-        <Link href={tokenHref} className="font-semibold text-foreground hover:text-accent">
+        <a href={tokenHref} className="font-semibold text-foreground hover:text-accent">
           {position.symbol ?? shortAddr(position.asset.token_address)}
-        </Link>
+        </a>
         <div className="mt-1 text-[11px] text-muted">
           {chainLabel(position.asset.chain)} · {shortAddr(position.asset.token_address, 6, 5)}
         </div>
       </td>
       <td className="px-3 py-3 font-mono text-xs">
-        {formatBaseUnitsExact(position.amount_raw, position.decimals)}
+        {formatBaseUnitsExact(position.shares_raw, position.decimals)}
       </td>
       <td className="px-3 py-3 text-right font-mono text-xs">{usd(position.price_usd, 12)}</td>
-      <td className="px-3 py-3 text-right font-mono text-xs">{usd(marketValue)}</td>
+      <td className="px-3 py-3 text-right font-mono text-xs">{usd(position.market_value_usd)}</td>
       <td className="px-3 py-3 text-right font-mono text-xs">
-        {usd(position.trade_basis?.cost_basis_usd)}
+        {usd(position.cost_basis_usd)}
       </td>
-      <td className={`px-3 py-3 text-right font-mono text-xs ${pnlClass(unrealized)}`}>
-        {usd(unrealized)}
-        {position.trade_basis?.status === 2 ? <div className="mt-1 text-[10px] text-muted">Unavailable while quantities differ</div> : null}
+      <td className={`px-3 py-3 text-right font-mono text-xs ${pnlClass(position.unrealized_pnl_usd)}`}>
+        {usd(position.unrealized_pnl_usd)}
       </td>
-      <td className={`px-3 py-3 text-right font-mono text-xs ${pnlClass(position.current_cycle?.realized_pnl_usd)}`}>
-        {usd(position.current_cycle?.realized_pnl_usd)}
-        {cyclePnl ? <div className={`mt-1 text-[10px] ${pnlClass(cyclePnl)}`}>Current cycle total {usd(cyclePnl)}</div> : null}
+      <td className={`px-3 py-3 text-right font-mono text-xs ${pnlClass(position.realized_pnl_usd)}`}>
+        {usd(position.realized_pnl_usd)}
       </td>
-      <td className={`px-3 py-3 text-right font-mono text-xs ${pnlClass(position.trade_basis?.realized_pnl_usd)}`}>
-        {usd(position.trade_basis?.realized_pnl_usd)}
+      <td className={`px-3 py-3 text-right font-mono text-xs ${pnlClass(position.total_pnl_usd)}`}>
+        {usd(position.total_pnl_usd)}
       </td>
       <td className="px-3 py-3 text-right text-xs">
         <StatusBadge position={position} />
-        {position.sweep?.status === 1 ? <div className="mt-1 text-[10px] text-accent">Sweep available</div> : null}
         <button
           type="button"
           disabled={targetID === undefined}
@@ -115,8 +94,9 @@ export function PortfolioView() {
   const session = useSession();
   const [opinionTarget, setOpinionTarget] = useState<{targetID: string; label?: string}>();
   const [opinionNotice, setOpinionNotice] = useState<string>();
+  useEffect(() => {setOpinionTarget(undefined); setOpinionNotice(undefined);}, [session?.jwt]);
   const {data, error, isLoading, isValidating, mutate} = useSWR(
-    session ? ['portfolio', session.jwt] : null,
+    session ? ['portfolio-ledger-v2', session.jwt] : null,
     async () => {
       const bearer = session!.jwt;
       try {
@@ -128,6 +108,7 @@ export function PortfolioView() {
     },
     {
       dedupingInterval: 12_000,
+      keepPreviousData: false,
       refreshInterval: 0,
       revalidateOnFocus: true,
       shouldRetryOnError: false,
@@ -139,7 +120,7 @@ export function PortfolioView() {
       <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 text-center">
         <WalletCards className="h-9 w-9 text-muted" />
         <h1 className="text-xl font-semibold text-foreground">Your portfolio</h1>
-        <p className="text-sm text-muted">Sign in to load the canonical wallets and on-chain balances for your account.</p>
+        <p className="text-sm text-muted">Sign in to view your trading positions and USDC cash.</p>
         <Link href="/login" className="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white">Sign in</Link>
       </div>
     );
@@ -163,9 +144,10 @@ export function PortfolioView() {
         <AlertTriangle className="h-9 w-9 text-down" />
         <h1 className="text-xl font-semibold text-foreground">Could not load portfolio</h1>
         <p className="max-w-lg text-sm text-muted">
-          The holdings request failed. No zero balance or empty portfolio has been inferred from this failure.
+          Your holdings could not be displayed. Existing balances have not been replaced with zero.
         </p>
-        {apiError ? <p className="font-mono text-xs text-muted">code {apiError.code} · trace {apiError.traceID ?? 'unavailable'}</p> : null}
+        {error instanceof Error ? <p className="max-w-xl break-words text-xs text-muted">{error.message}</p> : null}
+        {apiError || error instanceof PortfolioDataError ? <p className="font-mono text-xs text-muted">{apiError ? 'code ' + apiError.code + ' · ' : ''}trace {(apiError ?? error as PortfolioDataError).traceID ?? 'unavailable'}</p> : null}
         <button type="button" onClick={() => void mutate()} className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm text-foreground">
           <RefreshCw className="h-4 w-4" /> Retry
         </button>
@@ -178,7 +160,8 @@ export function PortfolioView() {
       <header className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-foreground">Portfolio</h1>
-          <p className="mt-1 text-sm text-muted">Canonical-wallet balances read directly from chain. Updated {time(data?.observed_at)}.</p>
+          <p className="mt-1 text-sm text-muted">Open trading positions and Solana USDC cash. Updated {time(data?.observed_at)}.</p>
+          {data?.cash_observed_at ? <p className="mt-1 text-xs text-muted">Cash snapshot {time(data.cash_observed_at)}.</p> : null}
         </div>
         <button
           type="button"
@@ -193,13 +176,16 @@ export function PortfolioView() {
 
       {error ? (
         <div role="alert" className="rounded-lg border border-down/40 bg-down/5 p-4 text-sm text-down">
-          Could not load portfolio{apiError ? ` (code ${apiError.code}, trace ${apiError.traceID ?? 'unavailable'})` : ''}.
+          Could not refresh portfolio. {error instanceof Error ? error.message : ''}
+          {apiError || error instanceof PortfolioDataError ? <span className="mt-1 block font-mono text-xs">trace {(apiError ?? error as PortfolioDataError).traceID ?? 'unavailable'}</span> : null}
         </div>
       ) : null}
 
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {[
-          ['Total value', data?.total_value_usd],
+          ['Total assets', data?.total_assets_usd],
+          ['USDC cash', data?.cash_balance_usd],
+          ['Positions value', data?.total_value_usd],
           ['1D PnL', data?.pnl?.d1?.amount_usd],
           ['7D PnL', data?.pnl?.d7?.amount_usd],
           ['30D PnL', data?.pnl?.d30?.amount_usd],
@@ -207,7 +193,7 @@ export function PortfolioView() {
         ].map(([label, value]) => (
           <div key={label} className="rounded-lg border border-border bg-surface p-4">
             <p className="text-xs text-muted">{label}{data?.partial_errors.length ? ' · partial' : ''}</p>
-            <p className={`mt-2 font-mono text-xl font-semibold ${label === 'Total value' ? 'text-foreground' : pnlClass(value)}`}>{usd(value)}</p>
+            <p className={`mt-2 font-mono text-xl font-semibold ${['Total assets', 'USDC cash', 'Positions value'].includes(label ?? '') ? 'text-foreground' : pnlClass(value)}`}>{usd(value)}</p>
           </div>
         ))}
       </section>
@@ -215,7 +201,7 @@ export function PortfolioView() {
       {data?.partial_errors.length ? (
         <section role="status" aria-live="polite" className="rounded-lg border border-accent/40 bg-accent/5 p-4">
           <div className="flex items-center gap-2 text-sm font-semibold text-foreground"><AlertTriangle className="h-4 w-4 text-accent" />Partial portfolio</div>
-          <p className="mt-1 text-xs text-muted">Some chains or assets could not be read. Totals and PnL may be incomplete; failures are not shown as zero balances.</p>
+          <p className="mt-1 text-xs text-muted">Some account data is unavailable. Cash failures affect cash and total assets; missing prices affect position valuation. Missing values are shown as —.</p>
           <ul className="mt-2 space-y-1 font-mono text-xs text-muted">
             {data.partial_errors.map((item, index) => (
               <li key={`${item.chain ?? ''}:${item.token_address ?? ''}:${item.reason}:${index}`}>
@@ -232,25 +218,25 @@ export function PortfolioView() {
 
       <section className="overflow-hidden rounded-lg border border-border bg-surface">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
-          <h2 className="font-semibold text-foreground">Current holdings</h2>
-          <span className="text-xs text-muted">{data?.positions.length ?? 0} assets</span>
+          <h2 className="font-semibold text-foreground">Current positions</h2>
+          <span className="text-xs text-muted">{data ? data.positions.length : '—'} assets</span>
         </div>
         {isLoading ? (
-          <div role="status" aria-live="polite" className="flex items-center justify-center gap-2 p-10 text-sm text-muted"><LoaderCircle className="h-4 w-4 animate-spin" />Loading on-chain balances…</div>
+          <div role="status" aria-live="polite" className="flex items-center justify-center gap-2 p-10 text-sm text-muted"><LoaderCircle className="h-4 w-4 animate-spin" />Loading positions and cash…</div>
         ) : data?.positions.length ? (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[1080px] text-left">
               <thead className="text-[11px] uppercase tracking-wide text-muted">
                 <tr>
-                  <th className="px-3 py-2">Asset</th><th className="px-3 py-2">Balance</th><th className="px-3 py-2 text-right">Price</th>
+                  <th className="px-3 py-2">Asset</th><th className="px-3 py-2">Shares</th><th className="px-3 py-2 text-right">Price</th>
                   <th className="px-3 py-2 text-right">Value</th><th className="px-3 py-2 text-right">Cost basis</th>
                   <th className="px-3 py-2 text-right">Unrealized</th><th className="px-3 py-2 text-right">Cycle realized</th>
-                  <th className="px-3 py-2 text-right">Lifetime realized</th><th className="px-3 py-2 text-right">Basis</th>
+                  <th className="px-3 py-2 text-right">Cycle total PnL</th><th className="px-3 py-2 text-right">Cycle status</th>
                 </tr>
               </thead>
               <tbody>{data.positions.map((position) => (
                 <PositionRow
-                  key={`${position.asset.chain_id}:${position.asset.kind}:${position.asset.token_address}`}
+                  key={`${position.asset.chain_id}:${position.asset.kind}:${position.asset.token_address}:${position.opened_entry_id}`}
                   position={position}
                   onOpenOpinion={(targetID, label) => {setOpinionNotice(undefined); setOpinionTarget({targetID, label});}}
                 />
@@ -258,11 +244,12 @@ export function PortfolioView() {
             </table>
           </div>
         ) : (
-          <div className="p-10 text-center text-sm text-muted">No non-zero on-chain positions were returned for your canonical wallets.</div>
+          <div className="p-10 text-center text-sm text-muted">No open trading positions were returned. USDC cash is shown separately above.</div>
         )}
       </section>
 
-      <PortfolioActivity bearer={session.jwt} />
+      <p className="text-xs text-muted">Shares represent your recorded trading position, not the amount currently available to sell. Execution checks wallet balances separately.</p>
+      <PortfolioActivity key={session.jwt} bearer={session.jwt} />
 
       {opinionTarget ? (
         <OpinionComposer

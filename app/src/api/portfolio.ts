@@ -9,34 +9,37 @@ export type PortfolioAsset = {
   token_address: string;
 };
 
-export type TradeBasis = {
-  status: number;
-  ledger_amount_raw?: string;
-  cost_basis_usd?: string;
-  realized_pnl_usd?: string;
-};
-
-export type SweepCapability = {status: number; min_amount_raw?: string};
-
-export type PortfolioCurrentCycle = {
-  opened_entry_id: number | string;
-  realized_pnl_usd?: string;
-  buy_value_usd?: string;
-  /** Cycle round number starting at 1; undefined = the cycle is not ready yet (protojson omits zero), never render it as 0. */
-  round?: number;
-};
-
+/** Current positions are Trade ledger shares, never on-chain spendable balances. */
 export type PortfolioPosition = {
   asset: PortfolioAsset;
   symbol?: string;
   decimals?: number;
-  amount_raw: string;
+  shares_raw: string;
   price_usd?: string;
   price_as_of?: ProtoTimestamp;
-  trade_basis?: TradeBasis;
-  sweep?: SweepCapability;
-  current_cycle?: PortfolioCurrentCycle;
+  opened_entry_id: string;
+  opened_at?: ProtoTimestamp;
+  cycle_status: 'ready' | 'pending' | 'unavailable';
+  cost_basis_usd?: string;
+  buy_amount_raw?: string;
+  sell_amount_raw?: string;
+  buy_value_usd?: string;
+  sell_value_usd?: string;
+  realized_pnl_usd?: string;
+  market_value_usd?: string;
+  unrealized_pnl_usd?: string;
+  total_pnl_usd?: string;
+  pnl_ratio?: string;
+  avg_buy_price_usd?: string;
+  avg_sell_price_usd?: string;
 };
+
+export class PortfolioDataError extends Error {
+  constructor(message: string, readonly traceID?: string) {
+    super(message);
+    this.name = 'PortfolioDataError';
+  }
+}
 
 export type PnlPoint = {at: string; pnl_usd: string};
 export type WindowPnl = {
@@ -62,6 +65,9 @@ export type PortfolioPartialError = {
 
 export type PortfolioReply = {
   total_value_usd?: string;
+  cash_balance_usd?: string;
+  total_assets_usd?: string;
+  cash_observed_at?: ProtoTimestamp;
   pnl?: PortfolioPnl;
   positions: PortfolioPosition[];
   partial_errors: PortfolioPartialError[];
@@ -128,7 +134,7 @@ function rfc3339(value: unknown, field: string, required = false): string | unde
 
 function optionalDecimal(value: unknown, field: string): string | undefined {
   const output = optionalString(value);
-  if (output !== undefined && !/^-?\d+(?:\.\d+)?$/.test(output)) {
+  if ((value != null && value !== '' && typeof value !== 'string') || (output !== undefined && (output.length > 256 || !/^-?\d+(?:\.\d+)?$/.test(output)))) {
     throw new Error(`Portfolio returned an invalid decimal for ${field}.`);
   }
   return output;
@@ -145,63 +151,45 @@ function timestamp(value: unknown): ProtoTimestamp | undefined {
 function position(value: unknown): PortfolioPosition {
   const row = object(value);
   const asset = object(row?.asset);
-  const amountRaw = optionalString(row?.amount_raw);
-  if (
-    !row || !asset || typeof asset.chain !== 'string' || asset.chain === '' ||
-    (typeof asset.chain_id !== 'number' && typeof asset.chain_id !== 'string') ||
-    typeof asset.kind !== 'string' || asset.kind === '' ||
-    typeof asset.token_address !== 'string' || asset.token_address === '' ||
-    !amountRaw || !/^\d+$/.test(amountRaw) || BigInt(amountRaw) <= BigInt(0)
-  ) throw new Error('Portfolio returned an invalid position identity or balance.');
-
-  const basis = object(row.trade_basis);
-  const sweep = object(row.sweep);
-  const cycle = object(row.current_cycle);
-  let currentCycle: PortfolioCurrentCycle | undefined;
-  if (cycle) {
-    const openedEntryID = cycle.opened_entry_id;
-    // 线格式规则 10：未设置的 current_cycle 是全零对象（opened_entry_id 为
-    // 0/缺失）—— 那是"无开放轮/周期未就绪"，折叠成 undefined；其余垃圾值仍抛。
-    if (openedEntryID !== undefined && openedEntryID !== null && openedEntryID !== 0 && openedEntryID !== '0') {
-      const validNumber = typeof openedEntryID === 'number' && Number.isSafeInteger(openedEntryID) && openedEntryID > 0;
-      const validString = typeof openedEntryID === 'string' && /^\d+$/.test(openedEntryID) && BigInt(openedEntryID) > BigInt(0);
-      if (!validNumber && !validString) throw new Error('Portfolio returned an invalid current-cycle identity.');
-      const rawRound = cycle.round;
-      if (rawRound !== undefined && rawRound !== null && (typeof rawRound !== 'number' || !Number.isSafeInteger(rawRound) || rawRound < 0)) {
-        throw new Error('Portfolio returned an invalid current-cycle round.');
-      }
-      currentCycle = {
-        opened_entry_id: openedEntryID as number | string,
-        realized_pnl_usd: optionalDecimal(cycle.realized_pnl_usd, 'current_cycle.realized_pnl_usd'),
-        buy_value_usd: optionalDecimal(cycle.buy_value_usd, 'current_cycle.buy_value_usd'),
-        round: rawRound === 0 || rawRound === null ? undefined : rawRound,
-      };
+  if (!row || !asset) throw new Error('Portfolio returned an invalid position identity.');
+  const chain = requiredString(asset.chain, 'asset.chain');
+  const kind = requiredString(asset.kind, 'asset.kind');
+  const tokenAddress = requiredString(asset.token_address, 'asset.token_address');
+  const chainID = nonnegativeIntegerString(asset.chain_id, 'asset.chain_id');
+  if (chainID === '0') throw new Error('Portfolio returned an invalid asset.chain_id.');
+  const shares = requiredString(row.shares_raw, 'shares_raw');
+  if (!/^\d+$/.test(shares) || shares.length > 256 || BigInt(shares) <= BigInt(0)) {
+    throw new Error('Portfolio returned invalid Trade ledger shares_raw.');
+  }
+  const entry = nonnegativeIntegerString(row.opened_entry_id ?? 0, 'opened_entry_id');
+  const status = row.cycle_status === 'ready' || row.cycle_status === 'pending' || row.cycle_status === 'unavailable'
+    ? row.cycle_status : 'unavailable';
+  const ready = status === 'ready' && entry !== '0';
+  const decimalFields = ['price_usd', 'cost_basis_usd', 'buy_value_usd', 'sell_value_usd',
+    'realized_pnl_usd', 'market_value_usd', 'unrealized_pnl_usd', 'total_pnl_usd',
+    'pnl_ratio', 'avg_buy_price_usd', 'avg_sell_price_usd'] as const;
+  const money: Partial<Record<typeof decimalFields[number], string>> = {};
+  for (const field of decimalFields) money[field] = optionalDecimal(row[field], field);
+  // Pending/unavailable cycles retain shares, quote, market value and remaining cost.
+  // Untrusted cycle aggregates must not become zero PnL or a publishable Opinion.
+  if (!ready) {
+    for (const field of ['buy_value_usd', 'sell_value_usd', 'realized_pnl_usd',
+      'unrealized_pnl_usd', 'total_pnl_usd', 'pnl_ratio', 'avg_buy_price_usd', 'avg_sell_price_usd'] as const) {
+      money[field] = undefined;
     }
   }
   return {
-    asset: {
-      chain: asset.chain,
-      chain_id: asset.chain_id,
-      kind: asset.kind,
-      token_address: asset.token_address,
-    },
+    asset: {chain, chain_id: chainID, kind, token_address: tokenAddress},
     symbol: optionalString(row.symbol),
-    decimals: typeof row.decimals === 'number' && Number.isInteger(row.decimals) && row.decimals >= 0 && row.decimals <= 255
-      ? row.decimals : undefined,
-    amount_raw: amountRaw,
-    price_usd: optionalDecimal(row.price_usd, 'price_usd'),
+    decimals: typeof row.decimals === 'number' && Number.isInteger(row.decimals) && row.decimals >= 0 && row.decimals <= 255 ? row.decimals : undefined,
+    shares_raw: shares,
+    opened_entry_id: entry,
+    opened_at: timestamp(row.opened_at),
+    cycle_status: ready ? 'ready' : status === 'ready' ? 'unavailable' : status,
     price_as_of: timestamp(row.price_as_of),
-    trade_basis: basis && typeof basis.status === 'number' && basis.status > 0 ? {
-      status: basis.status,
-      ledger_amount_raw: optionalString(basis.ledger_amount_raw),
-      cost_basis_usd: optionalDecimal(basis.cost_basis_usd, 'trade_basis.cost_basis_usd'),
-      realized_pnl_usd: optionalDecimal(basis.realized_pnl_usd, 'trade_basis.realized_pnl_usd'),
-    } : undefined,
-    sweep: sweep && typeof sweep.status === 'number' && sweep.status > 0 ? {
-      status: sweep.status,
-      min_amount_raw: optionalString(sweep.min_amount_raw),
-    } : undefined,
-    current_cycle: currentCycle,
+    buy_amount_raw: ready ? optionalUnsignedAmount(row.buy_amount_raw, 'buy_amount_raw') : undefined,
+    sell_amount_raw: ready ? optionalUnsignedAmount(row.sell_amount_raw, 'sell_amount_raw') : undefined,
+    ...money,
   };
 }
 
@@ -268,6 +256,9 @@ export function normalizePortfolio(value: unknown): PortfolioReply {
   }) : [];
   return {
     total_value_usd: optionalDecimal(row.total_value_usd, 'total_value_usd'),
+    cash_balance_usd: optionalDecimal(row.cash_balance_usd, 'cash_balance_usd'),
+    total_assets_usd: optionalDecimal(row.total_assets_usd, 'total_assets_usd'),
+    cash_observed_at: timestamp(row.cash_observed_at),
     pnl,
     positions: Array.isArray(row.positions) ? row.positions.map(position) : [],
     partial_errors: errors,
@@ -276,8 +267,15 @@ export function normalizePortfolio(value: unknown): PortfolioReply {
 }
 
 export async function getPortfolio(bearer: string, signal?: AbortSignal): Promise<PortfolioReply> {
-  const response = await call<unknown>('/v1/portfolio', {bearer, signal});
-  return normalizePortfolio(response.data);
+  const response = await call<unknown>('/v1/portfolio', {
+    bearer, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
+    preserveInt64Fields: ['opened_entry_id', 'chain_id'],
+  });
+  try {
+    return normalizePortfolio(response.data);
+  } catch (error) {
+    throw new PortfolioDataError(error instanceof Error ? error.message : 'Invalid Portfolio response.', response.traceID);
+  }
 }
 
 export function normalizePortfolioTradePage(value: unknown): PortfolioTradePage {
@@ -336,8 +334,8 @@ export async function getGlobalPortfolioTrades(bearer: string, beforeID = '0', l
  * 100102/200103 rejection.
  */
 export function positionTargetID(position: PortfolioPosition): string | undefined {
-  const entry = position.current_cycle?.opened_entry_id;
-  if (entry === undefined) return undefined;
+  const entry = position.opened_entry_id;
+  if (position.cycle_status !== 'ready' || !entry || entry === '0') return undefined;
   const kind = position.asset.kind;
   const tokenAddress = position.asset.token_address;
   if (kind === '' || kind.includes(':') || tokenAddress === '' || tokenAddress.includes(':')) return undefined;

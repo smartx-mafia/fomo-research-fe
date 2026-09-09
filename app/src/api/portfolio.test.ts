@@ -8,130 +8,97 @@ import {getGlobalPortfolioTrades, getPortfolio, normalizePortfolio, normalizePor
 describe('portfolio contract', () => {
   beforeEach(() => callMock.mockReset());
 
-  it('loads only the authenticated current-portfolio endpoint', async () => {
-    callMock.mockResolvedValue({data: {positions: []}});
-    await expect(getPortfolio('jwt')).resolves.toMatchObject({positions: [], partial_errors: []});
-    expect(callMock).toHaveBeenCalledWith('/v1/portfolio', {bearer: 'jwt', signal: undefined});
-  });
+  const position = {
+    asset: {chain: 'solana', chain_id: 792703809, kind: 'spl', token_address: 'example-mint'},
+    symbol: 'EXAMPLE', decimals: 6, shares_raw: '125094440507',
+    opened_entry_id: '4', cycle_status: 'ready',
+    cost_basis_usd: '2.00000000', market_value_usd: '0.00001209',
+    realized_pnl_usd: '0.00000000', unrealized_pnl_usd: '-1.99998791',
+    total_pnl_usd: '-1.99998791', pnl_ratio: '-0.999993955',
+    avg_buy_price_usd: '0.00001598792074127455',
+  };
 
-  it('preserves exact strings, zero decimals, timestamp objects, and optional current-cycle data', () => {
+  it('accepts the deployed flat ledger response and separates positions, cash and total assets', () => {
     const result = normalizePortfolio({
-      total_value_usd: '21.75000000',
-      positions: [{
-        asset: {chain: 'bsc', chain_id: 56, kind: 'erc20', token_address: '0x1111111111111111111111111111111111111111'},
-        symbol: 'MEME',
-        decimals: 0,
-        amount_raw: '37000000000000000000',
-        price_usd: '0.250000000000',
-        price_as_of: {seconds: 1788595200},
-        trade_basis: {status: 1, cost_basis_usd: '10.00000000', realized_pnl_usd: '2.00000000'},
-        current_cycle: {opened_entry_id: 9081, realized_pnl_usd: '1.50000000', buy_value_usd: '10.00000000'},
-      }],
-      observed_at: {seconds: '1788595202'},
+      total_value_usd: '0.00001209', cash_balance_usd: '20.00000000', total_assets_usd: '20.00001209',
+      cash_observed_at: {seconds: 1788939800}, observed_at: {seconds: 1788939802},
+      positions: [position], partial_errors: [],
     });
-    expect(result.total_value_usd).toBe('21.75000000');
-    expect(result.positions[0]).toMatchObject({
-      decimals: 0,
-      amount_raw: '37000000000000000000',
-      current_cycle: {opened_entry_id: 9081, realized_pnl_usd: '1.50000000'},
+    expect(result).toMatchObject({total_value_usd: '0.00001209', cash_balance_usd: '20.00000000', total_assets_usd: '20.00001209'});
+    expect(result.positions[0]).toMatchObject({shares_raw: '125094440507', opened_entry_id: '4', cost_basis_usd: '2.00000000', total_pnl_usd: '-1.99998791'});
+    expect(result.positions[0]).not.toHaveProperty('amount_raw');
+    expect(result.positions[0]).not.toHaveProperty('trade_basis');
+    expect(result.positions[0]).not.toHaveProperty('sweep');
+  });
+
+  it('uses a cancellable current-portfolio read with exact identity decoding', async () => {
+    callMock.mockResolvedValue({data: {positions: [position]}});
+    const controller = new AbortController();
+    await expect(getPortfolio('jwt', controller.signal)).resolves.toMatchObject({positions: [{opened_entry_id: '4'}]});
+    const [url, options] = callMock.mock.calls[0];
+    expect(url).toBe('/v1/portfolio');
+    expect(options.bearer).toBe('jwt');
+    expect(options.preserveInt64Fields).toEqual(['opened_entry_id', 'chain_id']);
+    controller.abort();
+    expect(options.signal.aborted).toBe(true);
+  });
+
+  it('preserves the response trace when schema validation fails', async () => {
+    callMock.mockResolvedValue({traceID: 'schema-trace', data: {positions: [{...position, shares_raw: undefined, amount_raw: '1'}]}});
+    await expect(getPortfolio('jwt')).rejects.toMatchObject({name: 'PortfolioDataError', traceID: 'schema-trace', message: 'Portfolio returned an invalid shares_raw.'});
+  });
+
+  it.each(['0', '-1', '1.5', '', 100, null])('rejects malformed ledger quantities %s', (shares_raw) => {
+    expect(() => normalizePortfolio({positions: [{...position, shares_raw}]})).toThrow(/shares_raw/);
+  });
+
+  it('does not reinterpret old on-chain quantities as ledger shares', () => {
+    const {shares_raw: _ignored, ...old} = position;
+    expect(() => normalizePortfolio({positions: [{...old, amount_raw: '1000000'}]})).toThrow(/shares_raw/);
+  });
+
+  it('keeps missing cash/valuation unknown and accepts real zero cash and zero decimals', () => {
+    const data = normalizePortfolio({cash_balance_usd: '0.00000000', total_value_usd: '', total_assets_usd: '', positions: [{...position, decimals: 0}], partial_errors: [{chain: 'solana', reason: 'metadata_or_price_unavailable'}]});
+    expect(data.cash_balance_usd).toBe('0.00000000');
+    expect(data.total_value_usd).toBeUndefined();
+    expect(data.total_assets_usd).toBeUndefined();
+    expect(data.positions[0].decimals).toBe(0);
+    expect(normalizePortfolio({positions: [], partial_errors: []}).cash_balance_usd).toBeUndefined();
+  });
+
+  it.each(['pending', 'unavailable', 'future-status'])('hides unready cycle aggregates for %s while preserving shares and remaining cost', (cycle_status) => {
+    const row = normalizePortfolio({positions: [{...position, cycle_status}]}).positions[0];
+    expect(row.shares_raw).toBe(position.shares_raw);
+    expect(row.cost_basis_usd).toBe(position.cost_basis_usd);
+    expect(row.total_pnl_usd).toBeUndefined();
+    expect(row.avg_buy_price_usd).toBeUndefined();
+    expect(positionTargetID(row)).toBeUndefined();
+  });
+
+  it('requires a trustworthy cycle identity even if the source labels it ready', () => {
+    const row = normalizePortfolio({positions: [{...position, opened_entry_id: 0}]}).positions[0];
+    expect(row.cycle_status).toBe('unavailable');
+    expect(row.realized_pnl_usd).toBeUndefined();
+    expect(positionTargetID(row)).toBeUndefined();
+  });
+
+  it('keeps exact large cycle IDs and uses them for Opinion targets', () => {
+    const row = normalizePortfolio({positions: [{...position, opened_entry_id: '9007199254740993'}]}).positions[0];
+    expect(positionTargetID(row)).toBe('792703809:spl:example-mint:9007199254740993');
+    expect(positionTargetID({...row, asset: {...row.asset, kind: 'spl:bad'}})).toBeUndefined();
+    expect(() => normalizePortfolio({positions: [{...position, opened_entry_id: Number.MAX_SAFE_INTEGER + 1}]})).toThrow(/opened_entry_id/);
+  });
+
+  it.each(['NaN', '1e-12', 123, Infinity])('rejects malformed money %s instead of silently clearing it', (value) => {
+    expect(() => normalizePortfolio({positions: [], total_assets_usd: value})).toThrow(/total_assets_usd/);
+  });
+
+  it('handles zero timestamp and zero-expanded pnl without fabricating data', () => {
+    expect(normalizePortfolio({positions: [], observed_at: {seconds: 0}, cash_observed_at: {seconds: 0}, pnl: {d1: {amount_usd: '', curve: []}, all_usd: ''}})).toMatchObject({
+      positions: [], partial_errors: [], observed_at: undefined, cash_observed_at: undefined, pnl: undefined,
     });
-    expect(result.observed_at?.seconds).toBe('1788595202');
-  });
-
-  it('treats omitted repeated fields as empty arrays and keeps partial failures explicit', () => {
-    expect(normalizePortfolio({partial_errors: [{chain: 'ethereum', reason: 'chain_unavailable', retryable: true}]})).toMatchObject({
-      positions: [],
-      partial_errors: [{chain: 'ethereum', reason: 'chain_unavailable', retryable: true}],
-    });
-  });
-
-  it('rejects malformed base-unit balances rather than rendering fabricated values', () => {
-    expect(() => normalizePortfolio({positions: [{
-      asset: {chain: 'bsc', chain_id: 56, kind: 'erc20', token_address: '0x1'},
-      amount_raw: '1.5',
-    }]})).toThrow(/invalid position identity or balance/);
-  });
-
-  it('rejects malformed financial decimals before they reach render-time arithmetic', () => {
-    expect(() => normalizePortfolio({total_value_usd: 'NaN', positions: []})).toThrow(
-      /invalid decimal for total_value_usd/,
-    );
-  });
-
-  it('rejects malformed repeated fields and zero-balance rows instead of presenting an empty or valid portfolio', () => {
-    expect(() => normalizePortfolio({positions: {}})).toThrow(/positions must be an array/);
-    expect(() => normalizePortfolio({partial_errors: [{}]})).toThrow(/invalid partial error/);
-    expect(() => normalizePortfolio({positions: [{
-      asset: {chain: 'bsc', chain_id: 56, kind: 'erc20', token_address: '0x1'},
-      amount_raw: '0',
-    }]})).toThrow(/invalid position identity or balance/);
-  });
-
-  it('bounds decimals to the formatter range and requires a positive exact current-cycle identity', () => {
-    const base = {
-      asset: {chain: 'bsc', chain_id: 56, kind: 'erc20', token_address: '0x1'},
-      amount_raw: '1',
-    };
-    expect(normalizePortfolio({positions: [{...base, decimals: 256}]}).positions[0]?.decimals).toBeUndefined();
-    for (const opened_entry_id of [-1, 1.5, '', '-1', '1.5', 'abc']) {
-      expect(() => normalizePortfolio({positions: [{...base, current_cycle: {opened_entry_id}}]})).toThrow(
-        /invalid current-cycle identity/,
-      );
-    }
-    expect(normalizePortfolio({positions: [{...base, current_cycle: {opened_entry_id: '9007199254740993'}}]}).positions[0]?.current_cycle?.opened_entry_id).toBe('9007199254740993');
-  });
-
-  it('folds rule-10 zero expansions back to absent: zero cycle, zero basis/sweep status, zero timestamps, empty pnl', () => {
-    const result = normalizePortfolio({
-      positions: [{
-        asset: {chain: 'bsc', chain_id: 56, kind: 'erc20', token_address: '0x1'},
-        amount_raw: '1',
-        price_as_of: {seconds: 0, nanos: 0},
-        trade_basis: {status: 0, ledger_amount_raw: '', cost_basis_usd: '', realized_pnl_usd: ''},
-        sweep: {status: 0, min_amount_raw: ''},
-        current_cycle: {opened_entry_id: 0, realized_pnl_usd: '', buy_value_usd: '', round: 0},
-      }],
-      pnl: {d1: {amount_usd: '', baseline_as_of: '', curve: []}, d7: {}, d30: {}, all: {}},
-      observed_at: {seconds: 0, nanos: 0},
-    });
-    const row = result.positions[0];
-    expect(row?.current_cycle).toBeUndefined();
-    expect(row?.trade_basis).toBeUndefined();
-    expect(row?.sweep).toBeUndefined();
-    expect(row?.price_as_of).toBeUndefined();
-    expect(result.pnl).toBeUndefined();
-    expect(result.observed_at).toBeUndefined();
-  });
-
-  it('normalizes the current-cycle round: omitted or zero means not ready, invalid values throw', () => {
-    const base = {
-      asset: {chain: 'bsc', chain_id: 56, kind: 'erc20', token_address: '0x1'},
-      amount_raw: '1',
-    };
-    expect(normalizePortfolio({positions: [{...base, current_cycle: {opened_entry_id: 1}}]}).positions[0]?.current_cycle?.round).toBeUndefined();
-    expect(normalizePortfolio({positions: [{...base, current_cycle: {opened_entry_id: 1, round: 0}}]}).positions[0]?.current_cycle?.round).toBeUndefined();
-    expect(normalizePortfolio({positions: [{...base, current_cycle: {opened_entry_id: 1, round: 2}}]}).positions[0]?.current_cycle?.round).toBe(2);
-    for (const round of [-1, 1.5]) {
-      expect(() => normalizePortfolio({positions: [{...base, current_cycle: {opened_entry_id: 1, round}}]})).toThrow(
-        /invalid current-cycle round/,
-      );
-    }
-  });
-
-  it('builds the POSITION target id from the trade round identity (opened_entry_id), not the display round', () => {
-    const base = {
-      asset: {chain: 'bsc', chain_id: 56, kind: 'erc20', token_address: '0xabc'},
-      amount_raw: '1',
-      current_cycle: {opened_entry_id: 9081, round: 3},
-    };
-    expect(positionTargetID(base)).toBe('56:erc20:0xabc:9081');
-    expect(positionTargetID({...base, asset: {...base.asset, chain_id: '056'}})).toBe('56:erc20:0xabc:9081');
-    expect(positionTargetID({...base, current_cycle: {opened_entry_id: '09081', round: 3}})).toBe('56:erc20:0xabc:9081');
-    expect(positionTargetID({...base, current_cycle: undefined})).toBeUndefined();
-    expect(positionTargetID({...base, current_cycle: {opened_entry_id: 0, round: 3}})).toBeUndefined();
-    expect(positionTargetID({...base, current_cycle: {opened_entry_id: 9081, round: 0}})).toBe('56:erc20:0xabc:9081');
-    expect(positionTargetID({...base, asset: {...base.asset, token_address: '0x:abc'}})).toBeUndefined();
-    expect(positionTargetID({...base, asset: {...base.asset, kind: 'erc:20'}})).toBeUndefined();
+    expect(() => normalizePortfolio({positions: {}})).toThrow(/array/);
+    expect(() => normalizePortfolio({positions: [], partial_errors: [{}]})).toThrow(/partial error/);
   });
 
   it('loads global real trades with all cycle scope parameters omitted and an exact cursor', async () => {
