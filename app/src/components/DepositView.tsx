@@ -56,7 +56,7 @@ export function DepositView() {
     {dedupingInterval: 12_000, revalidateOnFocus: true, shouldRetryOnError: false},
   );
   const portfolio = useSWR(
-    bearer ? ['deposit-portfolio', bearer] : null,
+    bearer ? ['deposit-portfolio-ledger-v2', bearer] : null,
     () => fetchWithSessionGuard((jwt) => getPortfolio(jwt)),
     {dedupingInterval: 12_000, revalidateOnFocus: true, shouldRetryOnError: false},
   );
@@ -132,7 +132,7 @@ export function DepositView() {
             continue;
           }
           if (solanaAcceptedBalanceChanged(baseline, snapshot)) {
-            setSolanaMonitor({state: 'changed', attempts: attempt, message: 'An accepted Solana balance changed in Portfolio. Review the current balance there; this is not a per-transaction confirmation.'});
+            setSolanaMonitor({state: 'changed', attempts: attempt, message: 'The canonical USDC cash balance changed in Portfolio. Review the current balance there; this is not a per-transaction confirmation.'});
             solanaMonitorController.current = undefined;
             return;
           }
@@ -185,17 +185,18 @@ export function DepositView() {
       {addresses.error ? <p role="alert" className="rounded border border-down/40 bg-down/5 p-3 text-sm text-down">Deposit routes unavailable{addresses.error instanceof ApiError ? ` · code ${addresses.error.code} · trace ${addresses.error.traceID ?? 'unavailable'}` : ''}.</p> : null}
       {accountInfo.error ? <p role="alert" className="rounded border border-down/40 bg-down/5 p-3 text-sm text-down">Current SmartX/Privy identity could not be verified{accountInfo.error instanceof ApiError ? ` · code ${accountInfo.error.code} · trace ${accountInfo.error.traceID ?? 'unavailable'}` : ''}.</p> : null}
       {!accountInfo.isLoading && !identityMatched ? <p role="alert" className="rounded border border-accent/40 bg-accent/5 p-3 text-sm text-accent">SmartX JWT and the current Privy session could not be proven to belong to the same DID. Re-login and exchange a fresh SmartX token before any fiat or Sweep action.</p> : null}
+      {portfolio.error ? <p role="status" className="rounded border border-border p-3 text-xs text-muted">Cash balance refresh is unavailable. Automatic arrival checks are paused; existing order recovery remains available.</p> : null}
       <DepositAddresses
         addresses={currentAddresses}
         loading={addresses.isLoading && !addresses.error}
         solanaMonitor={solanaMonitor}
-        canMonitorSolana={!!pollingContext && !!portfolio.data && !!solanaRoute?.accepted_tokens.length}
+        canMonitorSolana={!!pollingContext && solanaAcceptedBalanceSnapshot(portfolio.data, solanaRoute?.accepted_tokens.map((token) => token.address) ?? []) !== undefined}
         onStartSolanaMonitor={startSolanaMonitor}
         onStopSolanaMonitor={stopSolanaMonitor}
       />
       <div className="grid items-start gap-4 xl:grid-cols-2">
         <FiatDepositCard key={`fiat:${bearer}:${privyActor ?? 'no-privy'}`} bearer={bearer!} ownerKey={accountInfo.data?.identifier ?? session.user?.identifier ?? ''} receiptEmail={receiptEmail} canonicalSolanaAddress={solanaAddress} identityMatched={identityMatched} onProtectedError={handleProtectedError} onOrderCompleted={refreshPortfolioAfterCacheWindow} />
-        {portfolio.isLoading ? <section className="rounded-lg border border-border bg-surface p-4 text-sm text-muted" role="status">Loading Portfolio sweep capabilities…</section> : portfolio.error ? <section className="rounded-lg border border-down/40 bg-down/5 p-4 text-sm text-down" role="alert">Portfolio sweep capabilities could not be loaded. No absence of sweep routes has been inferred.</section> : <SweepDepositCard key={`sweep:${bearer}:${privyActor ?? 'no-privy'}:${identityMatched ? 'matched' : 'unmatched'}`} bearer={bearer!} ownerKey={accountInfo.data?.identifier ?? session.user?.identifier ?? ''} identityMatched={identityMatched} positions={portfolio.data?.positions ?? []} onProtectedError={handleProtectedError} />}
+        <SweepDepositCard key={`sweep:${bearer}:${privyActor ?? 'no-privy'}:${identityMatched ? 'matched' : 'unmatched'}`} bearer={bearer!} ownerKey={accountInfo.data?.identifier ?? session.user?.identifier ?? ''} identityMatched={identityMatched} onProtectedError={handleProtectedError} />
       </div>
       <p className="rounded-lg border border-border bg-surface p-4 text-xs text-muted">The retired Deposit list is no longer queried. Finalized direct Solana USDC movements are available under <Link href="/portfolio" className="text-accent hover:underline">Portfolio → USDC in / out</Link>; active fiat and Sweep recovery remains scoped to the known order ID saved by this browser.</p>
     </div>

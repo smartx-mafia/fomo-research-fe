@@ -1,5 +1,8 @@
 import type {FiatDepositSession} from '@/api/deposit';
 import type {PortfolioReply} from '@/api/portfolio';
+import {addDecimalStrings} from '@/lib/exact-decimal';
+
+export const SOLANA_CASH_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v';
 
 export const SOLANA_PORTFOLIO_POLL_INTERVAL_MS = 12_000;
 export const SOLANA_PORTFOLIO_MAX_ATTEMPTS = 20;
@@ -22,30 +25,26 @@ export function shouldAutoPollFiatOrder(order: FiatDepositSession | undefined): 
 }
 
 /**
- * Snapshot only the server-approved Solana mints. Undefined means Portfolio is
- * incomplete for this check, so callers must not interpret a missing balance as
- * zero or announce an arrival.
+ * Current Portfolio provides canonical USDC cash, not per-token chain balances.
+ * Observe only that explicit cash lane; Trade shares must never imply arrivals.
  */
 export function solanaAcceptedBalanceSnapshot(
   portfolio: PortfolioReply | undefined,
   acceptedMints: readonly string[],
 ): string | undefined {
-  if (!portfolio || acceptedMints.length === 0) return undefined;
-  const accepted = new Set(acceptedMints);
+  if (!portfolio || acceptedMints.length === 0 || acceptedMints.some((mint) => mint !== SOLANA_CASH_MINT)) return undefined;
+  const cash = portfolio.cash_balance_usd;
+  if (cash === undefined || cash.length > 256 || !/^\d+(?:\.\d+)?$/.test(cash) || !portfolio.cash_observed_at) return undefined;
+  const observedAt = Number(portfolio.cash_observed_at.seconds);
+  if (!Number.isFinite(observedAt) || observedAt <= 0) return undefined;
   const incomplete = portfolio.partial_errors.some((error) => {
-    if (error.token_address && accepted.has(error.token_address)) return true;
+    if (error.reason === 'cash_unavailable' || error.token_address === SOLANA_CASH_MINT) return true;
     if (error.chain?.toLowerCase() === 'solana' && !error.token_address) return true;
     return !error.chain && !error.token_address;
   });
   if (incomplete) return undefined;
 
-  const balances = new Map<string, bigint>();
-  for (const mint of accepted) balances.set(mint, BigInt(0));
-  for (const position of portfolio.positions) {
-    if (position.asset.chain.toLowerCase() !== 'solana' || !accepted.has(position.asset.token_address)) continue;
-    balances.set(position.asset.token_address, (balances.get(position.asset.token_address) ?? BigInt(0)) + BigInt(position.amount_raw));
-  }
-  return JSON.stringify([...balances.entries()].sort(([left], [right]) => left.localeCompare(right)).map(([mint, amount]) => [mint, amount.toString()]));
+  return JSON.stringify([SOLANA_CASH_MINT, addDecimalStrings(cash, '0')]);
 }
 
 export function solanaAcceptedBalanceChanged(baseline: string, next: string | undefined): boolean {
