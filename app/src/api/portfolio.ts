@@ -103,6 +103,86 @@ export type PortfolioTrade = {
 
 export type PortfolioTradePage = {trades: PortfolioTrade[]; next_cursor?: string};
 
+export type PortfolioCycleScope = {chain: string; asset: string; opened_entry_id: string};
+export type PortfolioClosedPosition = {
+  asset: PortfolioAsset;
+  opened_entry_id: string;
+  closed_entry_id: string;
+  opened_at?: ProtoTimestamp;
+  closed_at?: ProtoTimestamp;
+  status: 'closed';
+  symbol?: string;
+  decimals?: number;
+  buy_amount_raw?: string;
+  sell_amount_raw?: string;
+  buy_value_usd?: string;
+  sell_value_usd?: string;
+  realized_pnl_usd?: string;
+  pnl_ratio?: string;
+  avg_buy_price_usd?: string;
+  avg_sell_price_usd?: string;
+};
+export type PortfolioClosedPage = {items: PortfolioClosedPosition[]; next_cursor?: string};
+
+export function normalizePortfolioClosedPage(value: unknown): PortfolioClosedPage {
+  const row = object(value);
+  if (!row || (row.items !== undefined && !Array.isArray(row.items))) throw new Error('Portfolio closed positions must be an array.');
+  const items = (row.items as unknown[] | undefined ?? []).map((value): PortfolioClosedPosition => {
+    const item = object(value), asset = object(item?.asset);
+    if (!item || !asset || item.status !== 'closed') throw new Error('Portfolio returned an invalid closed position.');
+    const opened = nonnegativeIntegerString(item.opened_entry_id, 'opened_entry_id');
+    const closed = nonnegativeIntegerString(item.closed_entry_id, 'closed_entry_id');
+    const chainID = nonnegativeIntegerString(asset.chain_id, 'asset.chain_id');
+    if (opened === '0' || closed === '0' || chainID === '0') throw new Error('Portfolio returned an invalid closed cycle identity.');
+    return {
+      asset: {chain: requiredString(asset.chain, 'asset.chain'), chain_id: chainID, kind: requiredString(asset.kind, 'asset.kind'), token_address: requiredString(asset.token_address, 'asset.token_address')},
+      opened_entry_id: opened, closed_entry_id: closed, opened_at: timestamp(item.opened_at), closed_at: timestamp(item.closed_at), status: 'closed',
+      symbol: optionalString(item.symbol),
+      decimals: typeof item.decimals === 'number' && Number.isInteger(item.decimals) && item.decimals >= 0 && item.decimals <= 255 ? item.decimals : undefined,
+      buy_amount_raw: optionalUnsignedAmount(item.buy_amount_raw, 'buy_amount_raw'), sell_amount_raw: optionalUnsignedAmount(item.sell_amount_raw, 'sell_amount_raw'),
+      buy_value_usd: optionalDecimal(item.buy_value_usd, 'buy_value_usd'), sell_value_usd: optionalDecimal(item.sell_value_usd, 'sell_value_usd'),
+      realized_pnl_usd: optionalDecimal(item.realized_pnl_usd, 'realized_pnl_usd'), pnl_ratio: optionalDecimal(item.pnl_ratio, 'pnl_ratio'),
+      avg_buy_price_usd: optionalDecimal(item.avg_buy_price_usd, 'avg_buy_price_usd'), avg_sell_price_usd: optionalDecimal(item.avg_sell_price_usd, 'avg_sell_price_usd'),
+    };
+  });
+  if (row.next_cursor != null && typeof row.next_cursor !== 'string') throw new Error('Invalid closed history cursor.');
+  return {items, next_cursor: optionalString(row.next_cursor)};
+}
+
+export async function getClosedPortfolioPositions(bearer: string, cursor = '', signal?: AbortSignal): Promise<PortfolioClosedPage> {
+  const query = new URLSearchParams({status: 'closed', limit: '20'});
+  if (cursor) query.set('cursor', cursor);
+  const response = await call<unknown>(`/v1/portfolio/history?${query}`, {
+    bearer, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
+    preserveInt64Fields: ['chain_id', 'opened_entry_id', 'closed_entry_id'],
+  });
+  try {return normalizePortfolioClosedPage(response.data);} catch (error) {
+    throw new PortfolioDataError(error instanceof Error ? error.message : 'Invalid closed positions.', response.traceID);
+  }
+}
+
+/** Complete scope is mandatory: partial parameters must never fall through to global trades. */
+export async function getPortfolioCycleTrades(bearer: string, scope: PortfolioCycleScope, beforeID = '0', signal?: AbortSignal): Promise<PortfolioTradePage> {
+  const chain = requiredString(scope.chain, 'scope.chain'), asset = requiredString(scope.asset, 'scope.asset');
+  const opened = nonnegativeIntegerString(scope.opened_entry_id, 'scope.opened_entry_id');
+  const cursor = nonnegativeIntegerString(beforeID, 'before_id');
+  if (!chain.trim() || !asset.trim() || opened === '0') throw new Error('A complete positive cycle identity is required.');
+  const query = new URLSearchParams({chain, asset, opened_entry_id: opened, limit: '50'});
+  if (cursor !== '0') query.set('before_id', cursor);
+  const response = await call<unknown>(`/v1/portfolio/position/trades?${query}`, {
+    bearer, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
+    preserveInt64Fields: ['next_cursor', 'cycle_opened_entry_id'],
+  });
+  try {
+    const page = normalizePortfolioTradePage(response.data);
+    if (page.trades.some((trade) => trade.chain !== chain || trade.cycle_opened_entry_id !== opened ||
+      (chain === 'solana' ? trade.token !== asset : trade.token.toLowerCase() !== asset.toLowerCase()))) throw new Error('Portfolio returned trades from another cycle.');
+    return page;
+  } catch (error) {
+    throw new PortfolioDataError(error instanceof Error ? error.message : 'Invalid cycle trades.', response.traceID);
+  }
+}
+
 function object(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
 }

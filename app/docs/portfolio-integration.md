@@ -17,7 +17,14 @@ The deployed backend at `930d3d3a` removed `amount_raw`, `trade_basis`, `sweep` 
 - Cash snapshots are compared as exact canonical decimal strings. A change remains a balance-change observation, not confirmation of a particular transaction. Existing bounded polling/cancellation limits remain in effect.
 - Portfolio no longer supplies EVM sweep discovery. Its ledger positions are not passed as sweep candidates; discovery is explicitly shown unavailable. The existing known-order recovery component stays mounted independently of Portfolio loading/errors. No new sweep is created, prepared, signed or submitted by this migration.
 
-## Verification
+## Holding cycle history
+
+- Current position rows expose `Cycle trades` only when their cycle identity is ready. The separate `Closed positions` section reads `/v1/portfolio/history?status=closed&limit=20`, preserving its opaque cursor and each asset + opened-entry identity. Multiple completed cycles of one token remain separate rows.
+- Both lists open the same cycle panel, which always sends `chain`, `asset`, and the exact `opened_entry_id` together to `/v1/portfolio/position/trades`. It paginates with `before_id`, preserves server order, and rejects a response belonging to another asset/cycle. Global Activity remains independent.
+- Closed PnL and averages are historical server values; missing amounts/precision remain unavailable. A return of `0.25` displays as `25%`. Trades retain raw amounts because the endpoint supplies no display precision or USD valuation.
+- Panels and pagination are keyed by account and cycle. Changing accounts immediately hides the old selection; late responses cannot appear under another account. Failures show retry/reset controls rather than empty holdings.
+
+## Verification coverage
 
 Tests cover the deployed flat response, the original missing-shares failure, exact large IDs, cash and partial-data semantics, unready cycles, parser traces on initial load and refresh, cross-account responses and Opinion cleanup, and recovery-component lifetime during Portfolio failure.
 

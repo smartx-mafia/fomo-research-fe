@@ -52,7 +52,7 @@ function ErrorNotice({error, onReset}: {error: unknown; onReset: () => void}) {
   );
 }
 
-function TradeRow({trade}: {trade: PortfolioTrade}) {
+export function TradeRow({trade}: {trade: PortfolioTrade}) {
   const paidToken = trade.side === 'buy' ? trade.quote_token : trade.token;
   const receivedToken = trade.side === 'buy' ? trade.token : trade.quote_token;
   return (

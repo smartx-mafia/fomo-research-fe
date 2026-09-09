@@ -7,6 +7,7 @@ const {state} = vi.hoisted(() => ({state: {data: undefined as PortfolioReply | u
 vi.mock('swr', () => ({default: () => ({...state, isLoading: false, isValidating: false, mutate: vi.fn()})}));
 vi.mock('@/session/storage', () => ({useSession: () => ({jwt: 'test-session'}), clearSite: vi.fn(), readSite: () => null}));
 vi.mock('@/components/PortfolioActivity', () => ({PortfolioActivity: () => null}));
+vi.mock('@/components/PortfolioCycles', () => ({ClosedPortfolioPositions: () => null, PortfolioCycleTrades: () => null}));
 vi.mock('@/components/OpinionComposer', () => ({OpinionComposer: () => null}));
 import {PortfolioView} from './PortfolioView';
 
