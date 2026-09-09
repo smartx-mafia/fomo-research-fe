@@ -1,424 +1,189 @@
-"use client";
+'use client';
 
-import { useEffect, useRef, useState } from "react";
-import {
-  createChart,
-  ColorType,
-  CrosshairMode,
-  CandlestickSeries,
-  HistogramSeries,
-  type IChartApi,
-  type ISeriesApi,
-  type CandlestickData,
-  type HistogramData,
-  type LogicalRange,
-  type UTCTimestamp,
-} from "lightweight-charts";
-import { fetchOhlcv, fetchTrades, MarketApiError } from "@/lib/market";
-import type { OhlcvBar, OhlcvPeriod, TradeItem } from "@/lib/types";
-import { useLivePrice } from "@/components/TokenLive";
-import { toMs } from "@/lib/format";
-import { Skeleton, ErrorState, EmptyState } from "@/components/ui";
+import {useEffect, useMemo, useRef, useState} from 'react';
+import {ArrowLeft, Maximize2, Minimize2, RotateCcw, RefreshCw} from 'lucide-react';
+import {CandlestickSeries, ColorType, CrosshairMode, HistogramSeries, LineStyle, PriceScaleMode, createChart,
+  type IChartApi, type IPriceLine, type ISeriesApi, type LogicalRange, type Time, type UTCTimestamp} from 'lightweight-charts';
+import {useLiveQuote} from '@/components/TokenLive';
+import {useChartData} from '@/hooks/useChartData';
+import {CHART_PERIODS, PERIOD_SECONDS, RETENTION_DAYS, chartMinMove, formatChartPrice, shiftedChartRange, usableChartQuote} from '@/lib/chart-data';
+import {fmtCompact} from '@/lib/format';
+import type {OhlcvBar, OhlcvPeriod} from '@/lib/types';
 
-const PERIODS: OhlcvPeriod[] = ["1m", "5m", "15m", "1h", "4h", "1d"];
+const UP = '#26c6a0', DOWN = '#f1667b';
+const button = 'rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors focus-visible:outline-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-40';
+const utcTime = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
 
-/** 周期秒数（文档 §5.3）。from/to 入参是 unix 秒、回包 t 是毫秒。 */
-const PERIOD_SEC: Record<OhlcvPeriod, number> = {
-  "1m": 60,
-  "5m": 300,
-  "15m": 900,
-  "1h": 3600,
-  "4h": 14400,
-  "1d": 86400,
-};
-
-/** 服务端短缓存 TTL = min(周期时长, 15 分钟)（§5.1）。刷新间隔不得快于 TTL。 */
-const PERIOD_TTL_MS: Record<OhlcvPeriod, number> = {
-  "1m": 60_000,
-  "5m": 300_000,
-  "15m": 900_000,
-  "1h": 900_000,
-  "4h": 900_000,
-  "1d": 900_000,
-};
-
-/** 每段回查 300 根（单段远小于 2000 根上限,不需要分段循环,§3.3） */
-const BACKFILL_BARS = 300;
-/** 可视范围左缘距已加载起点不足 60 根时提前回查 */
-const BACKFILL_THRESHOLD_BARS = 60;
-
-const UP = "#22c55e";
-const DOWN = "#f43f5e";
-// dark theme tokens from globals.css
-const BG = "#111318"; // --surface
-const BORDER = "#23262f"; // --border
-const MUTED = "#8b90a0"; // --muted
-
-interface PriceChartProps {
-  chain: string;
-  address: string;
-  createdAt?: string;
-}
-
-/** 合并两段 bar:按 t 去重(同桶后者胜),升序;v 非有限数归零(图表断言 NaN 会整页崩) */
-function mergeBars(a: OhlcvBar[], b: OhlcvBar[]): OhlcvBar[] {
-  const map = new Map<number, OhlcvBar>();
-  for (const bar of [...a, ...b]) map.set(bar.t, { ...bar, v: Number.isFinite(bar.v) ? bar.v : 0 });
-  return [...map.values()].sort((x, y) => x.t - y.t);
-}
-
-/** 一笔成交折进对应周期桶:已有桶更新 c/h/l 并累加 v;没有则新开一根 */
-function foldTrade(bars: OhlcvBar[], tr: TradeItem, periodSec: number, loadedFromSec: number | null): OhlcvBar[] {
-  const price = tr.price_usd;
-  if (tr.date === undefined || price === undefined) return bars;
-  const bucket = Math.floor(tr.date / (periodSec * 1000)) * periodSec * 1000;
-  // 早于已加载历史的成交不造蜡烛:没有 o/h/l 上下文,造出来是假蜡烛
-  if (loadedFromSec !== null && bucket < loadedFromSec * 1000) return bars;
-  const vol = Number(tr.base_token_amount);
-  const i = bars.findIndex((b) => b.t === bucket);
-  if (i < 0) {
-    return [...bars, { t: bucket, o: price, h: price, l: price, c: price, v: vol || 0 }];
-  }
-  const b = bars[i];
-  bars[i] = {
-    ...b,
-    c: price,
-    h: Math.max(b.h, price),
-    l: Math.min(b.l, price),
-    v: (Number.isFinite(b.v) ? b.v : 0) + (Number.isFinite(vol) ? vol : 0),
-  };
-  return bars;
-}
-
-export default function PriceChart({ chain, address, createdAt }: PriceChartProps) {
-  const [period, setPeriod] = useState<OhlcvPeriod>("5m");
-  const [bars, setBars] = useState<OhlcvBar[] | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [historyEnd, setHistoryEnd] = useState(false);
-  const livePrice = useLivePrice();
-
-  const containerRef = useRef<HTMLDivElement | null>(null);
+export default function PriceChart({chain, address}: {chain: string; address: string; createdAt?: string}) {
+  const [period, setPeriod] = useState<OhlcvPeriod>('5m');
+  const [expanded, setExpanded] = useState(false);
+  const [logScale, setLogScale] = useState(false);
+  const [hoveredTime, setHoveredTime] = useState<number | null>(null);
+  const [following, setFollowing] = useState(true);
+  const {view, now, history, refresh} = useChartData(chain, address, period);
+  const quote = useLiveQuote();
+  const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
-  const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
-  const barsRef = useRef<OhlcvBar[] | null>(null);
-  /** 已加载历史的最早桶(unix 秒,周期对齐)。之前的不重取(§5.2③) */
-  const loadedFromRef = useRef<number | null>(null);
-  /** 深度闸已触发:该周期回翻到底了,不再往回查(§3.2) */
-  const historyEndRef = useRef(false);
-  const backfillingRef = useRef(false);
-  const periodRef = useRef(period);
-  const seenTradesRef = useRef(new Set<string>());
-  const didFitRef = useRef(false);
+  const candleRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const volumeRef = useRef<ISeriesApi<'Histogram'> | null>(null);
+  const quoteLineRef = useRef<IPriceLine | null>(null);
+  const acceptedQuoteRef = useRef(0);
+  const renderedRef = useRef<{key: string; bars: OhlcvBar[]}>({key: '', bars: []});
+  const changingDataRef = useRef(false);
+  const historyIntentRef = useRef(false);
+  const currentRef = useRef({history, loading: view.loading || view.loadingHistory, end: view.historyEnd, historyError: view.historyError});
+  currentRef.current = {history, loading: view.loading || view.loadingHistory, end: view.historyEnd, historyError: view.historyError};
+  const rowsByTime = useMemo(() => new Map(view.bars.map((bar) => [bar.t, bar])), [view.bars]);
+  const unconfirmed = useMemo(() => new Set(view.unconfirmed), [view.unconfirmed]);
+  const selected = (hoveredTime === null ? undefined : rowsByTime.get(hoveredTime)) ?? view.bars.at(-1);
+  const liveQuote = usableChartQuote(quote, chain, chain === 'solana' ? address : address.toLowerCase(), now);
+  const canRefresh = !view.loading && !view.loadingHistory && now >= view.nextRefreshAt;
 
-  periodRef.current = period;
-
-  const applyBars = (next: OhlcvBar[]) => {
-    barsRef.current = next;
-    setBars(next);
-  };
-
-  // ---- 数据拉取 ----
-
-  /** 追新:缺省形态(不带 from/to,最近 300 根,全站共享缓存,§5.2①) */
-  const loadLatest = () => {
-    setLoading(true);
-    setError(null);
-    fetchOhlcv(chain, address, { period: periodRef.current })
-      .then((data) => {
-        const prev = barsRef.current;
-        // 已回查过的更老段落保留,只把追新段与其合并
-        const from = loadedFromRef.current;
-        const older = prev && from ? prev.filter((b) => b.t < from * 1000) : [];
-        applyBars(mergeBars(older, data));
-      })
-      .catch((err: unknown) => {
-        if (err instanceof MarketApiError && err.code === 200300) {
-          // 代币不存在/近期无成交,60s 负缓存:按"暂无数据"处理,不重试(§3.4)
-          applyBars([]);
-        } else {
-          setError(err instanceof Error ? err.message : "Failed to load chart data");
-        }
-      })
-      .finally(() => setLoading(false));
-  };
-
-  /** 回查历史:固定、周期对齐的 [from, loadedFrom - 1](§5.2②),每次 300 根 */
-  const backfill = () => {
-    if (backfillingRef.current || historyEndRef.current) return;
-    const cur = barsRef.current;
-    if (!cur || cur.length === 0) return;
-    const periodSec = PERIOD_SEC[periodRef.current];
-    if (loadedFromRef.current === null) {
-      loadedFromRef.current = Math.floor(cur[0].t / 1000 / periodSec) * periodSec;
-    }
-    const to = loadedFromRef.current - periodSec; // 与已加载段贴边不重叠
-    if (to <= 0) return;
-    const from = to - (BACKFILL_BARS - 1) * periodSec;
-
-    backfillingRef.current = true;
-    fetchOhlcv(chain, address, { period: periodRef.current, from, to })
-      .then((data) => {
-        applyBars(mergeBars(barsRef.current ?? [], data));
-        loadedFromRef.current = from;
-        // 空段或贴到时间原点:更早没有数据了
-        if (data.length === 0 || from <= periodSec) {
-          historyEndRef.current = true;
-          setHistoryEnd(true);
-        }
-      })
-      .catch((err: unknown) => {
-        // 100307 深度闸:永久拒绝,不重试,标记到底(§3.2)
-        if (err instanceof MarketApiError && err.code === 100307) {
-          historyEndRef.current = true;
-          setHistoryEnd(true);
-        }
-      })
-      .finally(() => {
-        backfillingRef.current = false;
-      });
-  };
-
-  // 切币/切周期:全部重置(不同周期是不同的数据视图)
-  useEffect(() => {
-    barsRef.current = null;
-    loadedFromRef.current = null;
-    historyEndRef.current = false;
-    backfillingRef.current = false;
-    seenTradesRef.current = new Set();
-    didFitRef.current = false;
-    setBars(null);
-    setHistoryEnd(false);
-    loadLatest();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chain, address, period]);
-
-  // 按 TTL 低频重取追新(§5.1)
-  useEffect(() => {
-    const t = setInterval(loadLatest, PERIOD_TTL_MS[period]);
-    return () => clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chain, address, period]);
-
-  // ---- 交易流 → 末段蜡烛(§5.2⑤ 的交易流版) ----
-  // trades 没有 WS topic,轮询是正解;服务端缓存 30s(2026-09 起),轮询更快只会拿到同一份缓存。
-  // 每笔成交按时间折进所属周期桶:已有桶更新 c/h/l/累加 v,跨入新周期则新开一根。
-  useEffect(() => {
-    const periodSec = PERIOD_SEC[period];
-    const poll = () => {
-      fetchTrades(chain, address, { limit: 50 })
-        .then((trades) => {
-          const seen = seenTradesRef.current;
-          let next = barsRef.current ?? [];
-          let changed = false;
-          for (const tr of trades) {
-            const key = tr.tx_hash && tr.date ? `${tr.tx_hash}:${tr.date}` : "";
-            if (key && seen.has(key)) continue;
-            if (key) seen.add(key);
-            const before = next.length;
-            next = foldTrade(next, tr, periodSec, loadedFromRef.current);
-            changed = changed || next.length !== before || next !== barsRef.current;
-          }
-          if (changed && next.length > 0) applyBars([...next].sort((a, b) => a.t - b.t));
-        })
-        .catch(() => {
-          // 轮询失败静默:K 线主体还有 TTL 刷新兜底
-        });
-    };
-    poll();
-    const t = setInterval(poll, 30_000);
-    return () => clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chain, address, period]);
-
-  // ---- 图表骨架 ----
+  function resetView() {
+    const chart = chartRef.current;
+    if (!chart || !view.bars.length) return;
+    changingDataRef.current = true;
+    const count = Math.max(35, Math.min(120, Math.floor((containerRef.current?.clientWidth ?? 900) / 9)));
+    chart.timeScale().setVisibleLogicalRange({from: view.bars.length - count, to: view.bars.length + 4});
+    candleRef.current?.priceScale().applyOptions({autoScale: true});
+    changingDataRef.current = false;
+    historyIntentRef.current = false;
+    setFollowing(true);
+  }
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-
     const chart = createChart(container, {
-      layout: {
-        background: { type: ColorType.Solid, color: BG },
-        textColor: MUTED,
-      },
-      grid: {
-        vertLines: { color: BORDER },
-        horzLines: { color: BORDER },
-      },
-      crosshair: { mode: CrosshairMode.Normal },
-      rightPriceScale: {
-        borderColor: BORDER,
-      },
-      timeScale: {
-        borderColor: BORDER,
-        timeVisible: true,
-        secondsVisible: false,
-      },
-      autoSize: false,
-      width: container.clientWidth,
-      height: container.clientHeight,
+      width: container.clientWidth, height: container.clientHeight,
+      layout: {background: {type: ColorType.Solid, color: '#111318'}, textColor: '#9198a7', fontFamily: 'ui-monospace, SFMono-Regular, monospace', fontSize: 11,
+        panes: {separatorColor: '#23262f', separatorHoverColor: '#3a4050'}},
+      grid: {vertLines: {visible: false}, horzLines: {color: '#1d222b', style: LineStyle.Dotted}},
+      crosshair: {mode: CrosshairMode.Normal, vertLine: {color: '#687185', labelBackgroundColor: '#303747'}, horzLine: {color: '#687185', labelBackgroundColor: '#303747'}},
+      rightPriceScale: {borderVisible: false, minimumWidth: 94, autoScale: true},
+      timeScale: {borderColor: '#23262f', timeVisible: true, secondsVisible: false, rightOffset: 5, barSpacing: 9, minBarSpacing: 3, rightBarStaysOnScroll: true},
+      localization: {locale: 'en-US', timeFormatter: (time: Time) => typeof time === 'number' ? utcTime(time * 1000) + ' UTC' : String(time)},
+      handleScroll: {vertTouchDrag: false, horzTouchDrag: true, mouseWheel: true, pressedMouseMove: true},
     });
-
-    const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: UP,
-      downColor: DOWN,
-      borderUpColor: UP,
-      borderDownColor: DOWN,
-      wickUpColor: UP,
-      wickDownColor: DOWN,
+    const candles = chart.addSeries(CandlestickSeries, {
+      upColor: UP, downColor: DOWN, borderVisible: false, wickUpColor: UP, wickDownColor: DOWN,
+      priceFormat: {type: 'custom', formatter: formatChartPrice, minMove: 0.00000001}, priceLineStyle: LineStyle.Dotted,
     });
-
-    const volumeSeries = chart.addSeries(HistogramSeries, {
-      color: MUTED,
-      priceFormat: { type: "volume" },
-      priceScaleId: "volume",
-    });
-    volumeSeries.priceScale().applyOptions({
-      scaleMargins: { top: 0.8, bottom: 0 },
-    });
-    candleSeries.priceScale().applyOptions({
-      scaleMargins: { top: 0.05, bottom: 0.25 },
-    });
-
-    chartRef.current = chart;
-    candleSeriesRef.current = candleSeries;
-    volumeSeriesRef.current = volumeSeries;
-
-    // 用户向左拖动接近已加载左缘时提前回查历史。
-    // logical range 以首根数据为 0:左缘距首根不足阈值根数即触发(有防重入/到底护栏)
-    const onVisibleRange = (range: LogicalRange | null) => {
-      if (!range || historyEndRef.current || backfillingRef.current) return;
-      if (range.from < BACKFILL_THRESHOLD_BARS) backfill();
+    candles.priceScale().applyOptions({scaleMargins: {top: 0.12, bottom: 0.08}});
+    const volume = chart.addSeries(HistogramSeries, {priceFormat: {type: 'volume'}, priceLineVisible: false, lastValueVisible: false}, 1);
+    volume.priceScale().applyOptions({scaleMargins: {top: 0.15, bottom: 0}});
+    chart.panes()[0].setStretchFactor(4);
+    chart.panes()[1].setStretchFactor(1);
+    chartRef.current = chart; candleRef.current = candles; volumeRef.current = volume;
+    const onRange = (range: LogicalRange | null) => {
+      if (!range || changingDataRef.current) return;
+      setFollowing(range.to >= renderedRef.current.bars.length - 2);
+      // Programmatic setData/resize must never trigger an automatic history scan.
+      if (historyIntentRef.current && range.from < 15 && !currentRef.current.loading && !currentRef.current.end && !currentRef.current.historyError) {
+        historyIntentRef.current = false;
+        void currentRef.current.history();
+      }
     };
-    chart.timeScale().subscribeVisibleLogicalRangeChange(onVisibleRange);
-
-    const resizeObserver = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      if (!entry) return;
-      const { width, height } = entry.contentRect;
-      if (width > 0 && height > 0) {
-        chart.resize(width, height);
+    const onCrosshair = (event: {time?: unknown; point?: {x: number; y: number}}) => setHoveredTime(typeof event.time === 'number' && event.point ? event.time * 1000 : null);
+    chart.timeScale().subscribeVisibleLogicalRangeChange(onRange);
+    chart.subscribeCrosshairMove(onCrosshair);
+    const observer = new ResizeObserver(([entry]) => {
+      if (entry && entry.contentRect.width > 0 && entry.contentRect.height > 0) {
+        changingDataRef.current = true;
+        chart.resize(entry.contentRect.width, entry.contentRect.height);
+        changingDataRef.current = false;
       }
     });
-    resizeObserver.observe(container);
-
+    observer.observe(container);
     return () => {
-      resizeObserver.disconnect();
-      chart.timeScale().unsubscribeVisibleLogicalRangeChange(onVisibleRange);
-      chart.remove();
-      chartRef.current = null;
-      candleSeriesRef.current = null;
-      volumeSeriesRef.current = null;
+      observer.disconnect(); chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRange); chart.unsubscribeCrosshairMove(onCrosshair); chart.remove();
+      chartRef.current = null; candleRef.current = null; volumeRef.current = null; quoteLineRef.current = null;
+      renderedRef.current = {key: '', bars: []};
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ---- 数据 → 系列 ----
-
   useEffect(() => {
-    const candleSeries = candleSeriesRef.current;
-    const volumeSeries = volumeSeriesRef.current;
-    if (!candleSeries || !volumeSeries || !bars) return;
-
-    const candleData: CandlestickData[] = bars.map((bar) => ({
-      time: Math.floor(bar.t / 1000) as UTCTimestamp,
-      open: bar.o,
-      high: bar.h,
-      low: bar.l,
-      close: bar.c,
-    }));
-
-    const volumeData: HistogramData[] = bars.map((bar) => ({
-      time: Math.floor(bar.t / 1000) as UTCTimestamp,
-      value: Number.isFinite(bar.v) ? bar.v : 0,
-      color: bar.c >= bar.o ? `${UP}80` : `${DOWN}80`,
-    }));
-
-    candleSeries.setData(candleData);
-    volumeSeries.setData(volumeData);
-    // 只在首次拿到数据时 fit;之后(交易流折叠/回查追加)保住用户当前视窗,
-    // 否则每次 setData 都会把视图拽回最右端
-    if (!didFitRef.current && candleData.length > 0) {
-      didFitRef.current = true;
-      chartRef.current?.timeScale().fitContent();
+    const chart = chartRef.current, candles = candleRef.current, volume = volumeRef.current;
+    if (!chart || !candles || !volume) return;
+    const before = renderedRef.current;
+    const seriesKey = view.key + ':' + view.revision;
+    const reset = before.key !== seriesKey || !before.bars.length;
+    const range = chart.timeScale().getVisibleLogicalRange();
+    const wasFollowing = !range || range.to >= before.bars.length - 2;
+    changingDataRef.current = true;
+    historyIntentRef.current = false;
+    candles.setData(view.bars.map((bar) => ({time: bar.t / 1000 as UTCTimestamp, open: bar.o, high: bar.h, low: bar.l, close: bar.c, ...(unconfirmed.has(bar.t) ? {color: '#a695df', wickColor: '#a695df'} : {})})));
+    volume.setData(view.bars.map((bar) => bar.v === null || unconfirmed.has(bar.t) ? {time: bar.t / 1000 as UTCTimestamp} : {time: bar.t / 1000 as UTCTimestamp, value: bar.v, color: bar.c >= bar.o ? '#26c6a055' : '#f1667b55'}));
+    const last = view.bars.at(-1);
+    if (last) candles.applyOptions({priceFormat: {type: 'custom', formatter: formatChartPrice, minMove: chartMinMove(last.c)}});
+    renderedRef.current = {key: seriesKey, bars: view.bars};
+    if (reset) {
+      acceptedQuoteRef.current = 0;
+      historyIntentRef.current = false;
+      setHoveredTime(null);
+      const count = Math.max(35, Math.min(120, Math.floor((containerRef.current?.clientWidth ?? 900) / 9)));
+      if (last) chart.timeScale().setVisibleLogicalRange({from: view.bars.length - count, to: view.bars.length + 4});
+      candles.priceScale().applyOptions({autoScale: true});
+      setFollowing(true);
+    } else if (range) {
+      const shifted = shiftedChartRange(before.bars, view.bars, range);
+      const newTail = last && last.t > before.bars[before.bars.length - 1].t;
+      if (wasFollowing && newTail) {
+        const to = view.bars.length + 4;
+        chart.timeScale().setVisibleLogicalRange({from: to - (range.to - range.from), to});
+      } else chart.timeScale().setVisibleLogicalRange(shifted);
     }
-  }, [bars]);
+    changingDataRef.current = false;
+  }, [view.bars, view.key, view.revision, unconfirmed]);
 
-  // WS 实时价兜底:交易流没覆盖的空窗,末根 c/h/l 仍能跳(§5.2⑤)
+  useEffect(() => {candleRef.current?.priceScale().applyOptions({mode: logScale ? PriceScaleMode.Logarithmic : PriceScaleMode.Normal, autoScale: true});}, [logScale]);
   useEffect(() => {
-    const candleSeries = candleSeriesRef.current;
-    const volumeSeries = volumeSeriesRef.current;
-    const last = barsRef.current?.[barsRef.current.length - 1];
-    if (!candleSeries || !volumeSeries || !last || livePrice === undefined) return;
+    const candles = candleRef.current;
+    if (!candles) return;
+    if (!liveQuote) {
+      if (quoteLineRef.current) candles.removePriceLine(quoteLineRef.current);
+      quoteLineRef.current = null; return;
+    }
+    if (liveQuote.observedAt < acceptedQuoteRef.current) return;
+    acceptedQuoteRef.current = liveQuote.observedAt;
+    const options = {price: liveQuote.price, color: '#8f80ff', lineWidth: 1 as const, lineStyle: LineStyle.Dashed, axisLabelVisible: true, title: 'Quote'};
+    if (quoteLineRef.current) quoteLineRef.current.applyOptions(options);
+    else quoteLineRef.current = candles.createPriceLine(options);
+    // Token quotes have neither trade IDs nor primary-pool identity: never mutate OHLC/volume.
+  }, [liveQuote, view.key]);
 
-    last.c = livePrice;
-    last.h = Math.max(last.h, livePrice);
-    last.l = Math.min(last.l, livePrice);
-    const time = Math.floor(last.t / 1000) as UTCTimestamp;
-    candleSeries.update({
-      time,
-      open: last.o,
-      high: last.h,
-      low: last.l,
-      close: last.c,
-    });
-    volumeSeries.update({
-      time,
-      value: Number.isFinite(last.v) ? last.v : 0,
-      color: last.c >= last.o ? `${UP}80` : `${DOWN}80`,
-    });
-  }, [livePrice]);
-
-  const showEmpty = !loading && !error && bars && bars.length === 0;
+  const countdown = now ? PERIOD_SECONDS[period] - Math.floor(now / 1000) % PERIOD_SECONDS[period] : 0;
+  const openCandle = selected && now && selected.t === Math.floor(now / (PERIOD_SECONDS[period] * 1000)) * PERIOD_SECONDS[period] * 1000;
+  const pendingCandle = selected && view.unconfirmed.includes(selected.t);
+  const remaining = (Math.floor(countdown / 3600) ? Math.floor(countdown / 3600) + ':' : '') + String(Math.floor(countdown / 60) % 60).padStart(2, '0') + ':' + String(countdown % 60).padStart(2, '0');
 
   return (
-    <div className="flex flex-col gap-3">
-      <div className="flex items-center gap-1">
-        {PERIODS.map((p) => (
-          <button
-            key={p}
-            onClick={() => setPeriod(p)}
-            className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-colors ${
-              p === period
-                ? "border-accent bg-surface-2 text-foreground"
-                : "border-border bg-surface text-muted hover:text-foreground"
-            }`}
-          >
-            {p}
-          </button>
-        ))}
-        {historyEnd && <span className="ml-2 text-[11px] text-muted">已到该周期最早历史</span>}
+    <section aria-label="Token price chart" className="min-w-0 overflow-hidden rounded-xl border border-border bg-surface">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-3 py-3 sm:px-4">
+        <div className="flex items-center gap-3"><h2 className="text-sm font-semibold text-foreground">Price chart</h2><span className="text-[10px] text-muted">USD · UTC</span></div>
+        <div className="flex items-center gap-2 text-[11px]"><span className={'h-1.5 w-1.5 rounded-full ' + (liveQuote ? 'bg-up' : 'bg-muted')} /><span className="text-muted">{liveQuote ? 'Live quote' : 'Quote delayed'}</span>{liveQuote ? <span className="tabular text-foreground">{formatChartPrice(liveQuote.price)}</span> : null}</div>
       </div>
-
-      <div className="relative h-80 w-full overflow-hidden rounded-lg border border-border bg-surface">
-        {loading && (
-          <div className="absolute inset-0 p-3">
-            <Skeleton className="h-full w-full" />
-          </div>
-        )}
-        {!loading && error && (
-          <div className="absolute inset-0">
-            <ErrorState message={error} />
-          </div>
-        )}
-        {showEmpty && (
-          <div className="absolute inset-0">
-            <EmptyState>No chart data</EmptyState>
-          </div>
-        )}
-        {/* Chart container must always be mounted (with real size) for lightweight-charts to attach to. */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-2 py-2 sm:px-3">
+        <div role="group" aria-label="Candle interval" className="flex items-center gap-0.5">{CHART_PERIODS.map((p) => <button type="button" key={p} aria-pressed={p === period} onClick={() => setPeriod(p)} title={RETENTION_DAYS[p] === null ? 'Daily history' : 'Up to ' + RETENTION_DAYS[p] + ' days of history'} className={button + (p === period ? ' bg-accent/15 text-accent' : ' text-muted hover:bg-surface-2 hover:text-foreground')}>{p}</button>)}</div>
+        <div className="flex items-center gap-1"><button type="button" className={button + (logScale ? ' bg-accent/15 text-accent' : ' text-muted')} aria-pressed={logScale} onClick={() => setLogScale(!logScale)} title="Toggle logarithmic price scale">Log</button><button type="button" className={button + ' text-muted'} onClick={resetView} aria-label="Reset chart view"><RotateCcw size={14} /></button><button type="button" className={button + ' text-muted'} onClick={() => setExpanded(!expanded)} aria-label={expanded ? 'Collapse chart' : 'Expand chart'}>{expanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</button></div>
+      </div>
+      <div className="min-h-[76px] px-3 py-3 sm:px-4" aria-label="Candle details">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted"><span>{selected ? utcTime(selected.t) + ' UTC' : 'Select a candle to inspect its prices'}</span>{openCandle ? <span className="tabular text-accent">Open candle · {remaining}</span> : pendingCandle ? <span className="text-amber-400">Awaiting confirmation</span> : selected ? <span>Closed candle</span> : null}{view.loading && view.bars.length ? <span>Updating…</span> : null}</div>
+        <dl className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs">{(['o', 'h', 'l', 'c'] as const).map((field) => <div key={field} className="flex items-baseline gap-1.5"><dt className="uppercase text-muted">{field}</dt><dd className={'tabular ' + (selected && selected.c >= selected.o ? 'text-up' : 'text-down')}>{selected ? formatChartPrice(selected[field]) : '—'}</dd></div>)}<div className="flex items-baseline gap-1.5"><dt className="text-muted">Vol</dt><dd className="tabular text-foreground">{pendingCandle ? 'Pending' : selected?.v != null ? (selected.v === 0 ? '0' : fmtCompact(selected.v)) : '—'}</dd></div></dl>
+      </div>
+      {view.error && view.bars.length ? <p role="status" className="px-4 pb-2 text-xs text-amber-400">Chart refresh failed. Displaying the last received candles.</p> : null}
+      <div className={'relative w-full ' + (expanded ? 'h-[70vh] min-h-[440px]' : 'h-[370px] sm:h-[450px]')} onPointerDown={() => {historyIntentRef.current = true;}} onWheel={() => {historyIntentRef.current = true;}}>
         <div ref={containerRef} className="h-full w-full" />
+        {!view.bars.length ? <div role="status" className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-surface/95 px-6 text-center text-sm text-muted">{view.loading || !now ? <><RefreshCw className="animate-spin" size={20} />Loading candles…</> : view.error ? <><span className="max-w-lg break-words">{view.error}</span><button type="button" className={button + ' border border-border text-foreground'} disabled={!canRefresh} onClick={() => void refresh()}>Retry chart</button></> : 'No candles in the available interval.'}</div> : null}
+        {!following && view.bars.length ? <button type="button" onClick={resetView} className="absolute bottom-[28%] right-28 rounded-md border border-border bg-surface-2 px-3 py-2 text-xs text-foreground shadow-lg">Back to latest →</button> : null}
       </div>
-
-      {/* created_at 上游格式不定(秒/毫秒/ISO),toMs 带解析失败兜底,失败就不展示。
-          toLocaleString 受运行环境 locale 影响必然水合不匹配，交给客户端渲染 */}
-      {toMs(createdAt) !== undefined && (
-        <p className="text-xs text-muted" suppressHydrationWarning>
-          Token created {new Date(toMs(createdAt)!).toLocaleString()}
-        </p>
-      )}
-    </div>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-3 py-2 sm:px-4">
+        <button type="button" className={button + ' inline-flex items-center gap-1 text-muted hover:text-foreground'} disabled={!view.updatedAt || view.loading || view.loadingHistory || view.historyEnd} onClick={() => void history()}><ArrowLeft size={12} />{view.loadingHistory ? 'Loading history…' : view.historyEnd ? 'History limit reached' : 'Load earlier'}</button>
+        <span className="tabular text-[10px] text-muted">{view.bars.length.toLocaleString('en-US')} candles · {view.updatedAt ? 'Synced ' + utcTime(view.updatedAt).slice(11) + ' UTC' : 'Waiting for chart feed'}</span>
+        <button type="button" className={button + ' text-muted'} aria-label="Refresh chart data" disabled={!canRefresh} onClick={() => void refresh()} title="Refresh is limited to the candle cache interval"><RefreshCw size={12} className={view.loading ? 'animate-spin' : ''} /></button>
+      </div>
+      {view.historyError || view.historyMessage ? <p role="status" className="px-4 pb-3 text-xs text-muted">{view.historyError ?? view.historyMessage}</p> : null}
+      <p className="border-t border-border px-4 py-2 text-[10px] leading-relaxed text-muted">The open candle is provisional. The live quote is indicative and does not change closed candles.</p>
+    </section>
   );
 }
