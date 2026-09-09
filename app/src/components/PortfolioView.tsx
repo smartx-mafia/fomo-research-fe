@@ -6,7 +6,8 @@ import {useEffect, useState} from 'react';
 import useSWR from 'swr';
 
 import {ApiError} from '@/api/envelope';
-import {getPortfolio, PortfolioDataError, positionTargetID, type PortfolioPosition, type ProtoTimestamp} from '@/api/portfolio';
+import {getPortfolio, PortfolioDataError, positionTargetID, type PortfolioPosition, type ProtoTimestamp, type PortfolioCycleScope} from '@/api/portfolio';
+import {ClosedPortfolioPositions, PortfolioCycleTrades} from '@/components/PortfolioCycles';
 import {OpinionComposer} from '@/components/OpinionComposer';
 import {PortfolioActivity} from '@/components/PortfolioActivity';
 import {
@@ -41,7 +42,7 @@ function StatusBadge({position}: {position: PortfolioPosition}) {
   </span>;
 }
 
-function PositionRow({position, onOpenOpinion}: {position: PortfolioPosition; onOpenOpinion: (targetID: string, label?: string) => void}) {
+function PositionRow({position, onOpenOpinion, onOpenCycle}: {position: PortfolioPosition; onOpenOpinion: (targetID: string, label?: string) => void; onOpenCycle: (scope: PortfolioCycleScope) => void}) {
   const targetID = positionTargetID(position);
   const tokenHref = `/token/${encodeURIComponent(position.asset.chain)}/${encodeURIComponent(position.asset.token_address)}`;
   return (
@@ -73,6 +74,9 @@ function PositionRow({position, onOpenOpinion}: {position: PortfolioPosition; on
       </td>
       <td className="px-3 py-3 text-right text-xs">
         <StatusBadge position={position} />
+        <button type="button" disabled={targetID === undefined} title={targetID === undefined ? 'This cycle is not ready yet' : undefined}
+          onClick={() => {if (targetID) onOpenCycle({chain: position.asset.chain, asset: position.asset.token_address, opened_entry_id: position.opened_entry_id});}}
+          className="mt-2 block w-full whitespace-nowrap rounded-md border border-border px-2 py-1 text-[11px] text-accent disabled:cursor-not-allowed disabled:opacity-50">Cycle trades</button>
         <button
           type="button"
           disabled={targetID === undefined}
@@ -94,6 +98,8 @@ export function PortfolioView() {
   const session = useSession();
   const [opinionTarget, setOpinionTarget] = useState<{targetID: string; label?: string}>();
   const [opinionNotice, setOpinionNotice] = useState<string>();
+  const [cycle, setCycle] = useState<{bearer: string; scope: PortfolioCycleScope}>();
+  useEffect(() => setCycle(undefined), [session?.jwt]);
   useEffect(() => {setOpinionTarget(undefined); setOpinionNotice(undefined);}, [session?.jwt]);
   const {data, error, isLoading, isValidating, mutate} = useSWR(
     session ? ['portfolio-ledger-v2', session.jwt] : null,
@@ -216,6 +222,8 @@ export function PortfolioView() {
         <p role="status" className="rounded-lg border border-up/30 bg-up/5 p-3 text-sm text-up">{opinionNotice}</p>
       ) : null}
 
+      {cycle?.bearer === session.jwt ? <PortfolioCycleTrades key={`${session.jwt}:${JSON.stringify(cycle.scope)}`} bearer={session.jwt} scope={cycle.scope} onClose={() => setCycle(undefined)} /> : null}
+
       <section className="overflow-hidden rounded-lg border border-border bg-surface">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
           <h2 className="font-semibold text-foreground">Current positions</h2>
@@ -238,6 +246,7 @@ export function PortfolioView() {
                 <PositionRow
                   key={`${position.asset.chain_id}:${position.asset.kind}:${position.asset.token_address}:${position.opened_entry_id}`}
                   position={position}
+                  onOpenCycle={(scope) => setCycle({bearer: session.jwt, scope})}
                   onOpenOpinion={(targetID, label) => {setOpinionNotice(undefined); setOpinionTarget({targetID, label});}}
                 />
               ))}</tbody>
@@ -249,6 +258,7 @@ export function PortfolioView() {
       </section>
 
       <p className="text-xs text-muted">Shares represent your recorded trading position, not the amount currently available to sell. Execution checks wallet balances separately.</p>
+      <ClosedPortfolioPositions key={`closed:${session.jwt}`} bearer={session.jwt} onOpenCycle={(scope) => setCycle({bearer: session.jwt, scope})} />
       <PortfolioActivity key={session.jwt} bearer={session.jwt} />
 
       {opinionTarget ? (
