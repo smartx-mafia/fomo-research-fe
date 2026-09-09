@@ -8,7 +8,6 @@ export type DepositAddress = {
   address_format: 'base58' | 'evm' | string;
   accepted_tokens: AcceptedToken[];
   min_sweep_amount?: string;
-  warning?: string;
 };
 export type WalletProofChallenge = {challenge_id: string; message: string};
 export type DepositEntry = {
@@ -134,7 +133,7 @@ export async function getDepositAddresses(bearer: string, signal?: AbortSignal):
         if (!t || typeof decimals !== 'number' || !Number.isInteger(decimals) || decimals < 0 || decimals > 255) throw new Error('Accepted token is invalid.');
         return {symbol: requiredString(t.symbol, 'token.symbol'), address: requiredString(t.address, 'token.address'), decimals};
       }),
-      min_sweep_amount: nonnegativeIntegerString(item.min_sweep_amount, 'min_sweep_amount'), warning: optionalString(item.warning),
+      min_sweep_amount: nonnegativeIntegerString(item.min_sweep_amount, 'min_sweep_amount'),
     };
   });
 }

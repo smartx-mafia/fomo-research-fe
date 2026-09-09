@@ -17,7 +17,7 @@ describe('deposit API contract', () => {
 
   it('loads exact canonical addresses and token allowlists', async () => {
     callMock.mockResolvedValue({data: {addresses: [{chain: 'solana', address: 'SoL', address_format: 'base58', accepted_tokens: [{symbol: 'USDC', address: 'Mint', decimals: 6}], warning: 'Only USDC'}]}});
-    await expect(getDepositAddresses('jwt')).resolves.toEqual([{chain: 'solana', address: 'SoL', address_format: 'base58', accepted_tokens: [{symbol: 'USDC', address: 'Mint', decimals: 6}], warning: 'Only USDC', min_sweep_amount: undefined}]);
+    await expect(getDepositAddresses('jwt')).resolves.toEqual([{chain: 'solana', address: 'SoL', address_format: 'base58', accepted_tokens: [{symbol: 'USDC', address: 'Mint', decimals: 6}], min_sweep_amount: undefined}]);
     expect(callMock).toHaveBeenCalledWith('/v1/deposit-addresses', {bearer: 'jwt', signal: undefined});
   });
 

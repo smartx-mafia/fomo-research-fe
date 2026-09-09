@@ -19,6 +19,7 @@ export function DepositAddresses({
   onStopSolanaMonitor: () => void;
 }) {
   const monitoring = solanaMonitor.state === 'waiting' || solanaMonitor.state === 'checking';
+  const hasEvmRoute = addresses?.some((item) => item.address_format === 'evm') ?? false;
   return (
     <section className="rounded-lg border border-border bg-surface p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -30,6 +31,12 @@ export function DepositAddresses({
       </div>
       {loading ? <p role="status" className="mt-4 text-sm text-muted">Loading canonical deposit routes…</p> : null}
       {!loading && addresses?.length === 0 ? <p className="mt-4 text-sm text-muted">No deposit routes are enabled for this account.</p> : null}
+      {hasEvmRoute ? (
+        <p className="mt-4 flex items-start gap-2 rounded border border-accent/40 bg-accent/5 p-2 text-xs text-accent">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          EVM balances can be swept to Solana USDC only after reaching the route minimum and the current wallet signs the sweep.
+        </p>
+      ) : null}
       <div className="mt-4 grid gap-3 lg:grid-cols-2">
         {addresses?.map((item) => (
           <article key={`${item.chain}:${item.address}`} className="rounded-md border border-border bg-background p-3">
@@ -54,11 +61,6 @@ export function DepositAddresses({
               ) : <p className="mt-2 text-xs text-down">No tokens are accepted on this route.</p>}
             </div>
             {item.min_sweep_amount ? <p className="mt-3 text-xs text-muted">Minimum EVM sweep: <span className="font-mono">{item.min_sweep_amount} base units</span></p> : null}
-            {item.warning ? (
-              <p className="mt-3 flex items-start gap-2 rounded border border-accent/40 bg-accent/5 p-2 text-xs text-accent">
-                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{item.warning}
-              </p>
-            ) : null}
             {item.chain === 'solana' ? (
               <div className="mt-3 space-y-2">
                 <p className="text-xs text-muted">Solana transfers do not create a Deposit record. SmartX checks the current balance through Portfolio; the browser never scans chain history.</p>
