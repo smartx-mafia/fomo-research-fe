@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import type { BoardName, TokenMarket } from "@/lib/types";
 import { BOARDS } from "@/lib/types";
 import { useBoardStream } from "@/lib/ws";
@@ -117,13 +116,14 @@ function TokenRows({ tokens, board }: { tokens: TokenMarket[]; board: BoardName 
                 <StarButton chain={tok.chain} address={tok.address} />
               </td>
               <td className="px-3 py-2">
-                <Link href={`/token/${tok.chain}/${tok.address}`} className="flex items-center gap-2">
+                {/* 路径式详情页在静态导出下无客户端路由，走整页加载经 _redirects 重写 */}
+                <a href={`/token/${tok.chain}/${tok.address}`} className="flex items-center gap-2">
                   <TokenLogo logo={tok.logo} symbol={tok.symbol ?? "?"} />
                   <div className="flex flex-col leading-tight">
                     <span className="font-medium text-foreground">{tok.symbol ?? "?"}</span>
                     <span className="max-w-[160px] truncate text-xs text-muted">{tok.name ?? tok.symbol}</span>
                   </div>
-                </Link>
+                </a>
               </td>
               <td className="px-3 py-2">
                 <ChainBadge chainId={tok.chain} />

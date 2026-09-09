@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import { ApiError } from "@/api/envelope";
 import { fetchSearch } from "@/api/search";
 import {
@@ -58,7 +57,6 @@ function accountTarget(entry: SearchAccountEntry): Target {
 }
 
 export function SearchBox() {
-  const router = useRouter();
   const session = useSession();
   const [phrase, setPhrase] = useState("");
   const [tab, setTab] = useState<Tab>("SEARCH_SCOPE_TOKEN");
@@ -302,7 +300,8 @@ export function SearchBox() {
 
   function goToken(chain: string, address: string) {
     setOpen(false);
-    router.push(`/token/${chain}/${address}`);
+    // 路径式详情页在静态导出下无客户端路由，走整页加载经 _redirects 重写
+    window.location.assign(`/token/${chain}/${address}`);
   }
 
   function goSmartMoney(account: SearchSmartMoney) {
@@ -312,7 +311,7 @@ export function SearchBox() {
       return;
     }
     setOpen(false);
-    router.push(`/smart-money/${encodeURIComponent(chain)}/${encodeURIComponent(account.address)}`);
+    window.location.assign(`/smart-money/${encodeURIComponent(chain)}/${encodeURIComponent(account.address)}`);
   }
 
   async function toggleFollow(entry: SearchAccountEntry) {

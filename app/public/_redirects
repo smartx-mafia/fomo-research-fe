@@ -1,0 +1,5 @@
+# 静态导出（output: 'export'）下 /token/:chain/:address、/smart-money/:chain/:address
+# 没有构建产物。这里把路径式详情 URL 重写（200 = 保留原地址）到壳页，
+# 由客户端从 location.pathname 解析参数渲染，见 src/hooks/useDetailRouteParams.ts。
+/token/:chain/:address        /token        200
+/smart-money/:chain/:address  /smart-money 200

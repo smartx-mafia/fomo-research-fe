@@ -1,7 +1,6 @@
 'use client';
 
 import Image from 'next/image';
-import Link from 'next/link';
 import {ExternalLink, Heart, LoaderCircle} from 'lucide-react';
 import {useState} from 'react';
 import type {SquareFeedItem} from '@/api/social-content';
@@ -62,7 +61,8 @@ export function SquareOpinionCard({item, token, remark, likePending, onToggleLik
           <div className={styles.tokenInfo}>
             <div className={styles.positionLabel}>Position<span className={styles.dot} aria-hidden="true" /></div>
             <p className={styles.symbol} title={token ? `${tokenName} (${symbol}) · ${token.chain}:${token.address}` : symbol}>
-              {token ? <Link href={`/token/${encodeURIComponent(token.chain)}/${encodeURIComponent(token.address)}`}>{tokenName}</Link> : tokenName || '—'}
+              {/* 路径式详情页在静态导出下无客户端路由，走整页加载经 _redirects 重写 */}
+              {token ? <a href={`/token/${encodeURIComponent(token.chain)}/${encodeURIComponent(token.address)}`}>{tokenName}</a> : tokenName || '—'}
             </p>
           </div>
           <div className={styles.values}>
