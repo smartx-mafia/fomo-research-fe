@@ -64,11 +64,19 @@ export type PortfolioPartialError = {
   retryable?: boolean;
 };
 
+export type PortfolioCashBalance = {
+  chain: string; chain_id: string; wallet_address: string; address_format: 'evm' | 'base58';
+  token: {symbol: string; address: string; decimals: number};
+  amount_raw?: string; deposit_mode: 'direct' | 'sweep'; deposit_enabled: boolean;
+  min_sweep_amount?: string; balance_meets_minimum: boolean;
+};
+
 export type PortfolioReply = {
   total_value_usd?: string;
   cash_balance_usd?: string;
   total_assets_usd?: string;
   cash_observed_at?: ProtoTimestamp;
+  cash_balances?: PortfolioCashBalance[];
   pnl?: PortfolioPnl;
   positions: PortfolioPosition[];
   partial_errors: PortfolioPartialError[];
@@ -260,7 +268,7 @@ function timestamp(value: unknown): ProtoTimestamp | undefined {
   return {seconds: row.seconds, ...(typeof row.nanos === 'number' ? {nanos: row.nanos} : {})};
 }
 
-function position(value: unknown): PortfolioPosition {
+export function normalizePortfolioPosition(value: unknown, allowClosed = false): PortfolioPosition {
   const row = object(value);
   const asset = object(row?.asset);
   if (!row || !asset) throw new Error('Portfolio returned an invalid position identity.');
@@ -270,7 +278,7 @@ function position(value: unknown): PortfolioPosition {
   const chainID = nonnegativeIntegerString(asset.chain_id, 'asset.chain_id');
   if (chainID === '0') throw new Error('Portfolio returned an invalid asset.chain_id.');
   const shares = requiredString(row.shares_raw, 'shares_raw');
-  if (!/^\d+$/.test(shares) || shares.length > 256 || BigInt(shares) <= BigInt(0)) {
+  if (!/^\d+$/.test(shares) || shares.length > 256 || (!allowClosed && BigInt(shares) === BigInt(0))) {
     throw new Error('Portfolio returned invalid Trade ledger shares_raw.');
   }
   const entry = nonnegativeIntegerString(row.opened_entry_id ?? 0, 'opened_entry_id');
@@ -355,6 +363,20 @@ export function normalizePortfolio(value: unknown): PortfolioReply {
     throw new Error('Portfolio partial_errors must be an array when present.');
   }
   const pnl = pnlSummary(row.pnl);
+  if (row.cash_balances !== undefined && !Array.isArray(row.cash_balances)) throw new Error('Portfolio cash_balances must be an array.');
+  const cashBalances = ((row.cash_balances ?? []) as unknown[]).map((value): PortfolioCashBalance => {
+    const cash = object(value), token = object(cash?.token);
+    if (!cash || !token || (cash.address_format !== 'evm' && cash.address_format !== 'base58') ||
+        (cash.deposit_mode !== 'direct' && cash.deposit_mode !== 'sweep') || typeof cash.deposit_enabled !== 'boolean' ||
+        typeof cash.balance_meets_minimum !== 'boolean' || typeof token.decimals !== 'number' || !Number.isInteger(token.decimals) || token.decimals < 0 || token.decimals > 255) {
+      throw new Error('Portfolio returned an invalid cash balance route.');
+    }
+    return {chain: requiredString(cash.chain, 'cash.chain'), chain_id: nonnegativeIntegerString(cash.chain_id, 'cash.chain_id'),
+      wallet_address: optionalString(cash.wallet_address) ?? '', address_format: cash.address_format,
+      token: {symbol: requiredString(token.symbol, 'cash.token.symbol'), address: requiredString(token.address, 'cash.token.address'), decimals: token.decimals},
+      amount_raw: optionalUnsignedAmount(cash.amount_raw, 'cash.amount_raw'), deposit_mode: cash.deposit_mode,
+      deposit_enabled: cash.deposit_enabled, min_sweep_amount: optionalUnsignedAmount(cash.min_sweep_amount, 'cash.min_sweep_amount'), balance_meets_minimum: cash.balance_meets_minimum};
+  });
   const errors = Array.isArray(row.partial_errors) ? row.partial_errors.map((item) => {
     const error = object(item);
     if (!error || typeof error.reason !== 'string' || error.reason === '') {
@@ -372,15 +394,16 @@ export function normalizePortfolio(value: unknown): PortfolioReply {
     cash_balance_usd: optionalDecimal(row.cash_balance_usd, 'cash_balance_usd'),
     total_assets_usd: optionalDecimal(row.total_assets_usd, 'total_assets_usd'),
     cash_observed_at: timestamp(row.cash_observed_at),
+    cash_balances: cashBalances,
     pnl,
-    positions: Array.isArray(row.positions) ? row.positions.map(position) : [],
+    positions: Array.isArray(row.positions) ? row.positions.map((item) => normalizePortfolioPosition(item)) : [],
     partial_errors: errors,
     observed_at: timestamp(row.observed_at),
   };
 }
 
-export async function getPortfolio(bearer: string, signal?: AbortSignal): Promise<PortfolioReply> {
-  const response = await call<unknown>('/v1/portfolio', {
+export async function getPortfolio(bearer: string, signal?: AbortSignal, forceRefresh = false): Promise<PortfolioReply> {
+  const response = await call<unknown>(forceRefresh ? '/v1/portfolio?force_refresh=true' : '/v1/portfolio', {
     bearer, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
     preserveInt64Fields: ['opened_entry_id', 'chain_id'],
   });

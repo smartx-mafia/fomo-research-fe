@@ -16,13 +16,13 @@ describe('social content delete contract', () => {
 
   it('deletes by opinion id with the DELETE method and passes the bearer through', async () => {
     callMock.mockResolvedValue({data: {changed: true}});
-    await expect(deleteOpinion('jwt', 409)).resolves.toEqual({changed: true});
-    expect(callMock).toHaveBeenCalledWith('/v1/social/opinions/409', {method: 'DELETE', bearer: 'jwt'});
+    await expect(deleteOpinion('jwt', '409')).resolves.toEqual({changed: true});
+    expect(callMock).toHaveBeenCalledWith('/v1/social/opinions/409', expect.objectContaining({method: 'DELETE', bearer: 'jwt'}));
   });
 
   it('treats an omitted changed field as false so repeated deletes stay idempotent', async () => {
     callMock.mockResolvedValue({data: {}});
-    await expect(deleteOpinion('jwt', 409)).resolves.toEqual({changed: false});
+    await expect(deleteOpinion('jwt', '409')).resolves.toEqual({changed: false});
   });
 });
 
@@ -37,6 +37,8 @@ describe('social content square feed contract', () => {
     });
     expect(callMock).toHaveBeenCalledWith('/v1/social/square/feed?lane=SQUARE_LANE_NEWEST', {
       bearer: undefined,
+      signal: undefined,
+      preserveInt64Fields: ['opinion_id', 'version_id', 'base_version_id', 'opened_entry_id', 'chain_id'],
     });
   });
 
@@ -48,7 +50,7 @@ describe('social content square feed contract', () => {
 
     expect(callMock).toHaveBeenCalledWith(
       '/v1/social/square/feed?lane=SQUARE_LANE_NEWEST&limit=20',
-      {bearer: undefined, signal: controller.signal},
+      expect.objectContaining({bearer: undefined, signal: controller.signal}),
     );
   });
 
@@ -82,7 +84,9 @@ describe('social content square feed contract', () => {
             created_at: {seconds: 1787, nanos: 0},
             updated_at: {seconds: 1787, nanos: 0},
           },
-          position: {pnl_percent: '', token_symbol: '', quality: ''},
+          position: {asset: {chain: 'bsc', chain_id: '56', kind: 'erc20', token_address: '0xabc'}, shares_raw: '100', opened_entry_id: '3', cycle_status: 'ready', decimals: null, pnl_ratio: ''},
+          token_ready: false,
+          token: {chain: '', address: '', symbol: '', name: '', decimals: 0},
         },
         actor: {identifier: 'author-1', nickname: 'Author'},
       }],
@@ -96,9 +100,11 @@ describe('social content square feed contract', () => {
     expect(page.asOf).toBeUndefined();
     const item = page.items[0];
     expect(item?.actor).toEqual({identifier: 'author-1', nickname: 'Author'});
-    expect(item?.content.position).toBeUndefined();
+    expect(item?.content.position.pnl_ratio).toBeUndefined();
+    expect(item?.content.position.decimals).toBeUndefined();
+    expect(item?.content.token).toBeUndefined();
     expect(item?.content.opinion.latestVersion).toMatchObject({
-      versionID: 11,
+      versionID: '11',
       likeCount: 0,
       viewerLike: false,
       items: [{kind: 'x_link', url: 'https://x.com/a/status/1'}],
@@ -117,12 +123,12 @@ describe('social content square feed updates contract', () => {
     });
     expect(callMock).toHaveBeenCalledWith(
       '/v1/social/square/feed/updates?lane=SQUARE_LANE_FOR_YOU&anchor=anchor-9',
-      {bearer: 'jwt'},
+      expect.objectContaining({bearer: 'jwt'}),
     );
 
     await getSquareFeedUpdates(SQUARE_LANES.FRIENDS);
     expect(callMock.mock.lastCall?.[0]).toBe('/v1/social/square/feed/updates?lane=SQUARE_LANE_FRIENDS');
-    expect(callMock.mock.lastCall?.[1]).toEqual({bearer: undefined});
+    expect(callMock.mock.lastCall?.[1]).toEqual(expect.objectContaining({bearer: undefined}));
 
     await getSquareFeedUpdates(SQUARE_LANES.NEWEST);
     expect(callMock.mock.lastCall?.[0]).toBe('/v1/social/square/feed/updates?lane=SQUARE_LANE_NEWEST');
@@ -150,7 +156,7 @@ describe('social content square feed updates contract', () => {
 
     expect(callMock).toHaveBeenCalledWith(
       '/v1/social/square/feed/updates?lane=SQUARE_LANE_NEWEST&anchor=anchor-9',
-      {bearer: undefined, signal: controller.signal},
+      expect.objectContaining({bearer: undefined, signal: controller.signal}),
     );
   });
 

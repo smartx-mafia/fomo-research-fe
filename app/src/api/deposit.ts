@@ -8,6 +8,9 @@ export type DepositAddress = {
   address_format: 'base58' | 'evm' | string;
   accepted_tokens: AcceptedToken[];
   min_sweep_amount?: string;
+  balance_raw?: string;
+  balance_meets_minimum?: boolean;
+  deposit_mode?: 'direct' | 'sweep';
 };
 export type WalletProofChallenge = {challenge_id: string; message: string};
 export type DepositEntry = {
@@ -117,26 +120,6 @@ function sweep(value: unknown): DepositSweep {
   };
 }
 
-export async function getDepositAddresses(bearer: string, signal?: AbortSignal): Promise<DepositAddress[]> {
-  const response = await call<unknown>('/v1/deposit-addresses', {bearer, signal});
-  const row = record(response.data);
-  if (!row || (row.addresses !== undefined && !Array.isArray(row.addresses))) throw new Error('Deposit addresses response is invalid.');
-  return (row.addresses as unknown[] | undefined ?? []).map((value) => {
-    const item = record(value);
-    if (!item || (item.accepted_tokens !== undefined && !Array.isArray(item.accepted_tokens))) throw new Error('Deposit address entry is invalid.');
-    return {
-      chain: requiredString(item.chain, 'address.chain'), address: requiredString(item.address, 'address.address'),
-      address_format: requiredString(item.address_format, 'address.address_format'),
-      accepted_tokens: (item.accepted_tokens as unknown[] | undefined ?? []).map((token) => {
-        const t = record(token);
-        const decimals = t?.decimals === undefined ? 0 : t.decimals;
-        if (!t || typeof decimals !== 'number' || !Number.isInteger(decimals) || decimals < 0 || decimals > 255) throw new Error('Accepted token is invalid.');
-        return {symbol: requiredString(t.symbol, 'token.symbol'), address: requiredString(t.address, 'token.address'), decimals};
-      }),
-      min_sweep_amount: nonnegativeIntegerString(item.min_sweep_amount, 'min_sweep_amount'),
-    };
-  });
-}
 
 export async function createFiatDeposit(bearer: string, request: {idempotencyKey: string; fiatAmount: string; receiptEmail: string}, signal?: AbortSignal): Promise<FiatDepositSession> {
   if (!request.idempotencyKey || request.idempotencyKey.length > 128) throw new Error('Fiat deposit idempotency key is invalid.');

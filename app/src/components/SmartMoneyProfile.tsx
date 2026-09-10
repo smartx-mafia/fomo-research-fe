@@ -1,145 +1,80 @@
-"use client";
+'use client';
 
-import { useEffect, useState } from "react";
-import {
-  getSmartMoneyHoldings,
-  getSmartMoneyTrades,
-  type SmartMoneyHoldings,
-  type SmartMoneyTrade,
-  type SmartMoneyTrades,
-} from "@/api/smartmoney";
-import { chainLabel, fmtCompact, shortAddr } from "@/lib/format";
+import {Fragment, useState} from 'react';
+import useSWR from 'swr';
+import useSWRInfinite from 'swr/infinite';
+import {getSmartMoneyHoldings, getSmartMoneyTokenTrades, getSmartMoneyTrades, type SmartMoneyHolding, type SmartMoneyTokenTrades, type SmartMoneyTrade} from '@/api/smartmoney';
+import {decimalSign, formatDecimalExact, marketValueFromBaseUnits} from '@/lib/exact-decimal';
+import {chainLabel, shortAddr} from '@/lib/format';
 
-export function SmartMoneyProfile({ chain, address }: { chain: string; address: string }) {
-  const [holdings, setHoldings] = useState<SmartMoneyHoldings | null>(null);
-  const [trades, setTrades] = useState<SmartMoneyTrades | null>(null);
-  const [holdingsFailed, setHoldingsFailed] = useState(false);
-  const [tradesFailed, setTradesFailed] = useState(false);
+function money(value?: string) {return value ? `${decimalSign(value) === -1 ? '-' : ''}$${formatDecimalExact(value.replace(/^-/, ''), 2)}` : '—';}
+function price(value?: string) {return value ? `$${formatDecimalExact(value, 12)}` : '—';}
+function ratio(value?: string) {return value ? `${formatDecimalExact(marketValueFromBaseUnits('100', 0, value), 2)}%` : '—';}
+function qty(value?: string) {return value ? formatDecimalExact(value, 4) : '—';}
+function when(seconds?: number) {return seconds ? new Date(seconds * 1000).toLocaleString() : '—';}
+function tone(value?: string) {return decimalSign(value) === 1 ? 'text-up' : decimalSign(value) === -1 ? 'text-down' : 'text-muted';}
+function chainName(chain: string) {return chain === 'sol' ? 'Solana' : chainLabel(chain);}
 
-  useEffect(() => {
-    let active = true;
-    setHoldingsFailed(false);
-    setTradesFailed(false);
-    Promise.allSettled([getSmartMoneyHoldings(chain, address), getSmartMoneyTrades(chain, address)])
-      .then(([holdingsResult, tradesResult]) => {
-        if (!active) return;
-        if (holdingsResult.status === "fulfilled") setHoldings(holdingsResult.value.data);
-        else setHoldingsFailed(true);
-        if (tradesResult.status === "fulfilled") setTrades(tradesResult.value.data);
-        else setTradesFailed(true);
-      });
-    return () => {
-      active = false;
-    };
-  }, [address, chain]);
-
-  return (
-    <div className="flex flex-col gap-4">
-      <div className="rounded-lg border border-border bg-surface p-4">
-        <div className="flex items-center gap-2">
-          <span className="rounded-full bg-accent/10 px-2 py-1 text-xs font-semibold text-accent">Smart Money</span>
-          <span className="text-xs text-muted">{chainLabel(chain)}</span>
-        </div>
-        <h1 className="mt-2 font-mono text-lg font-semibold text-foreground">{shortAddr(address, 10, 8)}</h1>
-        <p className="break-all text-xs text-muted">{address}</p>
-        <div className="mt-3 text-sm text-muted">
-          Total PnL <span className="ml-1 font-medium text-foreground">{formatMoney(holdings?.total_profit)}</span>
-          {holdings?.total_profit_ratio !== undefined && (
-            <span className="ml-2">({formatRatio(holdings.total_profit_ratio)})</span>
-          )}
-        </div>
-      </div>
-
-      <section className="rounded-lg border border-border bg-surface">
-        <h2 className="border-b border-border px-4 py-3 text-sm font-semibold text-foreground">Open holdings</h2>
-        {holdingsFailed ? (
-          <p className="p-4 text-sm text-muted">Holdings are temporarily unavailable.</p>
-        ) : holdings === null ? (
-          <p className="p-4 text-sm text-muted">Loading holdings…</p>
-        ) : (holdings.open?.length ?? 0) === 0 ? (
-          <p className="p-4 text-sm text-muted">No open holdings.</p>
-        ) : (
-          holdings.open?.map((item, index) => (
-            <div key={`${item.token_address ?? "unknown"}:${index}`} className="flex items-center justify-between gap-3 border-b border-border/50 px-4 py-3 last:border-0">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium text-foreground">{item.symbol ?? item.name ?? shortAddr(item.token_address ?? "", 6, 4)}</div>
-                <div className="truncate text-xs text-muted">{item.is_honeypot ? "Risk flagged · " : ""}{item.name ?? item.token_address ?? "Unknown token"}</div>
-              </div>
-              <div className="shrink-0 text-right text-xs text-muted">
-                <div className="text-sm text-foreground">{formatMoney(item.usd_value)}</div>
-                <div>PnL {formatMoney(item.total_profit)}</div>
-              </div>
-            </div>
-          ))
-        )}
-      </section>
-
-      <section className="rounded-lg border border-border bg-surface">
-        <h2 className="border-b border-border px-4 py-3 text-sm font-semibold text-foreground">Closed holdings</h2>
-        {holdingsFailed ? (
-          <p className="p-4 text-sm text-muted">Holdings are temporarily unavailable.</p>
-        ) : holdings === null ? (
-          <p className="p-4 text-sm text-muted">Loading holdings…</p>
-        ) : (holdings.closed?.length ?? 0) === 0 ? (
-          <p className="p-4 text-sm text-muted">No closed holdings.</p>
-        ) : (
-          holdings.closed?.map((item, index) => (
-            <div key={`${item.token_address ?? "unknown"}:${index}`} className="flex items-center justify-between gap-3 border-b border-border/50 px-4 py-3 last:border-0">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium text-foreground">{item.symbol ?? item.name ?? shortAddr(item.token_address ?? "", 6, 4)}</div>
-                <div className="truncate text-xs text-muted">{item.name ?? item.token_address ?? "Unknown token"}</div>
-              </div>
-              <div className="shrink-0 text-right text-xs text-muted">
-                <div className="text-sm text-foreground">Realized {formatMoney(item.realized_profit)}</div>
-                <div>{formatTime(item.end_holding_at)}</div>
-              </div>
-            </div>
-          ))
-        )}
-      </section>
-
-      <section className="rounded-lg border border-border bg-surface">
-        <h2 className="border-b border-border px-4 py-3 text-sm font-semibold text-foreground">Recent activity</h2>
-        {tradesFailed ? (
-          <p className="p-4 text-sm text-muted">Recent activity is temporarily unavailable.</p>
-        ) : trades === null ? (
-          <p className="p-4 text-sm text-muted">Loading activity…</p>
-        ) : !trades.fetched_at ? (
-          <p className="p-4 text-sm text-muted">Activity data has not been fetched yet.</p>
-        ) : (trades.list?.length ?? 0) === 0 ? (
-          <p className="p-4 text-sm text-muted">No recent activity in the latest snapshot.</p>
-        ) : (
-          trades.list?.map((trade: SmartMoneyTrade, index: number) => (
-            <div key={`${trade.tx_hash ?? "unknown"}:${index}`} className="flex items-center justify-between gap-3 border-b border-border/50 px-4 py-3 last:border-0">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium capitalize text-foreground">{trade.event_type ?? "Unknown event"}</div>
-                <div className="truncate text-xs text-muted">{trade.token_symbol ?? shortAddr(trade.token_address ?? "", 6, 4)}</div>
-              </div>
-              <div className="shrink-0 text-right text-xs text-muted">
-                <div className="text-sm text-foreground">{formatMoney(trade.cost_usd)}</div>
-                <div>{formatTime(trade.occurred_at)}</div>
-              </div>
-            </div>
-          ))
-        )}
-      </section>
-    </div>
-  );
+function Token({entry}: {entry: Pick<SmartMoneyHolding, 'symbol'|'name'|'logo'|'token_address'|'is_honeypot'>}) {
+  const label = entry.symbol ?? entry.name ?? shortAddr(entry.token_address ?? '', 6, 4);
+  const [failedLogo, setFailedLogo] = useState<string>();
+  const logo = entry.logo && /^https?:\/\//i.test(entry.logo) && failedLogo !== entry.logo ? entry.logo : undefined;
+  return <div className="flex min-w-[150px] items-center gap-2.5">
+    <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-surface-2 text-xs font-bold text-muted">{logo ? <img src={logo} alt="" className="h-full w-full object-cover" onError={() => setFailedLogo(logo)} /> : label.slice(0, 1).toUpperCase()}</div>
+    <div className="min-w-0"><p className="truncate font-medium text-foreground">{label}</p><p className="truncate text-[10px] text-muted">{entry.is_honeypot ? '风险标记 · ' : ''}{entry.name ?? entry.token_address ?? '未知 Token'}</p></div>
+  </div>;
 }
 
-function formatMoney(raw?: string) {
-  if (raw === undefined || raw === "") return "—";
-  const value = Number(raw);
-  if (!Number.isFinite(value)) return "—";
-  return `${value < 0 ? "-" : ""}$${fmtCompact(Math.abs(value))}`;
+function EventBadge({type}: {type?: string}) {
+  const style = type === 'buy' ? 'bg-up/10 text-up' : type === 'sell' ? 'bg-down/10 text-down' : 'bg-surface-2 text-muted';
+  return <span className={`rounded px-2 py-1 text-[10px] font-semibold ${style}`}>{type ?? '—'}</span>;
 }
 
-function formatRatio(raw: string) {
-  const value = Number(raw);
-  return Number.isFinite(value) ? `${value >= 0 ? "+" : ""}${(value * 100).toFixed(2)}%` : "—";
+function TokenHistory({chain, address, token, entry}: {chain: string; address: string; token: string; entry: SmartMoneyHolding}) {
+  const getKey = (index: number, previous: SmartMoneyTokenTrades | null) => index > 0 && !previous?.next_cursor ? null : ['smart-token-trades', chain, address, token, index === 0 ? '' : previous!.next_cursor!] as const;
+  const history = useSWRInfinite(getKey, async ([, c, wallet, asset, cursor]) => (await getSmartMoneyTokenTrades(c, wallet, asset, cursor)).data,
+    {revalidateOnFocus: false, shouldRetryOnError: false});
+  const rows = history.data?.flatMap((page) => page.list ?? []) ?? [];
+  return <div className="border-t border-border bg-background/40 p-4">
+    <div className="mb-3 flex flex-wrap gap-6 text-xs"><span>当前市值 <b>{money(entry.usd_value)}</b></span><span>总盈亏 <b className={tone(entry.total_profit)}>{money(entry.total_profit)}</b></span><span>ROI <b className={tone(entry.total_profit_pnl)}>{ratio(entry.total_profit_pnl)}</b></span><span>生涯买入 <b>{money(entry.history_bought_cost)}</b></span><span>生涯均价 <b>{price(entry.avg_bought_price)}</b></span></div>
+    {history.error ? <p className="py-4 text-sm text-down">交易历史加载失败。<button onClick={() => void history.mutate()} className="ml-2 underline">重试</button></p> : null}
+    {history.isLoading ? <p className="py-4 text-sm text-muted">正在加载该 Token 的交易历史…</p> : null}
+    {!history.isLoading && !history.error && rows.length === 0 ? <p className="py-4 text-sm text-muted">该 Token 暂无交易历史。</p> : null}
+    {rows.length ? <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-xs"><thead className="text-muted"><tr><th className="p-2 text-left">时间</th><th className="p-2 text-left">类型</th><th className="p-2 text-right">数量</th><th className="p-2 text-right">计价</th><th className="p-2 text-right">成交价</th><th className="p-2 text-right">金额</th><th className="p-2 text-right">轮次</th><th className="p-2 text-right">Tx</th></tr></thead><tbody>{rows.map((row, index) => <tr key={`${row.tx_hash ?? ''}:${index}`} className="border-t border-border"><td className="p-2">{when(row.occurred_at)}</td><td className="p-2"><EventBadge type={row.event_type} />{(row.legs ?? 0) > 1 ? <span className="ml-1 text-muted">×{row.legs}</span> : null}</td><td className="p-2 text-right font-mono">{qty(row.token_amount)}</td><td className="p-2 text-right font-mono">{qty(row.quote_amount)} {row.quote_symbol ?? ''}</td><td className="p-2 text-right font-mono">{price(row.price_usd)}</td><td className="p-2 text-right font-mono">{money(row.cost_usd)}</td><td className="p-2 text-right">{row.round ? `#${row.round}` : '—'}</td><td className="p-2 text-right font-mono" title={row.tx_hash}>{shortAddr(row.tx_hash ?? '', 6, 4) || '—'}</td></tr>)}</tbody></table></div> : null}
+    {history.data?.at(-1)?.next_cursor ? <button type="button" disabled={history.isValidating} onClick={() => void history.setSize(history.size + 1)} className="mt-3 rounded border border-border px-3 py-1.5 text-xs text-accent disabled:opacity-50">{history.isValidating ? '加载中…' : '加载更多'}</button> : null}
+    {history.data?.some((page) => page.complete === false) ? <p className="mt-3 text-xs text-accent">历史尚未完整，仅展示当前已回填记录。</p> : null}
+  </div>;
 }
 
-function formatTime(unixSeconds?: number) {
-  if (!unixSeconds) return "—";
-  return new Date(unixSeconds * 1000).toLocaleString();
+function HoldingsTable({list, variant, chain, address}: {list: SmartMoneyHolding[]; variant: 'open'|'closed'; chain: string; address: string}) {
+  const [expanded, setExpanded] = useState<string>();
+  return <div className="overflow-x-auto"><table className="w-full min-w-[980px] text-left text-xs"><thead className="text-muted"><tr><th className="p-3">Token</th><th className="p-3 text-right">持仓量</th><th className="p-3 text-right">市值</th><th className="p-3 text-right">成本</th><th className="p-3 text-right">已实现</th><th className="p-3 text-right">未实现</th><th className="p-3 text-right">总盈亏</th><th className="p-3 text-right">{variant === 'open' ? '最近活跃' : '清仓时间'}</th></tr></thead><tbody>{list.map((entry, index) => {
+    const token = entry.token_address ?? ''; const open = token !== '' && expanded === token;
+    return <Fragment key={`${token}:${index}`}><tr onClick={() => token && setExpanded(open ? undefined : token)} className="cursor-pointer border-t border-border hover:bg-surface-2/50"><td className="p-3"><div className="flex items-center gap-2"><span className={`text-muted transition ${open ? 'rotate-90' : ''}`}>›</span><Token entry={entry} /></div></td><td className="p-3 text-right font-mono">{qty(entry.balance)}</td><td className="p-3 text-right font-mono">{money(entry.usd_value)}</td><td className="p-3 text-right font-mono">{money(entry.accu_cost)}</td><td className={`p-3 text-right font-mono ${tone(entry.realized_profit)}`}>{money(entry.realized_profit)}<p className="text-[10px]">{ratio(entry.realized_profit_pnl)}</p></td><td className={`p-3 text-right font-mono ${tone(entry.unrealized_profit)}`}>{money(entry.unrealized_profit)}<p className="text-[10px]">{ratio(entry.unrealized_profit_pnl)}</p></td><td className={`p-3 text-right font-mono font-semibold ${tone(entry.total_profit)}`}>{money(entry.total_profit)}<p className="text-[10px]">{ratio(entry.total_profit_pnl)}</p></td><td className="p-3 text-right text-muted">{when(variant === 'open' ? entry.last_active_at : entry.end_holding_at)}</td></tr>{open ? <tr><td colSpan={8} className="p-0"><TokenHistory chain={chain} address={address} token={token} entry={entry} /></td></tr> : null}</Fragment>;
+  })}</tbody></table></div>;
+}
+
+function RecentTrades({list}: {list: SmartMoneyTrade[]}) {
+  return <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-xs"><thead className="text-muted"><tr><th className="p-3">时间</th><th className="p-3">类型</th><th className="p-3">Token</th><th className="p-3 text-right">数量</th><th className="p-3 text-right">计价</th><th className="p-3 text-right">成交价</th><th className="p-3 text-right">金额</th><th className="p-3 text-right">Tx</th></tr></thead><tbody>{list.map((trade, index) => <tr key={`${trade.tx_hash ?? ''}:${index}`} className="border-t border-border"><td className="p-3">{when(trade.occurred_at)}</td><td className="p-3"><EventBadge type={trade.event_type} /></td><td className="p-3"><Token entry={{token_address: trade.token_address, symbol: trade.token_symbol, logo: trade.token_logo}} /></td><td className="p-3 text-right font-mono">{qty(trade.token_amount)}</td><td className="p-3 text-right font-mono">{qty(trade.quote_amount)} {trade.quote_symbol ?? ''}</td><td className="p-3 text-right font-mono">{price(trade.price_usd)}</td><td className="p-3 text-right font-mono">{money(trade.cost_usd)}</td><td className="p-3 text-right font-mono" title={trade.tx_hash}>{shortAddr(trade.tx_hash ?? '', 6, 4) || '—'}</td></tr>)}</tbody></table></div>;
+}
+
+export function SmartMoneyProfile({chain, address}: {chain: string; address: string}) {
+  const holdings = useSWR(['smart-money-holdings-v2', chain, address], ([, c, a]) => getSmartMoneyHoldings(c, a).then((result) => result.data), {refreshInterval: 10_000, shouldRetryOnError: false});
+  const trades = useSWR(['smart-money-trades-v2', chain, address], ([, c, a]) => getSmartMoneyTrades(c, a).then((result) => result.data), {shouldRetryOnError: false});
+  const [tab, setTab] = useState<'holdings'|'trades'>('holdings');
+  const [holdingTab, setHoldingTab] = useState<'open'|'closed'>('open');
+  const list = holdingTab === 'open' ? holdings.data?.open ?? [] : holdings.data?.closed ?? [];
+  const active = tab === 'holdings' ? holdings : trades;
+  return <div className="space-y-5">
+    <a href="/leaderboard" className="text-sm text-muted hover:text-foreground">← 返回榜单</a>
+    <header className="rounded-xl border border-border bg-surface p-5"><div className="flex items-center gap-2"><span className="rounded-full bg-accent/10 px-2 py-1 text-xs font-semibold text-accent">Smart Money</span><span className="text-xs text-muted">{chainName(chain)}</span></div><h1 className="mt-3 font-mono text-lg font-semibold">{shortAddr(address, 10, 8)}</h1><p className="break-all text-xs text-muted">{address}</p></header>
+    <section className="grid gap-3 sm:grid-cols-2"><div className="rounded-xl border border-border bg-surface p-4"><p className="text-xs text-muted">总盈亏</p><p className={`mt-2 font-mono text-xl font-semibold ${tone(holdings.data?.total_profit)}`}>{money(holdings.data?.total_profit)}</p></div><div className="rounded-xl border border-border bg-surface p-4"><p className="text-xs text-muted">盈亏比</p><p className={`mt-2 font-mono text-xl font-semibold ${tone(holdings.data?.total_profit_ratio)}`}>{ratio(holdings.data?.total_profit_ratio)}</p></div></section>
+    <div className="flex items-center justify-between gap-3"><div className="flex rounded-lg border border-border bg-surface p-1"><button onClick={() => setTab('holdings')} className={`rounded-md px-4 py-2 text-sm ${tab === 'holdings' ? 'bg-surface-2 text-foreground' : 'text-muted'}`}>持仓 {(holdings.data?.open?.length ?? 0) + (holdings.data?.closed?.length ?? 0)}</button><button onClick={() => setTab('trades')} className={`rounded-md px-4 py-2 text-sm ${tab === 'trades' ? 'bg-surface-2 text-foreground' : 'text-muted'}`}>交易 {trades.data?.list?.length ?? 0}</button></div><button onClick={() => void active.mutate()} disabled={active.isValidating} className="text-sm text-accent disabled:opacity-50">{active.isValidating ? '刷新中…' : '刷新'}</button></div>
+    <section className="overflow-hidden rounded-xl border border-border bg-surface">
+      {active.error ? <p className="p-5 text-sm text-down">数据加载失败：{active.error instanceof Error ? active.error.message : '未知错误'}</p> : null}
+      {active.isLoading ? <p className="p-10 text-center text-sm text-muted">加载中…</p> : null}
+      {tab === 'holdings' && !holdings.isLoading ? <><div className="flex gap-1 border-b border-border p-3"><button onClick={() => setHoldingTab('open')} className={`rounded px-3 py-1.5 text-xs ${holdingTab === 'open' ? 'bg-up/10 text-up' : 'text-muted'}`}>持仓中 {holdings.data?.open?.length ?? 0}</button><button onClick={() => setHoldingTab('closed')} className={`rounded px-3 py-1.5 text-xs ${holdingTab === 'closed' ? 'bg-surface-2 text-foreground' : 'text-muted'}`}>已清仓 {holdings.data?.closed?.length ?? 0}</button></div>{list.length ? <HoldingsTable list={list} variant={holdingTab} chain={chain} address={address} /> : <p className="p-10 text-center text-sm text-muted">暂无{holdingTab === 'open' ? '持仓中' : '已清仓'}记录。</p>}</> : null}
+      {tab === 'trades' && !trades.isLoading ? trades.data?.list?.length ? <RecentTrades list={trades.data.list} /> : <p className="p-10 text-center text-sm text-muted">暂无最新交易。</p> : null}
+    </section>
+  </div>;
 }

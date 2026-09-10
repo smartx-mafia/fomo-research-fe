@@ -9,9 +9,9 @@ export type OpinionIntent = {
   targetID: string;
   mode: 'create' | 'edit';
   /** edit only: the opinion being updated. */
-  opinionID?: number;
+  opinionID?: string;
   /** edit only: the concurrent snapshot this edit is based on. */
-  baseVersionID?: number;
+  baseVersionID?: string;
   body: string;
   /** Empty string means no attachment. */
   xLinkURL: string;
@@ -26,8 +26,14 @@ function storageKey(targetID: string): string {
   return `smartx.opinion.recovery.v1.${targetID}`;
 }
 
-function safeID(value: unknown): value is number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+function safeID(value: unknown): value is string {
+  return typeof value === 'string' && /^[1-9]\d{0,18}$/.test(value) && BigInt(value) <= BigInt('9223372036854775807');
+}
+
+function storedID(value: unknown): string | undefined {
+  // 已发送的旧版编辑必须保留原幂等键；只迁移能够无损恢复的数字 ID。
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) return String(value);
+  return safeID(value) ? value : undefined;
 }
 
 /**
@@ -59,14 +65,16 @@ export function readOpinionIntent(targetID: string): OpinionIntent | null {
       typeof row.xLinkURL !== 'string' ||
       typeof row.idempotencyKey !== 'string' || !row.idempotencyKey
     ) return null;
-    if (row.opinionID !== undefined && !safeID(row.opinionID)) return null;
-    if (row.baseVersionID !== undefined && !safeID(row.baseVersionID)) return null;
-    if (row.mode === 'edit' && (!safeID(row.opinionID) || !safeID(row.baseVersionID))) return null;
+    const opinionID = storedID(row.opinionID);
+    const baseVersionID = storedID(row.baseVersionID);
+    if (row.opinionID !== undefined && !opinionID) return null;
+    if (row.baseVersionID !== undefined && !baseVersionID) return null;
+    if (row.mode === 'edit' && (!opinionID || !baseVersionID)) return null;
     return {
       targetID: row.targetID,
       mode: row.mode,
-      ...(safeID(row.opinionID) ? {opinionID: row.opinionID} : {}),
-      ...(safeID(row.baseVersionID) ? {baseVersionID: row.baseVersionID} : {}),
+      ...(opinionID ? {opinionID} : {}),
+      ...(baseVersionID ? {baseVersionID} : {}),
       body: row.body,
       xLinkURL: row.xLinkURL,
       idempotencyKey: row.idempotencyKey,

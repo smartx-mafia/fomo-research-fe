@@ -40,6 +40,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               <Link href="/square?mode=token&lane=newest" className="hover:text-foreground">
                 Square
               </Link>
+              <Link href="/leaderboard" className="hover:text-foreground">
+                Leaderboard
+              </Link>
               <Link href="/portfolio" className="hover:text-foreground">
                 Portfolio
               </Link>

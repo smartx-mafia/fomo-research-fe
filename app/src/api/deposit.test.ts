@@ -6,7 +6,6 @@ vi.mock('./envelope', () => ({call: callMock}));
 import {
   createDepositSweep,
   createFiatDeposit,
-  getDepositAddresses,
   prepareDepositSweep,
   submitFiatWalletProof,
   submitDepositSweep,
@@ -15,18 +14,6 @@ import {
 describe('deposit API contract', () => {
   beforeEach(() => callMock.mockReset());
 
-  it('loads exact canonical addresses and token allowlists', async () => {
-    callMock.mockResolvedValue({data: {addresses: [{chain: 'solana', address: 'SoL', address_format: 'base58', accepted_tokens: [{symbol: 'USDC', address: 'Mint', decimals: 6}], warning: 'Only USDC'}]}});
-    await expect(getDepositAddresses('jwt')).resolves.toEqual([{chain: 'solana', address: 'SoL', address_format: 'base58', accepted_tokens: [{symbol: 'USDC', address: 'Mint', decimals: 6}], min_sweep_amount: undefined}]);
-    expect(callMock).toHaveBeenCalledWith('/v1/deposit-addresses', {bearer: 'jwt', signal: undefined});
-  });
-
-  it('treats omitted proto3 accepted-token decimals as zero but rejects invalid values', async () => {
-    callMock.mockResolvedValueOnce({data: {addresses: [{chain: 'base', address: '0xwallet', address_format: 'evm', accepted_tokens: [{symbol: 'ZERO', address: '0xtoken'}]}]}});
-    await expect(getDepositAddresses('jwt')).resolves.toMatchObject([{accepted_tokens: [{decimals: 0}]}]);
-    callMock.mockResolvedValueOnce({data: {addresses: [{chain: 'base', address: '0xwallet', address_format: 'evm', accepted_tokens: [{symbol: 'BAD', address: '0xtoken', decimals: '6'}]}]}});
-    await expect(getDepositAddresses('jwt')).rejects.toThrow(/Accepted token is invalid/);
-  });
 
   it('creates fiat with the exact idempotency key, decimal string, USD and canonical email only', async () => {
     callMock.mockResolvedValue({data: {deposit_id: 'd-1', provider_order_id: 'p-1', client_secret: 'secret', status: 1}});
