@@ -2,7 +2,7 @@ import {afterEach, describe, expect, it, vi} from 'vitest';
 import {getClosedPortfolioPositions, getPortfolioCycleTrades, normalizePortfolioClosedPage} from './portfolio';
 
 const asset = {chain: 'solana', chain_id: 792703809, kind: 'spl', token_address: 'MintA'};
-const cycle = {asset, opened_entry_id: '9007199254740993', closed_entry_id: '9007199254740994', status: 'closed', decimals: 0, buy_amount_raw: '9007199254740995', realized_pnl_usd: '0', pnl_ratio: ''};
+const cycle = {asset, opened_entry_id: '9007199254740993', closed_entry_id: '9007199254740994', status: 'closed', symbol: 'TEST', logo: 'https://images.test/test.png', decimals: 0, buy_amount_raw: '9007199254740995', realized_pnl_usd: '0', pnl_ratio: ''};
 const scope = {chain: 'solana', asset: 'MintA', opened_entry_id: '9007199254740993'};
 const trade = {trade_id: 'trade-1', side: 'buy', chain: 'solana', token: 'MintA', quote_token: 'USDC', status: 'SUCCESS', lifecycle: 'confirmed', created_at: '2026-09-09T00:00:00Z', cycle_opened_entry_id: scope.opened_entry_id};
 function mockReply(data: unknown) {
@@ -18,7 +18,7 @@ describe('Portfolio cycle HTTP contracts', () => {
     expect(url.pathname).toBe('/v1/portfolio/history');
     expect(Object.fromEntries(url.searchParams)).toEqual({status: 'closed', limit: '20', cursor: 'cursor+/='});
     expect(fetch.mock.calls[0][1].headers.authorization).toBe('Bearer jwt');
-    expect(page.items[0]).toMatchObject({decimals: 0, buy_amount_raw: '9007199254740995', realized_pnl_usd: '0', pnl_ratio: undefined});
+    expect(page.items[0]).toMatchObject({symbol: 'TEST', logo: 'https://images.test/test.png', decimals: 0, buy_amount_raw: '9007199254740995', realized_pnl_usd: '0', pnl_ratio: undefined});
     expect(page.next_cursor).toBe('next+/=');
   });
   it('decodes numeric int64 closed IDs without precision loss', async () => {

@@ -5,13 +5,13 @@ import {SWRConfig} from 'swr';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {normalizePortfolio, type PortfolioTradePage} from '@/api/portfolio';
 const {control} = vi.hoisted(() => ({control: {jwt: 'A', portfolio: vi.fn(), closed: vi.fn(), trades: vi.fn()}}));
-vi.mock('@/api/portfolio', async (load) => ({...await load<typeof import('@/api/portfolio')>(), getPortfolio: control.portfolio, getClosedPortfolioPositions: control.closed, getPortfolioCycleTrades: control.trades}));
+vi.mock('@/api/portfolio', async (load) => ({...await load<typeof import('@/api/portfolio')>(), getPortfolio: control.portfolio, getClosedPortfolioPositions: control.closed, getPortfolioCycleTrades: control.trades, getPortfolioBalanceCurve: async () => ({points: [], simulated: false})}));
 vi.mock('@/session/storage', () => ({useSession: () => ({jwt: control.jwt}), clearSite: vi.fn(), readSite: () => ({jwt: control.jwt})}));
 vi.mock('@/components/PortfolioActivity', () => ({PortfolioActivity: () => null, TradeRow: ({trade}: {trade: {trade_id: string}}) => <tr><td>{trade.trade_id}</td></tr>}));
 vi.mock('@/components/OpinionComposer', () => ({OpinionComposer: () => null}));
 import {PortfolioView} from './PortfolioView';
 const asset = {chain: 'solana', chain_id: '792703809', kind: 'spl', token_address: 'MintA'};
-const closed = (id: string) => ({asset, symbol: 'CLOSED', opened_entry_id: id, closed_entry_id: '99', status: 'closed' as const, decimals: 0, realized_pnl_usd: '5', pnl_ratio: '0.25'});
+const closed = (id: string) => ({asset, symbol: 'CLOSED', logo: 'https://images.test/closed.png', opened_entry_id: id, closed_entry_id: '99', status: 'closed' as const, decimals: 0, buy_value_usd: '10', sell_value_usd: '15', avg_buy_price_usd: '1', avg_sell_price_usd: '1.5', realized_pnl_usd: '5', pnl_ratio: '0.25'});
 describe('Holding cycle navigation', () => {
   let element: HTMLDivElement, root: Root, cache: Map<string, never>;
   beforeEach(() => {
@@ -29,6 +29,11 @@ describe('Holding cycle navigation', () => {
     control.trades.mockImplementation((_jwt, scope, cursor) => Promise.resolve(scope.opened_entry_id === '10' && cursor === '0' ? {trades: [{trade_id: 'open-trade'}], next_cursor: '50'} : {trades: []}));
     await render();
     expect(element.textContent).toContain('25%');
+    expect(element.textContent).toContain('Total bought');
+    expect(element.textContent).toContain('Total sold');
+    expect(element.textContent).toContain('Avg buy / share');
+    expect(element.textContent).toContain('Avg sell / share');
+    expect(element.querySelector('img')?.getAttribute('src')).toBe('https://images.test/closed.png');
     expect(element.querySelectorAll('section[aria-label="Closed positions"] tbody tr')).toHaveLength(2);
     await click('Cycle trades', 0);
     expect(control.trades).toHaveBeenLastCalledWith('A', {chain: 'solana', asset: 'MintA', opened_entry_id: '10'}, '0');
