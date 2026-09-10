@@ -38,14 +38,14 @@ describe('opinion intent recovery', () => {
   });
 
   it('keeps edit identity fields through a round trip', () => {
-    const edit: OpinionIntent = {...intent, mode: 'edit', opinionID: 41, baseVersionID: 87, body: 'Edited'};
+    const edit: OpinionIntent = {...intent, mode: 'edit', opinionID: '41', baseVersionID: '87', body: 'Edited'};
     expect(writeOpinionIntent(edit)).toBe(true);
     expect(readOpinionIntent(edit.targetID)).toEqual(edit);
   });
 
   it('reads corrupt or field-incomplete records as null', () => {
     const key = `smartx.opinion.recovery.v1.${intent.targetID}`;
-    const edit: OpinionIntent = {...intent, mode: 'edit', opinionID: 41, baseVersionID: 87};
+    const edit: OpinionIntent = {...intent, mode: 'edit', opinionID: '41', baseVersionID: '87'};
     for (const broken of [
       '{broken',
       '42',
@@ -75,6 +75,14 @@ describe('opinion intent recovery', () => {
   it('generates unique opinion-prefixed idempotency keys', () => {
     expect(newOpinionIdempotencyKey()).toMatch(/^opinion-[0-9a-f-]{36}$/);
     expect(newOpinionIdempotencyKey()).not.toBe(newOpinionIdempotencyKey());
+  });
+
+  it('preserves uncertain pre-upgrade edits and rejects rounded identities', () => {
+    const key = `smartx.opinion.recovery.v1.${intent.targetID}`;
+    sessionStorage.setItem(key, JSON.stringify({...intent, mode: 'edit', opinionID: 41, baseVersionID: 87}));
+    expect(readOpinionIntent(intent.targetID)).toEqual({...intent, mode: 'edit', opinionID: '41', baseVersionID: '87'});
+    sessionStorage.setItem(key, JSON.stringify({...intent, mode: 'edit', opinionID: Number.MAX_SAFE_INTEGER + 1, baseVersionID: 87}));
+    expect(readOpinionIntent(intent.targetID)).toBeNull();
   });
 });
 

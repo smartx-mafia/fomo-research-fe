@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import React, {StrictMode, act} from 'react';
 import {createRoot, type Root} from 'react-dom/client';
 import {SWRConfig} from 'swr';

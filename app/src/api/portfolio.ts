@@ -13,6 +13,7 @@ export type PortfolioAsset = {
 export type PortfolioPosition = {
   asset: PortfolioAsset;
   symbol?: string;
+  logo?: string;
   decimals?: number;
   shares_raw: string;
   price_usd?: string;
@@ -63,11 +64,19 @@ export type PortfolioPartialError = {
   retryable?: boolean;
 };
 
+export type PortfolioCashBalance = {
+  chain: string; chain_id: string; wallet_address: string; address_format: 'evm' | 'base58';
+  token: {symbol: string; address: string; decimals: number};
+  amount_raw?: string; deposit_mode: 'direct' | 'sweep'; deposit_enabled: boolean;
+  min_sweep_amount?: string; balance_meets_minimum: boolean;
+};
+
 export type PortfolioReply = {
   total_value_usd?: string;
   cash_balance_usd?: string;
   total_assets_usd?: string;
   cash_observed_at?: ProtoTimestamp;
+  cash_balances?: PortfolioCashBalance[];
   pnl?: PortfolioPnl;
   positions: PortfolioPosition[];
   partial_errors: PortfolioPartialError[];
@@ -91,9 +100,120 @@ export type PortfolioTrade = {
   fee_currency?: string;
   tx_chain?: string;
   cycle_opened_entry_id: string;
+  cycle_key?: string;
+  logo?: string;
+  symbol?: string;
+  name?: string;
+  token_amount?: string;
+  trade_value_usd?: string;
+  execution_price_usd?: string;
+  asset_decimals?: number;
 };
 
 export type PortfolioTradePage = {trades: PortfolioTrade[]; next_cursor?: string};
+
+export type PortfolioBalanceCurve = {points: {at: string; balance_usd: string}[]; now_usd?: string; as_of?: string; simulated: boolean};
+export async function getPortfolioBalanceCurve(bearer: string, window: '1d' | '7d' | '30d' | 'all', signal?: AbortSignal): Promise<PortfolioBalanceCurve> {
+  const response = await call<unknown>(`/v1/portfolio/balance/curve?window=${window}`, {
+    bearer, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
+  });
+  try {
+    const row = object(response.data);
+    if (!row || !Array.isArray(row.points)) throw new Error('Invalid total-assets curve.');
+    const points = row.points.map((value) => {
+      const point = object(value);
+      if (!point) throw new Error('Invalid total-assets sample.');
+      const balance = optionalDecimal(point.balance_usd, 'balance_usd');
+      if (balance === undefined) throw new Error('Missing total-assets sample value.');
+      return {at: rfc3339(point.at, 'balance.at', true)!, balance_usd: balance};
+    });
+    return {points, now_usd: optionalDecimal(row.now_usd, 'now_usd'), as_of: rfc3339(row.as_of, 'balance.as_of'), simulated: row.simulated === true};
+  } catch (error) {
+    throw new PortfolioDataError(error instanceof Error ? error.message : 'Invalid total-assets curve.', response.traceID);
+  }
+}
+
+export type PortfolioCycleScope = {chain: string; asset: string; opened_entry_id: string};
+export type PortfolioClosedPosition = {
+  asset: PortfolioAsset;
+  opened_entry_id: string;
+  closed_entry_id: string;
+  opened_at?: ProtoTimestamp;
+  closed_at?: ProtoTimestamp;
+  status: 'closed';
+  symbol?: string;
+  logo?: string;
+  decimals?: number;
+  buy_amount_raw?: string;
+  sell_amount_raw?: string;
+  buy_value_usd?: string;
+  sell_value_usd?: string;
+  realized_pnl_usd?: string;
+  pnl_ratio?: string;
+  avg_buy_price_usd?: string;
+  avg_sell_price_usd?: string;
+};
+export type PortfolioClosedPage = {items: PortfolioClosedPosition[]; next_cursor?: string};
+
+export function normalizePortfolioClosedPage(value: unknown): PortfolioClosedPage {
+  const row = object(value);
+  if (!row || (row.items !== undefined && !Array.isArray(row.items))) throw new Error('Portfolio closed positions must be an array.');
+  const items = (row.items as unknown[] | undefined ?? []).map((value): PortfolioClosedPosition => {
+    const item = object(value), asset = object(item?.asset);
+    if (!item || !asset || item.status !== 'closed') throw new Error('Portfolio returned an invalid closed position.');
+    const opened = nonnegativeIntegerString(item.opened_entry_id, 'opened_entry_id');
+    const closed = nonnegativeIntegerString(item.closed_entry_id, 'closed_entry_id');
+    const chainID = nonnegativeIntegerString(asset.chain_id, 'asset.chain_id');
+    if (opened === '0' || closed === '0' || chainID === '0') throw new Error('Portfolio returned an invalid closed cycle identity.');
+    return {
+      asset: {chain: requiredString(asset.chain, 'asset.chain'), chain_id: chainID, kind: requiredString(asset.kind, 'asset.kind'), token_address: requiredString(asset.token_address, 'asset.token_address')},
+      opened_entry_id: opened, closed_entry_id: closed, opened_at: timestamp(item.opened_at), closed_at: timestamp(item.closed_at), status: 'closed',
+      symbol: optionalString(item.symbol),
+      logo: optionalString(item.logo),
+      decimals: typeof item.decimals === 'number' && Number.isInteger(item.decimals) && item.decimals >= 0 && item.decimals <= 255 ? item.decimals : undefined,
+      buy_amount_raw: optionalUnsignedAmount(item.buy_amount_raw, 'buy_amount_raw'), sell_amount_raw: optionalUnsignedAmount(item.sell_amount_raw, 'sell_amount_raw'),
+      buy_value_usd: optionalDecimal(item.buy_value_usd, 'buy_value_usd'), sell_value_usd: optionalDecimal(item.sell_value_usd, 'sell_value_usd'),
+      realized_pnl_usd: optionalDecimal(item.realized_pnl_usd, 'realized_pnl_usd'), pnl_ratio: optionalDecimal(item.pnl_ratio, 'pnl_ratio'),
+      avg_buy_price_usd: optionalDecimal(item.avg_buy_price_usd, 'avg_buy_price_usd'), avg_sell_price_usd: optionalDecimal(item.avg_sell_price_usd, 'avg_sell_price_usd'),
+    };
+  });
+  if (row.next_cursor != null && typeof row.next_cursor !== 'string') throw new Error('Invalid closed history cursor.');
+  return {items, next_cursor: optionalString(row.next_cursor)};
+}
+
+export async function getClosedPortfolioPositions(bearer: string, cursor = '', signal?: AbortSignal): Promise<PortfolioClosedPage> {
+  const query = new URLSearchParams({status: 'closed', limit: '20'});
+  if (cursor) query.set('cursor', cursor);
+  const response = await call<unknown>(`/v1/portfolio/history?${query}`, {
+    bearer, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
+    preserveInt64Fields: ['chain_id', 'opened_entry_id', 'closed_entry_id'],
+  });
+  try {return normalizePortfolioClosedPage(response.data);} catch (error) {
+    throw new PortfolioDataError(error instanceof Error ? error.message : 'Invalid closed positions.', response.traceID);
+  }
+}
+
+/** Complete scope is mandatory: partial parameters must never fall through to global trades. */
+export async function getPortfolioCycleTrades(bearer: string, scope: PortfolioCycleScope, beforeID = '0', signal?: AbortSignal): Promise<PortfolioTradePage> {
+  const chain = requiredString(scope.chain, 'scope.chain'), asset = requiredString(scope.asset, 'scope.asset');
+  const opened = nonnegativeIntegerString(scope.opened_entry_id, 'scope.opened_entry_id');
+  const cursor = nonnegativeIntegerString(beforeID, 'before_id');
+  if (!chain.trim() || !asset.trim() || opened === '0') throw new Error('A complete positive cycle identity is required.');
+  const query = new URLSearchParams({chain, asset, opened_entry_id: opened, limit: '50'});
+  if (cursor !== '0') query.set('before_id', cursor);
+  const response = await call<unknown>(`/v1/portfolio/position/trades?${query}`, {
+    bearer, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
+    preserveInt64Fields: ['next_cursor', 'cycle_opened_entry_id'],
+  });
+  try {
+    const page = normalizePortfolioTradePage(response.data);
+    if (page.trades.some((trade) => trade.chain !== chain || trade.cycle_opened_entry_id !== opened ||
+      (chain === 'solana' ? trade.token !== asset : trade.token.toLowerCase() !== asset.toLowerCase()))) throw new Error('Portfolio returned trades from another cycle.');
+    return page;
+  } catch (error) {
+    throw new PortfolioDataError(error instanceof Error ? error.message : 'Invalid cycle trades.', response.traceID);
+  }
+}
 
 function object(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
@@ -148,7 +268,7 @@ function timestamp(value: unknown): ProtoTimestamp | undefined {
   return {seconds: row.seconds, ...(typeof row.nanos === 'number' ? {nanos: row.nanos} : {})};
 }
 
-function position(value: unknown): PortfolioPosition {
+export function normalizePortfolioPosition(value: unknown, allowClosed = false): PortfolioPosition {
   const row = object(value);
   const asset = object(row?.asset);
   if (!row || !asset) throw new Error('Portfolio returned an invalid position identity.');
@@ -158,7 +278,7 @@ function position(value: unknown): PortfolioPosition {
   const chainID = nonnegativeIntegerString(asset.chain_id, 'asset.chain_id');
   if (chainID === '0') throw new Error('Portfolio returned an invalid asset.chain_id.');
   const shares = requiredString(row.shares_raw, 'shares_raw');
-  if (!/^\d+$/.test(shares) || shares.length > 256 || BigInt(shares) <= BigInt(0)) {
+  if (!/^\d+$/.test(shares) || shares.length > 256 || (!allowClosed && BigInt(shares) === BigInt(0))) {
     throw new Error('Portfolio returned invalid Trade ledger shares_raw.');
   }
   const entry = nonnegativeIntegerString(row.opened_entry_id ?? 0, 'opened_entry_id');
@@ -181,6 +301,7 @@ function position(value: unknown): PortfolioPosition {
   return {
     asset: {chain, chain_id: chainID, kind, token_address: tokenAddress},
     symbol: optionalString(row.symbol),
+    logo: optionalString(row.logo),
     decimals: typeof row.decimals === 'number' && Number.isInteger(row.decimals) && row.decimals >= 0 && row.decimals <= 255 ? row.decimals : undefined,
     shares_raw: shares,
     opened_entry_id: entry,
@@ -242,6 +363,20 @@ export function normalizePortfolio(value: unknown): PortfolioReply {
     throw new Error('Portfolio partial_errors must be an array when present.');
   }
   const pnl = pnlSummary(row.pnl);
+  if (row.cash_balances !== undefined && !Array.isArray(row.cash_balances)) throw new Error('Portfolio cash_balances must be an array.');
+  const cashBalances = ((row.cash_balances ?? []) as unknown[]).map((value): PortfolioCashBalance => {
+    const cash = object(value), token = object(cash?.token);
+    if (!cash || !token || (cash.address_format !== 'evm' && cash.address_format !== 'base58') ||
+        (cash.deposit_mode !== 'direct' && cash.deposit_mode !== 'sweep') || typeof cash.deposit_enabled !== 'boolean' ||
+        typeof cash.balance_meets_minimum !== 'boolean' || typeof token.decimals !== 'number' || !Number.isInteger(token.decimals) || token.decimals < 0 || token.decimals > 255) {
+      throw new Error('Portfolio returned an invalid cash balance route.');
+    }
+    return {chain: requiredString(cash.chain, 'cash.chain'), chain_id: nonnegativeIntegerString(cash.chain_id, 'cash.chain_id'),
+      wallet_address: optionalString(cash.wallet_address) ?? '', address_format: cash.address_format,
+      token: {symbol: requiredString(token.symbol, 'cash.token.symbol'), address: requiredString(token.address, 'cash.token.address'), decimals: token.decimals},
+      amount_raw: optionalUnsignedAmount(cash.amount_raw, 'cash.amount_raw'), deposit_mode: cash.deposit_mode,
+      deposit_enabled: cash.deposit_enabled, min_sweep_amount: optionalUnsignedAmount(cash.min_sweep_amount, 'cash.min_sweep_amount'), balance_meets_minimum: cash.balance_meets_minimum};
+  });
   const errors = Array.isArray(row.partial_errors) ? row.partial_errors.map((item) => {
     const error = object(item);
     if (!error || typeof error.reason !== 'string' || error.reason === '') {
@@ -259,15 +394,16 @@ export function normalizePortfolio(value: unknown): PortfolioReply {
     cash_balance_usd: optionalDecimal(row.cash_balance_usd, 'cash_balance_usd'),
     total_assets_usd: optionalDecimal(row.total_assets_usd, 'total_assets_usd'),
     cash_observed_at: timestamp(row.cash_observed_at),
+    cash_balances: cashBalances,
     pnl,
-    positions: Array.isArray(row.positions) ? row.positions.map(position) : [],
+    positions: Array.isArray(row.positions) ? row.positions.map((item) => normalizePortfolioPosition(item)) : [],
     partial_errors: errors,
     observed_at: timestamp(row.observed_at),
   };
 }
 
-export async function getPortfolio(bearer: string, signal?: AbortSignal): Promise<PortfolioReply> {
-  const response = await call<unknown>('/v1/portfolio', {
+export async function getPortfolio(bearer: string, signal?: AbortSignal, forceRefresh = false): Promise<PortfolioReply> {
+  const response = await call<unknown>(forceRefresh ? '/v1/portfolio?force_refresh=true' : '/v1/portfolio', {
     bearer, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
     preserveInt64Fields: ['opened_entry_id', 'chain_id'],
   });
@@ -304,6 +440,16 @@ export function normalizePortfolioTradePage(value: unknown): PortfolioTradePage 
       fee_currency: feeCurrency,
       tx_chain: optionalString(trade.tx_chain),
       cycle_opened_entry_id: nonnegativeIntegerString(trade.cycle_opened_entry_id, 'trade.cycle_opened_entry_id'),
+      cycle_key: optionalString(trade.cycle_key),
+      logo: optionalString(trade.logo),
+      symbol: optionalString(trade.symbol),
+      name: optionalString(trade.name),
+      token_amount: optionalDecimal(trade.token_amount, 'trade.token_amount'),
+      trade_value_usd: optionalDecimal(trade.trade_value_usd, 'trade.trade_value_usd'),
+      execution_price_usd: optionalDecimal(trade.execution_price_usd, 'trade.execution_price_usd'),
+      asset_decimals: trade.asset_decimals == null ? undefined
+        : typeof trade.asset_decimals === 'number' && Number.isInteger(trade.asset_decimals) && trade.asset_decimals >= 0 && trade.asset_decimals <= 255
+          ? trade.asset_decimals : (() => {throw new Error('Portfolio returned an invalid trade.asset_decimals.');})(),
     } satisfies PortfolioTrade;
   });
   const cursor = nonnegativeIntegerString(row.next_cursor ?? 0, 'trade next_cursor');

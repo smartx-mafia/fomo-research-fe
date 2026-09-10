@@ -3,6 +3,7 @@ import {useCallback, useEffect, useRef, useState} from 'react';
 import {ApiError} from '@/api/envelope';
 import {
   completeXBind,
+  completeXBindViaPrivy,
   describeBinding,
   FOLLOW_IMPORT,
   getXBinding,
@@ -64,6 +65,12 @@ export type XBindController = {
   refresh: () => void;
   start: () => void;
   complete: (code: string, state: string) => void;
+  /**
+   * Privy 通道（x-import.md §6）：组件先用 Privy SDK 的
+   * linkAccount({type:'twitter_oauth'}) 弹授权，onSuccess 后调这个。
+   * 服务端只信自己向 Privy 拉的权威数据，回包才是绑定成立的时刻。
+   */
+  bindViaPrivy: () => Promise<boolean>;
   unbind: () => void;
   /** 超时后用户还想再等时用。**不是自动的** —— 自动续期等于没有上限。 */
   resumePolling: () => void;
@@ -284,6 +291,41 @@ export function useXBind(jwt: string | null, log: EventLogFns): XBindController 
     [jwt, busy, begin, end, startPolling],
   );
 
+  /**
+   * Privy 通道完成绑定。返回是否绑定成功。
+   *
+   * 特殊形态：code=200 且 `bound` 缺席 = 「Privy 侧还没连 X」—— 不是错误，
+   * 调用方据此把用户引回 linkAccount 那一步。
+   */
+  const bindViaPrivy = useCallback(async (): Promise<boolean> => {
+    if (!jwt || busy) return false;
+    writeSeq.current += 1;
+    setBusy(true);
+    setErr(null);
+    const step = 'POST /v1/user/x/bind/privy';
+    begin(step);
+    try {
+      const res = await completeXBindViaPrivy(jwt);
+      if (!res.data.bound) {
+        end('info', step, '200 但 bound 缺席 —— Privy 侧还没连 X，先走 linkAccount 授权', res.traceID);
+        return false;
+      }
+      setState({kind: 'bound', binding: res.data, at: Date.now()});
+      end('ok', step, describeBinding(res.data), res.traceID);
+      startPolling();
+      return true;
+    } catch (e) {
+      const apiErr = e as ApiError;
+      setErr(apiErr);
+      end('error', step, `${apiErr.code} ${apiErr.message}`, apiErr.traceID);
+      // 已绑定（430108）：本地态是陈旧的，拉一次刷新而不是当故障。
+      if (apiErr.kind === 'business' && apiErr.code === X_CODE.alreadyBound) refresh();
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }, [jwt, busy, begin, end, startPolling, refresh]);
+
   const unbind = useCallback(() => {
     if (!jwt || busy) return;
     writeSeq.current += 1;
@@ -323,6 +365,7 @@ export function useXBind(jwt: string | null, log: EventLogFns): XBindController 
     refresh,
     start,
     complete,
+    bindViaPrivy,
     unbind,
     resumePolling,
     dismissError: useCallback(() => setErr(null), []),

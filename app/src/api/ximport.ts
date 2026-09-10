@@ -72,6 +72,10 @@ export type XFollowImport = {
 export type XBinding = {
   /** 成功回包里恒为 true —— 没绑定时后端回的是 200106 而不是 `bound:false`。 */
   bound?: boolean;
+  /** 绑定渠道：1 官方 X OAuth / 2 Privy 通道。非 zero 恒出现（2026-09-07 起）。
+   *  仅为展示与排障保留（设置页标注「通过 X 授权绑定 / 通过 Privy 绑定」），
+   *  **不要用它分支业务逻辑**，两通道语义完全一致。 */
+  bind_source?: 1 | 2;
   profile?: XProfile;
   follow_import?: XFollowImport;
 };
@@ -106,6 +110,12 @@ export const X_CODE = {
   upstreamUnavailable: 500097,
   /** X 上游故障，可稍后重试。 */
   upstreamFailure: 500105,
+  /** （privy 通道）上一次绑定拉取仍在处理中 —— 等 1~2 秒取第一个请求的结果，不要重试。 */
+  privyBindInFlight: 420106,
+  /** （privy 通道）拉取成功后的短窗内重复请求 —— 提示稍后再试；已绑定用户恒不触发。 */
+  privyBindRecentDuplicate: 420107,
+  /** （privy 通道）Privy 返回的 X 档案缺 username —— 稍后重试或改走官方通道。 */
+  privyProfileIncomplete: 500108,
 } as const;
 
 /**
@@ -131,6 +141,23 @@ export function completeXBind(bearer: string, code: string, state: string) {
 /** GET /v1/user/x/binding —— 查绑定与导入进度。**无绑定时回 200106，不是空数据。** */
 export function getXBinding(bearer: string) {
   return call<XBinding>('/v1/user/x/binding', {bearer});
+}
+
+/**
+ * POST /v1/user/x/bind/privy —— 完成 Privy 通道绑定（请求体空，2026-09-07 起）。
+ *
+ * 前置：先调 Privy SDK 的 linkAccount({type:'twitter_oauth'}) 让用户在 Privy
+ * 弹窗里连 X，onSuccess 后立刻调本端点 —— 服务端只信自己向 Privy 拉的权威
+ * 数据，Privy 回调里的档案数据不能直接当绑定结果。
+ *
+ * 特殊回包形态（x-import.md §6.2）：
+ * - **「Privy 侧还没连 X」不是错误**：回 code:200 且 data 是空对象
+ *   （bound 缺席 ⇔ false）—— 据此把用户引回 linkAccount 那一步。
+ * - Privy 通道的档案没有 description / verified / followers_count /
+ *   following_count（缺席不是 0），展示按「暂无数据」兜底。
+ */
+export function completeXBindViaPrivy(bearer: string) {
+  return call<XBinding>('/v1/user/x/bind/privy', {method: 'POST', body: {}, bearer});
 }
 
 /** POST /v1/user/x/unbind —— 逻辑删除。成功回 `data: {}`，之后查询回 200106。 */

@@ -29,7 +29,7 @@ There is no fallback to holders, bars, market warmup, token lookup or trading en
 
 ## Verification
 
-- Full Vitest suite: 21 files / 144 tests passed, including 10 mounted React StrictMode + real SWR lifecycle cases. Both token-keyed remounts and same-instance token changes are covered. `happy-dom` is a pinned test-only dependency.
+- Initial implementation verification: 21 files / 144 tests passed, including 10 mounted React StrictMode + real SWR lifecycle cases. Both token-keyed remounts and same-instance token changes are covered. Publication is integrated onto `origin/main=90edb6a`; its existing `jsdom` test environment is reused, without adding another dependency or changing dependency locks.
 - `pnpm build`, `pnpm exec tsc --noEmit`, and `git diff --check` passed. Build and standalone typecheck are run sequentially because Next generates `.next/types`.
 - A deliberate temporary reintroduction of the unstable polling function made the 31-second lifecycle test fail (expected 2 requests, got 1); restored the correct code and reran the suite.
 - Cancellation settles the shared Promise immediately even if its transport never ends. Removing this race made the direct cancellation test fail (`pending` instead of `AbortError`); restored the correct code. Independent review also reproduced and verified the token-keyed A → B → A case without a browser or external requests; Critical/Important issues are closed.
@@ -37,4 +37,12 @@ There is no fallback to holders, bars, market warmup, token lookup or trading en
 - Top10 with data, configured route text, zero/null, expiry, failures and cancellation are covered by controlled tests; the real browser sample did not have cached Top10 or a configured route.
 - Non-blocking tooling notices: existing peer/deprecation and ignored external `yarn.lock` warnings; DOM visibility tests produce a Node `TimeoutNaNWarning` from SWR's global focus event timer binding (Event passed as delay), not an Overview retry delay. Tests pass without suppressing this notice.
 
-Source publication was authorized separately after local verification. Frontend deployment is a separate step and is not performed by this commit/push workflow.
+Source publication was authorized separately after local verification. The current main branch's Cloudflare static export, token shell route, redirects and other features are preserved. Frontend deployment is a separate step and is not manually performed by this commit/push workflow.
+
+## Publication integration (2026-09-09)
+
+- Integrated the reviewed Overview application code onto `90edb6a` in an isolated worktree, preserving the five intervening upstream commits and the original local preview. Reused upstream's jsdom for the lifecycle tests; package manifests and both lockfiles are unchanged from main.
+- `pnpm install --frozen-lockfile` and the full suite passed: 26 files / 176 tests, including the newer account-domain tests.
+- Production static export passed for all 20 generated pages, including the `/token` shell. Exported `out/_redirects` matches the tracked file; route/config files are unchanged. This is build verification, not a claim that Cloudflare hosting was manually deployed or tested.
+- The first isolated build without public Privy configuration failed in the upstream `OnboardingView` hook. Rebuilding with the existing local `NEXT_PUBLIC_PRIVY_APP_ID` and optional public client ID passed. No environment file or secret was copied or committed; hosting still needs its normal public Privy build configuration.
+- Standalone TypeScript validation and whitespace checks passed. Independent integration review found no remaining Critical/Important/Minor issues. The documented SWR test-environment timer warning remains non-blocking.

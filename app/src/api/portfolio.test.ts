@@ -116,6 +116,8 @@ describe('portfolio contract', () => {
         amount_in_actual: '900719925474099312345', amount_out: '', status: 'SUCCESS', lifecycle: 'confirmed',
         tx_hash: 'sig', tx_chain: 'solana', created_at: '2026-09-08T01:02:03Z', confirmed_at: '',
         fee_app: '1234', fee_currency: 'usdc', cycle_opened_entry_id: '9007199254740995',
+        cycle_key: 'cycle-v2', logo: 'https://images.test/mint.png', symbol: 'MINT', name: 'Mint Token',
+        token_amount: '123.456', trade_value_usd: '10.50000000', execution_price_usd: '0.08505060728744939271', asset_decimals: 6,
       }],
       next_cursor: '9007199254740993',
     })).toEqual({
@@ -124,6 +126,8 @@ describe('portfolio contract', () => {
         amount_in_actual: '900719925474099312345', amount_out: undefined, status: 'SUCCESS', lifecycle: 'confirmed',
         tx_hash: 'sig', tx_chain: 'solana', created_at: '2026-09-08T01:02:03Z', confirmed_at: undefined,
         fee_app: '1234', fee_currency: 'usdc', cycle_opened_entry_id: '9007199254740995',
+        cycle_key: 'cycle-v2', logo: 'https://images.test/mint.png', symbol: 'MINT', name: 'Mint Token',
+        token_amount: '123.456', trade_value_usd: '10.50000000', execution_price_usd: '0.08505060728744939271', asset_decimals: 6,
       }],
       next_cursor: '9007199254740993',
     });
@@ -134,5 +138,8 @@ describe('portfolio contract', () => {
     expect(() => normalizePortfolioTradePage({trades: [{...base, amount_out: '1.5'}]})).toThrow(/amount_out/);
     expect(() => normalizePortfolioTradePage({trades: [{...base, fee_app: '1'}]})).toThrow(/incomplete trade fee/);
     expect(() => normalizePortfolioTradePage({trades: [{...base, cycle_opened_entry_id: Number.MAX_SAFE_INTEGER + 1}]})).toThrow(/cycle_opened_entry_id/);
+    expect(() => normalizePortfolioTradePage({trades: [{...base, token_amount: '1e3'}]})).toThrow(/token_amount/);
+    expect(() => normalizePortfolioTradePage({trades: [{...base, execution_price_usd: 'NaN'}]})).toThrow(/execution_price_usd/);
+    expect(() => normalizePortfolioTradePage({trades: [{...base, asset_decimals: 256}]})).toThrow(/asset_decimals/);
   });
 });

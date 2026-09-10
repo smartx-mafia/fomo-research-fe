@@ -1,4 +1,4 @@
-// @vitest-environment happy-dom
+// @vitest-environment jsdom
 import React, {act} from 'react';
 import {createRoot, type Root} from 'react-dom/client';
 import {SWRConfig} from 'swr';
@@ -6,9 +6,10 @@ import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {normalizePortfolio, type PortfolioReply} from '@/api/portfolio';
 
 const {control} = vi.hoisted(() => ({control: {jwt: 'A', fetch: vi.fn()}}));
-vi.mock('@/api/portfolio', async (load) => ({...await load<typeof import('@/api/portfolio')>(), getPortfolio: control.fetch}));
+vi.mock('@/api/portfolio', async (load) => ({...await load<typeof import('@/api/portfolio')>(), getPortfolio: control.fetch, getPortfolioBalanceCurve: async () => ({points: [], simulated: false})}));
 vi.mock('@/session/storage', () => ({useSession: () => ({jwt: control.jwt}), clearSite: vi.fn(), readSite: () => ({jwt: control.jwt})}));
 vi.mock('@/components/PortfolioActivity', () => ({PortfolioActivity: () => null}));
+vi.mock('@/components/PortfolioCycles', () => ({ClosedPortfolioPositions: () => null, PortfolioCycleTrades: () => null}));
 vi.mock('@/components/OpinionComposer', () => ({OpinionComposer: () => <div>Opinion dialog</div>}));
 import {PortfolioView} from './PortfolioView';
 

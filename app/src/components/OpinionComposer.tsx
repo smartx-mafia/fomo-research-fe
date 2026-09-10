@@ -55,8 +55,8 @@ export function OpinionComposer({targetID, targetLabel, onClose, onPublished, on
   const [admissionBlocked, setAdmissionBlocked] = useState(false);
   const [admissionTrace, setAdmissionTrace] = useState<string>();
   const [mode, setMode] = useState<'create' | 'edit'>('create');
-  const [opinionID, setOpinionID] = useState<number>();
-  const [baseVersionID, setBaseVersionID] = useState<number>();
+  const [opinionID, setOpinionID] = useState<string>();
+  const [baseVersionID, setBaseVersionID] = useState<string>();
   const [versionNo, setVersionNo] = useState<number>();
   const [body, setBody] = useState('');
   const [xLinkURL, setXLinkURL] = useState('');

@@ -143,6 +143,122 @@ export const CODES: Record<number, CodeInfo> = {
     advice: '可稍后重试；持续如此附 trace_id 报障。',
     retryable: true,
   },
+
+  // ── 邀请 / 准入域（invite.md，2026-09-06 错误码重排后） ────────────────
+  100124: {
+    text: '邀请参数非法：码空 / 格式不合 / 以 @ 开头；limit>50 / 坏 cursor；或登录时码超 32 字节',
+    advice: '本地校验与服务端分岔（前端 bug）或 cursor 已坏：改参数，坏 cursor 丢弃重拉首页。',
+    retryable: false,
+  },
+  200108: {
+    text: '邀请码不存在或持有人不可作上级（未认领 / 冻结 / 封禁 / 注销 / 不在树里，五者不区分）',
+    advice: '输入框提示「邀请码不存在或不可用」，不重试。',
+    retryable: false,
+  },
+  420105: {
+    text: '试码超限（登录带码 / bind 带码）',
+    advice: '按 metadata.retry_after_seconds（字符串，秒）倒计时，期间禁用提交。',
+    retryable: false,
+  },
+  430111: {
+    text: '已绑定：已准入账号再调 bind，或已注册账号带入场码登录',
+    advice: '前者回到 /v1/invite/status 重判；后者去掉 entry_code 重登。',
+    retryable: false,
+  },
+  430112: {
+    text: 'bind 的码指向自己或会成环',
+    advice: '提示「不能填自己的码」，不重试。',
+    retryable: false,
+  },
+  430115: {
+    text: '登录 / bind：不带邀请码且服务端没开默认绑定（登录时无 JWT）',
+    advice: '弹邀请码页，用**同一个 identity token** 带 invite_code 重调登录，不要重走 Privy。',
+    retryable: false,
+  },
+  430116: {
+    text: '登录：带了邀请码但不存在 / 不可作上级（无 JWT）',
+    advice: '输入框报错，核对后重输。',
+    retryable: false,
+  },
+  430117: {
+    text: '独占期（或未开放期）且邮箱匹配不上冻结名单（无 JWT）',
+    advice: '弹入场码页，用同一个 identity token 带 entry_code 重调登录。',
+    retryable: false,
+  },
+  430118: {
+    text: '入场码不存在 / 已撤销 / 已过期（服务端不区分）',
+    advice: '提示核对后重输，不自动重试。',
+    retryable: false,
+  },
+  430119: {
+    text: '入场码对应的名额已被别的账号认领，已转人工',
+    advice: '引导联系客服，不重试。',
+    retryable: false,
+  },
+  430120: {
+    text: '名额被运营冻结',
+    advice: '引导联系客服。',
+    retryable: false,
+  },
+  430121: {
+    text: '独占期（含未开放期）内调 bind',
+    advice: '「当前阶段暂不可进入」，稍后重新调 /v1/invite/status。',
+    retryable: false,
+  },
+  500109: {
+    text: '给本人发邀请码时连续撞码（服务端 Redis set 异常）',
+    advice: '提示稍后重试，不自动重放。',
+    retryable: false,
+  },
+
+  // ── 个人资料 / 设置域（user.md / settings.md） ──────────────────────────
+  100111: {
+    text: '资料参数非法（username / nickname / language 形态错；bio 缺席 / 超长 / 非法字符）',
+    advice: '本地校验与后端分岔了，修前端；提示文案由前端按端点给。',
+    retryable: false,
+  },
+  100121: {
+    text: 'onboarding feature 不在后端在册清单里',
+    advice: '检查是否照抄了回包里的 feature；不要自动重试。',
+    retryable: false,
+  },
+  100123: {
+    text: '设置值 / 头像来源 / 导入字段 / 导出链名或地址不合法',
+    advice: '本地校验分岔了，修前端；改参数，不重试。',
+    retryable: false,
+  },
+  420104: {
+    text: '头像 / 简介 / handle 修改次数到上限（滚动窗口）',
+    advice: '按 metadata.retry_after_seconds 显示倒计时，**不要自动重试**。',
+    retryable: false,
+  },
+  430105: {
+    text: '用户名已被占用（大小写不敏感）',
+    advice: '提示换一个用户名。不要自动重试 —— 即使预检刚说过可用也要保留这个分支。',
+    retryable: false,
+  },
+  500107: {
+    text: '设置存储不可用（部署事实）',
+    advice: '稍后重试，可提示「设置暂不可用」。',
+    retryable: true,
+  },
+
+  // ── X 绑定 Privy 通道（x-import.md §6.3） ──────────────────────────────
+  420106: {
+    text: '（Privy 通道）上一次绑定拉取仍在处理中',
+    advice: '等 1~2 秒取第一个请求的结果，不要重试。',
+    retryable: false,
+  },
+  420107: {
+    text: '（Privy 通道）拉取成功后的短窗内重复请求',
+    advice: '提示稍后再试；已绑定用户恒不触发。',
+    retryable: false,
+  },
+  500108: {
+    text: '（Privy 通道）Privy 返回的 X 档案缺 username',
+    advice: '提示稍后重试，或改走官方 X OAuth 通道（档案更全）。',
+    retryable: true,
+  },
 };
 
 export function codeInfo(code: number): CodeInfo | undefined {

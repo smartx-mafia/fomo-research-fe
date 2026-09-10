@@ -133,7 +133,8 @@ function WatchlistRows({items}: {items: FavoriteItem[]}) {
                   <StarButton chain={item.chain} address={item.address} />
                 </td>
                 <td className="px-3 py-2">
-                  <Link href={`/token/${item.chain}/${item.address}`} className="flex items-center gap-2">
+                  {/* 路径式详情页在静态导出下无客户端路由，走整页加载经 _redirects 重写 */}
+                  <a href={`/token/${item.chain}/${item.address}`} className="flex items-center gap-2">
                     {m?.logo ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img src={m.logo} alt={symbol ?? 'token'} className="h-6 w-6 shrink-0 rounded-full bg-surface-2 object-cover" />
@@ -146,7 +147,7 @@ function WatchlistRows({items}: {items: FavoriteItem[]}) {
                       <span className="font-medium text-foreground">{symbol ?? shortAddr(item.address, 6, 4)}</span>
                       <span className="max-w-[160px] truncate text-xs text-muted">{name ?? shortAddr(item.address, 6, 4)}</span>
                     </div>
-                  </Link>
+                  </a>
                 </td>
                 <td className="px-3 py-2">
                   <ChainBadge chainId={item.chain} />
