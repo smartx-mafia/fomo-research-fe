@@ -13,6 +13,7 @@ export type PortfolioAsset = {
 export type PortfolioPosition = {
   asset: PortfolioAsset;
   symbol?: string;
+  logo?: string;
   decimals?: number;
   shares_raw: string;
   price_usd?: string;
@@ -91,9 +92,38 @@ export type PortfolioTrade = {
   fee_currency?: string;
   tx_chain?: string;
   cycle_opened_entry_id: string;
+  cycle_key?: string;
+  logo?: string;
+  symbol?: string;
+  name?: string;
+  token_amount?: string;
+  trade_value_usd?: string;
+  execution_price_usd?: string;
+  asset_decimals?: number;
 };
 
 export type PortfolioTradePage = {trades: PortfolioTrade[]; next_cursor?: string};
+
+export type PortfolioBalanceCurve = {points: {at: string; balance_usd: string}[]; now_usd?: string; as_of?: string; simulated: boolean};
+export async function getPortfolioBalanceCurve(bearer: string, window: '1d' | '7d' | '30d' | 'all', signal?: AbortSignal): Promise<PortfolioBalanceCurve> {
+  const response = await call<unknown>(`/v1/portfolio/balance/curve?window=${window}`, {
+    bearer, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
+  });
+  try {
+    const row = object(response.data);
+    if (!row || !Array.isArray(row.points)) throw new Error('Invalid total-assets curve.');
+    const points = row.points.map((value) => {
+      const point = object(value);
+      if (!point) throw new Error('Invalid total-assets sample.');
+      const balance = optionalDecimal(point.balance_usd, 'balance_usd');
+      if (balance === undefined) throw new Error('Missing total-assets sample value.');
+      return {at: rfc3339(point.at, 'balance.at', true)!, balance_usd: balance};
+    });
+    return {points, now_usd: optionalDecimal(row.now_usd, 'now_usd'), as_of: rfc3339(row.as_of, 'balance.as_of'), simulated: row.simulated === true};
+  } catch (error) {
+    throw new PortfolioDataError(error instanceof Error ? error.message : 'Invalid total-assets curve.', response.traceID);
+  }
+}
 
 export type PortfolioCycleScope = {chain: string; asset: string; opened_entry_id: string};
 export type PortfolioClosedPosition = {
@@ -104,6 +134,7 @@ export type PortfolioClosedPosition = {
   closed_at?: ProtoTimestamp;
   status: 'closed';
   symbol?: string;
+  logo?: string;
   decimals?: number;
   buy_amount_raw?: string;
   sell_amount_raw?: string;
@@ -130,6 +161,7 @@ export function normalizePortfolioClosedPage(value: unknown): PortfolioClosedPag
       asset: {chain: requiredString(asset.chain, 'asset.chain'), chain_id: chainID, kind: requiredString(asset.kind, 'asset.kind'), token_address: requiredString(asset.token_address, 'asset.token_address')},
       opened_entry_id: opened, closed_entry_id: closed, opened_at: timestamp(item.opened_at), closed_at: timestamp(item.closed_at), status: 'closed',
       symbol: optionalString(item.symbol),
+      logo: optionalString(item.logo),
       decimals: typeof item.decimals === 'number' && Number.isInteger(item.decimals) && item.decimals >= 0 && item.decimals <= 255 ? item.decimals : undefined,
       buy_amount_raw: optionalUnsignedAmount(item.buy_amount_raw, 'buy_amount_raw'), sell_amount_raw: optionalUnsignedAmount(item.sell_amount_raw, 'sell_amount_raw'),
       buy_value_usd: optionalDecimal(item.buy_value_usd, 'buy_value_usd'), sell_value_usd: optionalDecimal(item.sell_value_usd, 'sell_value_usd'),
@@ -261,6 +293,7 @@ function position(value: unknown): PortfolioPosition {
   return {
     asset: {chain, chain_id: chainID, kind, token_address: tokenAddress},
     symbol: optionalString(row.symbol),
+    logo: optionalString(row.logo),
     decimals: typeof row.decimals === 'number' && Number.isInteger(row.decimals) && row.decimals >= 0 && row.decimals <= 255 ? row.decimals : undefined,
     shares_raw: shares,
     opened_entry_id: entry,
@@ -384,6 +417,16 @@ export function normalizePortfolioTradePage(value: unknown): PortfolioTradePage 
       fee_currency: feeCurrency,
       tx_chain: optionalString(trade.tx_chain),
       cycle_opened_entry_id: nonnegativeIntegerString(trade.cycle_opened_entry_id, 'trade.cycle_opened_entry_id'),
+      cycle_key: optionalString(trade.cycle_key),
+      logo: optionalString(trade.logo),
+      symbol: optionalString(trade.symbol),
+      name: optionalString(trade.name),
+      token_amount: optionalDecimal(trade.token_amount, 'trade.token_amount'),
+      trade_value_usd: optionalDecimal(trade.trade_value_usd, 'trade.trade_value_usd'),
+      execution_price_usd: optionalDecimal(trade.execution_price_usd, 'trade.execution_price_usd'),
+      asset_decimals: trade.asset_decimals == null ? undefined
+        : typeof trade.asset_decimals === 'number' && Number.isInteger(trade.asset_decimals) && trade.asset_decimals >= 0 && trade.asset_decimals <= 255
+          ? trade.asset_decimals : (() => {throw new Error('Portfolio returned an invalid trade.asset_decimals.');})(),
     } satisfies PortfolioTrade;
   });
   const cursor = nonnegativeIntegerString(row.next_cursor ?? 0, 'trade next_cursor');
