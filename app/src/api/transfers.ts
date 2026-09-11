@@ -11,6 +11,7 @@ export type TransferEntry = {
   counterparty?: string;
   tx_hash: string;
   occurred_at: ProtoTimestamp;
+  logo?: string;
 };
 
 export type TransferPage = {transfers: TransferEntry[]; next_cursor?: string};
@@ -21,6 +22,15 @@ function object(value: unknown): Record<string, unknown> | undefined {
 
 function requiredString(value: unknown, field: string): string {
   if (typeof value !== 'string' || value === '') throw new Error(`Transfer history returned an invalid ${field}.`);
+  return value;
+}
+
+function optionalHttpURL(value: unknown, field: string): string | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value !== 'string') throw new Error(`Transfer history returned an invalid ${field}.`);
+  let parsed: URL;
+  try {parsed = new URL(value);} catch {throw new Error(`Transfer history returned an invalid ${field}.`);}
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') throw new Error(`Transfer history returned an invalid ${field}.`);
   return value;
 }
 
@@ -55,6 +65,7 @@ export function normalizeTransferPage(value: unknown): TransferPage {
       counterparty: transfer.counterparty || undefined,
       tx_hash: requiredString(transfer.tx_hash, 'tx_hash'),
       occurred_at: timestamp(transfer.occurred_at),
+      logo: optionalHttpURL(transfer.logo, 'logo'),
     } satisfies TransferEntry;
   });
   if (typeof row.next_cursor !== 'string') throw new Error('Transfer history returned an invalid next_cursor.');
