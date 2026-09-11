@@ -74,7 +74,7 @@ function TransferRow({transfer}: {transfer: TransferEntry}) {
     <tr className="border-t border-border align-top">
       <td className="px-3 py-3"><span className={`inline-flex items-center gap-1 rounded-full px-2 py-1 text-[11px] font-semibold ${received ? 'bg-up/10 text-up' : 'bg-accent/10 text-accent'}`}>{received ? <ArrowDownLeft className="h-3 w-3" /> : <ArrowUpRight className="h-3 w-3" />}{received ? 'Received' : 'Sent'}</span></td>
       <td className="px-3 py-3 font-mono text-xs text-foreground">{formatBaseUnitsExact(transfer.amount_raw, transfer.asset_decimals)} {transfer.asset_symbol}</td>
-      <td className="px-3 py-3"><p className="text-xs text-foreground">{chainLabel(transfer.chain)}</p><p className="mt-1 font-mono text-[10px] text-muted" title={transfer.asset_address}>{shortAddr(transfer.asset_address, 7, 6)}</p></td>
+      <td className="px-3 py-3"><div className="flex items-center gap-2">{transfer.logo ? <img src={transfer.logo} alt="" className="h-6 w-6 rounded-full object-cover" /> : null}<div><p className="text-xs text-foreground">{chainLabel(transfer.chain)}</p><p className="mt-1 font-mono text-[10px] text-muted" title={transfer.asset_address}>{shortAddr(transfer.asset_address, 7, 6)}</p></div></div></td>
       <td className="px-3 py-3 font-mono text-xs text-muted" title={transfer.counterparty}>{shortAddr(transfer.counterparty, 8, 6)}</td>
       <td className="px-3 py-3 font-mono text-xs text-muted" title={transfer.tx_hash}>{shortAddr(transfer.tx_hash, 8, 6)}</td>
       <td className="px-3 py-3 text-xs text-muted">{protoTime(transfer.occurred_at)}</td>

@@ -17,10 +17,10 @@ describe('transfer history contract', () => {
   it('normalizes finalized direct Solana USDC movements without assigning business intent', () => {
     expect(normalizeTransferPage({transfers: [{
       direction: 1, chain: 'solana', asset_symbol: 'USDC', asset_address: 'mint', asset_decimals: 6,
-      amount_raw: '900719925474099312345', counterparty: '', tx_hash: 'signature', occurred_at: {seconds: '1788796800', nanos: 0},
+      amount_raw: '900719925474099312345', counterparty: '', tx_hash: 'signature', occurred_at: {seconds: '1788796800', nanos: 0}, logo: 'https://cdn.example/usdc.png',
     }], next_cursor: 'next'})).toEqual({transfers: [{
       direction: 1, chain: 'solana', asset_symbol: 'USDC', asset_address: 'mint', asset_decimals: 6,
-      amount_raw: '900719925474099312345', counterparty: undefined, tx_hash: 'signature', occurred_at: {seconds: '1788796800', nanos: 0},
+      amount_raw: '900719925474099312345', counterparty: undefined, tx_hash: 'signature', occurred_at: {seconds: '1788796800', nanos: 0}, logo: 'https://cdn.example/usdc.png',
     }], next_cursor: 'next'});
   });
 
@@ -29,6 +29,7 @@ describe('transfer history contract', () => {
     expect(() => normalizeTransferPage({transfers: [{...base, direction: 0}], next_cursor: ''})).toThrow(/invalid transfer entry/);
     expect(() => normalizeTransferPage({transfers: [{...base, amount_raw: '1.5'}], next_cursor: ''})).toThrow(/invalid transfer entry/);
     expect(() => normalizeTransferPage({transfers: [{...base, occurred_at: {seconds: 0}}], next_cursor: ''})).toThrow(/occurred_at/);
+    expect(() => normalizeTransferPage({transfers: [{...base, logo: 'javascript:alert(1)'}], next_cursor: ''})).toThrow(/invalid logo/);
     expect(() => normalizeTransferPage({transfers: [], next_cursor: 1})).toThrow(/next_cursor/);
   });
 });
