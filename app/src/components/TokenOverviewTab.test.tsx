@@ -11,6 +11,7 @@ const data = normalizeTokenOverview({
   profile: {website: 'https://example.org', twitter: null, quality},
   activity: {volume_5m_usd: 0, buyers_1h: 0, sellers_1h: null, quality},
   holder_summary: {top10_percent: 18.6, quality: {...quality, source: 'codex.holders'}},
+  holder_intelligence: {dev_held_percent: 19.49481, quality},
   trading_route_display: {label: null, kind: 'display_only', status: 'unavailable'},
 }, 'solana', 'TokenA');
 
@@ -19,6 +20,8 @@ describe('Overview presentation', () => {
     const html = renderToStaticMarkup(<TokenOverviewContent chain="solana" address="TokenA" data={data} now={now} />);
     expect(html).toContain('$0');
     expect(html).toContain('18.60%');
+    expect(html).toContain('Developer holdings');
+    expect(html).toContain('19.49%');
     expect(html).toContain('Sellers · 1h');
     expect(html).toContain('>—<');
     expect(html).toContain('Unique buying addresses');
@@ -32,6 +35,7 @@ describe('Overview presentation', () => {
     const expired = renderToStaticMarkup(<TokenOverviewContent chain="solana" address="TokenA" data={data} now={now + 300_000} />);
     expect(expired).not.toContain('$0');
     expect(expired).not.toContain('18.60%');
+    expect(expired).not.toContain('19.49%');
     expect(expired).not.toContain('href=');
   });
 

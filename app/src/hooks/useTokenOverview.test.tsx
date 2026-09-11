@@ -17,6 +17,7 @@ function snapshot(address: string, buyers = 7): TokenOverview {
     profile: {website: null, twitter: null, quality: q},
     activity: {volume_5m_usd: 0, buyers_1h: buyers, sellers_1h: 0, quality: q},
     holder_summary: {top10_percent: null, quality: {...q, source: 'codex.holders', state: 0}},
+    holder_intelligence: {dev_held_percent: 0, quality: q},
     trading_route_display: {label: null, kind: 'display_only', status: 'unavailable'},
   }, 'solana', address);
 }

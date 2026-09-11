@@ -39,10 +39,12 @@ export function TokenOverviewContent({
   const profileState = overviewStatus(data?.profile.quality, now);
   const activityState = overviewStatus(data?.activity.quality, now);
   const holderState = overviewStatus(data?.holder_summary.quality, now, true);
+  const intelligenceState = overviewStatus(data?.holder_intelligence.quality, now);
   const website = profileState === 'unavailable' ? null : data?.profile.website;
   const twitter = profileState === 'unavailable' ? null : data?.profile.twitter;
   const activity = activityState === 'unavailable' ? undefined : data?.activity;
   const top10 = holderState === 'unavailable' ? null : data?.holder_summary.top10_percent;
+  const devHeld = intelligenceState === 'unavailable' ? null : data?.holder_intelligence.dev_held_percent;
   const route = data?.trading_route_display;
   const routeLabel = route?.status === 'configured' && route.kind === 'display_only' ? route.label : null;
   const needsSignIn = error instanceof MarketApiError && error.needsSignIn;
@@ -93,16 +95,27 @@ export function TokenOverviewContent({
       </section>
 
       <section aria-labelledby="overview-holders" className="border-t border-border pt-5">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+        <div className="mb-3">
           <h2 id="overview-holders" className="text-sm font-semibold text-foreground">Holder intelligence</h2>
-          <SnapshotBadge status={holderState} loading={loading} />
         </div>
-        <dl className="flex items-center justify-between gap-4 text-sm">
-          <dt className="text-muted">Top 10 holders</dt>
-          <dd className="tabular font-semibold text-foreground">{fmtPct(top10, {sign: false, digits: 2})}</dd>
+        <dl className="space-y-4 text-sm">
+          <div>
+            <div className="flex items-center justify-between gap-4">
+              <dt className="text-muted">Developer holdings</dt>
+              <dd className="flex items-center gap-2"><SnapshotBadge status={intelligenceState} loading={loading} /><span className="tabular font-semibold text-foreground">{fmtPct(devHeld, {sign: false, digits: 2})}</span></dd>
+            </div>
+            {devHeld !== null && devHeld !== undefined ? <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-surface-2" aria-hidden="true"><div className="h-full rounded-full bg-amber-500/70" style={{width: `${devHeld}%`}} /></div> : null}
+            <p className="mt-2 text-[11px] leading-relaxed text-muted">{devHeld === null || devHeld === undefined ? 'Not reported in the current Codex snapshot.' : 'Share of supply held by developer-associated wallets.'}</p>
+          </div>
+          <div className="border-t border-border pt-4">
+            <div className="flex items-center justify-between gap-4">
+              <dt className="text-muted">Top 10 holders</dt>
+              <dd className="flex items-center gap-2"><SnapshotBadge status={holderState} loading={loading} /><span className="tabular font-semibold text-foreground">{fmtPct(top10, {sign: false, digits: 2})}</span></dd>
+            </div>
+            {top10 !== null && top10 !== undefined ? <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-surface-2" aria-hidden="true"><div className="h-full rounded-full bg-accent/70" style={{width: `${top10}%`}} /></div> : null}
+            <p className="mt-2 text-[11px] leading-relaxed text-muted">{top10 === null || top10 === undefined ? 'Shown only when a holder snapshot is already cached. No extra lookup is made.' : 'Share of supply from the source’s Top 10 holder summary.'}</p>
+          </div>
         </dl>
-        {top10 !== null && top10 !== undefined ? <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-surface-2" aria-hidden="true"><div className="h-full rounded-full bg-accent/70" style={{width: `${top10}%`}} /></div> : null}
-        <p className="mt-2 text-[11px] leading-relaxed text-muted">{top10 === null || top10 === undefined ? 'Shown only when a holder snapshot is already cached. No extra lookup is made.' : 'Share of supply from the source’s Top 10 holder summary.'}</p>
       </section>
 
       <section aria-labelledby="overview-details" className="border-t border-border pt-5">

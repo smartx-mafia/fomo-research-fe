@@ -10,6 +10,7 @@ function fixture() {
     profile: {website: 'https://example.org', twitter: null, quality: q},
     activity: {volume_5m_usd: 0, buyers_1h: 0, sellers_1h: null, quality: q},
     holder_summary: {top10_percent: 18.6, quality: {...q, source: 'codex.holders'}},
+    holder_intelligence: {dev_held_percent: 0, quality: q},
     trading_route_display: {label: null, kind: 'display_only', status: 'unavailable'},
   };
 }
@@ -21,6 +22,7 @@ describe('Overview contract and freshness', () => {
     const data = normalizeTokenOverview(fixture(), 'solana', 'TokenA');
     expect(data.activity).toMatchObject({volume_5m_usd: 0, buyers_1h: 0, sellers_1h: null});
     expect(data.holder_summary.top10_percent).toBe(18.6);
+    expect(data.holder_intelligence.dev_held_percent).toBe(0);
     expect(data.trading_route_display.label).toBeNull();
   });
 
@@ -34,6 +36,11 @@ describe('Overview contract and freshness', () => {
   it.each([1.5, Number.MAX_SAFE_INTEGER + 1])('rejects non-exact address counts %s', (bad) => {
     const raw = {...fixture(), activity: {...fixture().activity, buyers_1h: bad}};
     expect(normalizeTokenOverview(raw, 'solana', 'TokenA').activity.buyers_1h).toBeNull();
+  });
+
+  it.each([null, undefined, '', '0', false, -1, 100.0001, NaN, Infinity, {}, []])('rejects malformed Dev holding percentages %s', (bad) => {
+    const raw = {...fixture(), holder_intelligence: {...fixture().holder_intelligence, dev_held_percent: bad}};
+    expect(normalizeTokenOverview(raw, 'solana', 'TokenA').holder_intelligence.dev_held_percent).toBeNull();
   });
 
   it('rejects the wrong token identity and preserves Solana case', () => {
@@ -50,8 +57,11 @@ describe('Overview contract and freshness', () => {
     expect(overviewStatus(data.activity.quality, now + 60_001)).toBe('stale');
     expect(overviewStatus(data.activity.quality, now + 299_999)).toBe('stale');
     expect(overviewStatus(data.holder_summary.quality, now + 299_999, true)).toBe('fresh');
+    expect(overviewStatus(data.holder_intelligence.quality, now + 60_000)).toBe('fresh');
+    expect(overviewStatus(data.holder_intelligence.quality, now + 60_001)).toBe('stale');
     expect(overviewStatus(data.activity.quality, now + 300_000)).toBe('unavailable');
     expect(overviewStatus(data.holder_summary.quality, now + 300_000, true)).toBe('unavailable');
+    expect(overviewStatus(data.holder_intelligence.quality, now + 300_000)).toBe('unavailable');
     expect(overviewStatus(data.activity.quality, now - 1)).toBe('unavailable');
   });
 

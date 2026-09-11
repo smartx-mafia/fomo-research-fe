@@ -13,6 +13,7 @@ export type TokenOverview = {
   profile: {website: string | null; twitter: string | null; quality: OverviewQuality};
   activity: {volume_5m_usd: number | null; buyers_1h: number | null; sellers_1h: number | null; quality: OverviewQuality};
   holder_summary: {top10_percent: number | null; quality: OverviewQuality};
+  holder_intelligence: {dev_held_percent: number | null; quality: OverviewQuality};
   trading_route_display: {label: string | null; kind: 'display_only'; status: 'configured' | 'unavailable'};
 };
 
@@ -68,8 +69,10 @@ export function normalizeTokenOverview(raw: unknown, chain: string, address: str
   const profile = record(value.profile);
   const activity = record(value.activity);
   const holder = record(value.holder_summary);
+  const intelligence = record(value.holder_intelligence);
   const route = record(value.trading_route_display);
   const top10 = nonnegative(holder.top10_percent);
+  const devHeld = nonnegative(intelligence.dev_held_percent);
   const label = typeof route.label === 'string' ? route.label.trim() : '';
   const configured = route.kind === 'display_only' && route.status === 'configured'
     && label.length > 0 && [...label].length <= 128 && !/[\u0000-\u001f\u007f]/.test(label);
@@ -83,6 +86,10 @@ export function normalizeTokenOverview(raw: unknown, chain: string, address: str
       quality: quality(activity.quality, 'codex.filterTokens'),
     },
     holder_summary: {top10_percent: top10 !== null && top10 <= 100 ? top10 : null, quality: quality(holder.quality, 'codex.holders')},
+    holder_intelligence: {
+      dev_held_percent: devHeld !== null && devHeld <= 100 ? devHeld : null,
+      quality: quality(intelligence.quality, 'codex.filterTokens'),
+    },
     trading_route_display: {label: configured ? label : null, kind: 'display_only', status: configured ? 'configured' : 'unavailable'},
   };
 }
