@@ -5,7 +5,12 @@ import useSWR from 'swr';
 import useSWRInfinite from 'swr/infinite';
 import {getSmartMoneyHoldings, getSmartMoneyTokenTrades, getSmartMoneyTrades, type SmartMoneyHolding, type SmartMoneyTokenTrades, type SmartMoneyTrade} from '@/api/smartmoney';
 import {decimalSign, formatDecimalExact, marketValueFromBaseUnits} from '@/lib/exact-decimal';
-import {chainLabel, shortAddr} from '@/lib/format';
+import {chainLabel, shortAddr, fmtUsd} from '@/lib/format';
+import {SmartMoneyTokenMetadata} from './SmartMoneyTokenMetadata';
+import {SmartMoneyTokenFdv} from './SmartMoneyTokenFdv';
+import {holdingRoi} from '@/lib/holding-roi';
+import {averageSellPrice} from '@/lib/average-sell-price';
+import {SmartMoneyPnlSummary} from './SmartMoneyPnlSummary';
 
 function money(value?: string) {return value ? `${decimalSign(value) === -1 ? '-' : ''}$${formatDecimalExact(value.replace(/^-/, ''), 2)}` : '—';}
 function price(value?: string) {return value ? `$${formatDecimalExact(value, 12)}` : '—';}
@@ -15,13 +20,14 @@ function when(seconds?: number) {return seconds ? new Date(seconds * 1000).toLoc
 function tone(value?: string) {return decimalSign(value) === 1 ? 'text-up' : decimalSign(value) === -1 ? 'text-down' : 'text-muted';}
 function chainName(chain: string) {return chain === 'sol' ? 'Solana' : chainLabel(chain);}
 
-function Token({entry}: {entry: Pick<SmartMoneyHolding, 'symbol'|'name'|'logo'|'token_address'|'is_honeypot'>}) {
+function Token({entry, chain, showAverage = false, tradeTime}: {entry: Pick<SmartMoneyHolding, 'symbol'|'name'|'logo'|'token_address'|'is_honeypot'|'chain'|'launchpad'|'avg_cost_market_cap_usd'>; chain?: string; showAverage?: boolean; tradeTime?: string}) {
+
   const label = entry.symbol ?? entry.name ?? shortAddr(entry.token_address ?? '', 6, 4);
   const [failedLogo, setFailedLogo] = useState<string>();
   const logo = entry.logo && /^https?:\/\//i.test(entry.logo) && failedLogo !== entry.logo ? entry.logo : undefined;
   return <div className="flex min-w-[150px] items-center gap-2.5">
     <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-full bg-surface-2 text-xs font-bold text-muted">{logo ? <img src={logo} alt="" className="h-full w-full object-cover" onError={() => setFailedLogo(logo)} /> : label.slice(0, 1).toUpperCase()}</div>
-    <div className="min-w-0"><p className="truncate font-medium text-foreground">{label}</p><p className="truncate text-[10px] text-muted">{entry.is_honeypot ? '风险标记 · ' : ''}{entry.name ?? entry.token_address ?? '未知 Token'}</p></div>
+    <div className="min-w-0"><div className="flex flex-wrap items-center gap-x-2 gap-y-0.5"><p className="truncate font-medium text-foreground">{label}</p></div><p className="truncate text-[10px] text-muted">{entry.is_honeypot ? '风险标记 · ' : ''}{entry.name ?? entry.token_address ?? '未知 Token'}</p>{chain ? <SmartMoneyTokenMetadata chain={entry.chain || chain} platform={entry.launchpad} averageEntry={showAverage ? fmtUsd(entry.avg_cost_market_cap_usd) : undefined} tradeTime={tradeTime} /> : null}</div>
   </div>;
 }
 
@@ -30,13 +36,13 @@ function EventBadge({type}: {type?: string}) {
   return <span className={`rounded px-2 py-1 text-[10px] font-semibold ${style}`}>{type ?? '—'}</span>;
 }
 
-function TokenHistory({chain, address, token, entry}: {chain: string; address: string; token: string; entry: SmartMoneyHolding}) {
+function TokenHistory({chain, address, token, entry, variant}: {chain: string; address: string; token: string; entry: SmartMoneyHolding; variant: 'open'|'closed'}) {
   const getKey = (index: number, previous: SmartMoneyTokenTrades | null) => index > 0 && !previous?.next_cursor ? null : ['smart-token-trades', chain, address, token, index === 0 ? '' : previous!.next_cursor!] as const;
   const history = useSWRInfinite(getKey, async ([, c, wallet, asset, cursor]) => (await getSmartMoneyTokenTrades(c, wallet, asset, cursor)).data,
     {revalidateOnFocus: false, shouldRetryOnError: false});
   const rows = history.data?.flatMap((page) => page.list ?? []) ?? [];
   return <div className="border-t border-border bg-background/40 p-4">
-    <div className="mb-3 flex flex-wrap gap-6 text-xs"><span>当前市值 <b>{money(entry.usd_value)}</b></span><span>总盈亏 <b className={tone(entry.total_profit)}>{money(entry.total_profit)}</b></span><span>ROI <b className={tone(entry.total_profit_pnl)}>{ratio(entry.total_profit_pnl)}</b></span><span>生涯买入 <b>{money(entry.history_bought_cost)}</b></span><span>生涯均价 <b>{price(entry.avg_bought_price)}</b></span></div>
+    <div className="mb-3 flex flex-wrap gap-6 text-xs"><span>当前持仓价值 <b>{money(entry.usd_value)}</b></span><span>总盈亏 <b className={tone(entry.total_profit)}>{money(entry.total_profit)}</b></span><span>总市值 <SmartMoneyTokenFdv chain={entry.chain || chain} address={token} /></span>{variant === 'closed' ? <span title="平均持仓成本乘以采集时点总供应量，并非历史买入时市值">平均买入市值 <b>{money(entry.avg_cost_market_cap_usd)}</b></span> : null}<span>累积买入 <b>{money(entry.history_bought_cost)}</b></span><span>买入均价 <b>{price(entry.avg_bought_price)}</b></span>{variant === 'closed' ? <><span>累积卖出 <b>{money(entry.history_sold_income)}</b></span><span>累积卖出份额 <b>{qty(entry.history_sold_amount)}</b></span><span title="累积卖出金额 ÷ 累积卖出份额（USD/枚）">卖出均价 <b>{price(averageSellPrice(entry.history_sold_income, entry.history_sold_amount))}</b></span></> : null}</div>
     {history.error ? <p className="py-4 text-sm text-down">交易历史加载失败。<button onClick={() => void history.mutate()} className="ml-2 underline">重试</button></p> : null}
     {history.isLoading ? <p className="py-4 text-sm text-muted">正在加载该 Token 的交易历史…</p> : null}
     {!history.isLoading && !history.error && rows.length === 0 ? <p className="py-4 text-sm text-muted">该 Token 暂无交易历史。</p> : null}
@@ -48,9 +54,10 @@ function TokenHistory({chain, address, token, entry}: {chain: string; address: s
 
 function HoldingsTable({list, variant, chain, address}: {list: SmartMoneyHolding[]; variant: 'open'|'closed'; chain: string; address: string}) {
   const [expanded, setExpanded] = useState<string>();
-  return <div className="overflow-x-auto"><table className="w-full min-w-[980px] text-left text-xs"><thead className="text-muted"><tr><th className="p-3">Token</th><th className="p-3 text-right">持仓量</th><th className="p-3 text-right">市值</th><th className="p-3 text-right">成本</th><th className="p-3 text-right">已实现</th><th className="p-3 text-right">未实现</th><th className="p-3 text-right">总盈亏</th><th className="p-3 text-right">{variant === 'open' ? '最近活跃' : '清仓时间'}</th></tr></thead><tbody>{list.map((entry, index) => {
+  return <div className="overflow-x-auto"><table className="w-full min-w-[980px] text-left text-xs"><thead className="text-muted"><tr><th className="p-3">Token</th><th className="min-w-[130px] px-6 py-3" aria-label={variant === 'closed' ? '总盈亏与ROI' : '当前持仓价值与ROI'} />{variant === 'open' ? <th className="p-3 text-right">持仓量</th> : null}<th className="p-3 text-right">已实现</th><th className="p-3 text-right">未实现</th><th className="p-3 text-right">总盈亏</th></tr></thead><tbody>{list.map((entry, index) => {
+    const roi = holdingRoi(entry.total_profit, entry.history_bought_cost);
     const token = entry.token_address ?? ''; const open = token !== '' && expanded === token;
-    return <Fragment key={`${token}:${index}`}><tr onClick={() => token && setExpanded(open ? undefined : token)} className="cursor-pointer border-t border-border hover:bg-surface-2/50"><td className="p-3"><div className="flex items-center gap-2"><span className={`text-muted transition ${open ? 'rotate-90' : ''}`}>›</span><Token entry={entry} /></div></td><td className="p-3 text-right font-mono">{qty(entry.balance)}</td><td className="p-3 text-right font-mono">{money(entry.usd_value)}</td><td className="p-3 text-right font-mono">{money(entry.accu_cost)}</td><td className={`p-3 text-right font-mono ${tone(entry.realized_profit)}`}>{money(entry.realized_profit)}<p className="text-[10px]">{ratio(entry.realized_profit_pnl)}</p></td><td className={`p-3 text-right font-mono ${tone(entry.unrealized_profit)}`}>{money(entry.unrealized_profit)}<p className="text-[10px]">{ratio(entry.unrealized_profit_pnl)}</p></td><td className={`p-3 text-right font-mono font-semibold ${tone(entry.total_profit)}`}>{money(entry.total_profit)}<p className="text-[10px]">{ratio(entry.total_profit_pnl)}</p></td><td className="p-3 text-right text-muted">{when(variant === 'open' ? entry.last_active_at : entry.end_holding_at)}</td></tr>{open ? <tr><td colSpan={8} className="p-0"><TokenHistory chain={chain} address={address} token={token} entry={entry} /></td></tr> : null}</Fragment>;
+    return <Fragment key={`${token}:${index}`}><tr onClick={() => token && setExpanded(open ? undefined : token)} className="cursor-pointer border-t border-border hover:bg-surface-2/50"><td className="p-3"><div className="flex items-center gap-2"><span className={`text-muted transition ${open ? 'rotate-90' : ''}`}>›</span><Token entry={entry} chain={chain} showAverage={variant === 'open'} tradeTime={variant === 'closed' ? when(entry.last_active_at) : undefined} /></div></td><td className="min-w-[130px] px-6 py-3 text-right font-mono font-semibold"><div className="flex flex-col items-end gap-1"><span title={variant === 'closed' ? '总盈亏（USD）' : '当前持仓价值（USD）'} className={`whitespace-nowrap ${variant === 'closed' ? tone(entry.total_profit) : 'text-foreground'}`}>{money(variant === 'closed' ? entry.total_profit : entry.usd_value)}</span><span title="ROI：总盈亏 ÷ 生涯累计买入成本" className={`text-[10px] ${roi.direction > 0 ? 'text-up' : roi.direction < 0 ? 'text-down' : 'text-muted'}`}>{roi.text}</span></div></td>{variant === 'open' ? <td className="p-3 text-right font-mono">{qty(entry.balance)}</td> : null}<td className={`p-3 text-right font-mono ${tone(entry.realized_profit)}`}>{money(entry.realized_profit)}<p className="text-[10px]">{ratio(entry.realized_profit_pnl)}</p></td><td className={`p-3 text-right font-mono ${tone(entry.unrealized_profit)}`}>{money(entry.unrealized_profit)}<p className="text-[10px]">{ratio(entry.unrealized_profit_pnl)}</p></td><td className={`p-3 text-right font-mono font-semibold ${tone(entry.total_profit)}`}>{money(entry.total_profit)}</td></tr>{open ? <tr><td colSpan={variant === 'open' ? 6 : 5} className="p-0"><TokenHistory chain={chain} address={address} token={token} entry={entry} variant={variant} /></td></tr> : null}</Fragment>;
   })}</tbody></table></div>;
 }
 
@@ -68,7 +75,7 @@ export function SmartMoneyProfile({chain, address}: {chain: string; address: str
   return <div className="space-y-5">
     <a href="/leaderboard" className="text-sm text-muted hover:text-foreground">← 返回榜单</a>
     <header className="rounded-xl border border-border bg-surface p-5"><div className="flex items-center gap-2"><span className="rounded-full bg-accent/10 px-2 py-1 text-xs font-semibold text-accent">Smart Money</span><span className="text-xs text-muted">{chainName(chain)}</span></div><h1 className="mt-3 font-mono text-lg font-semibold">{shortAddr(address, 10, 8)}</h1><p className="break-all text-xs text-muted">{address}</p></header>
-    <section className="grid gap-3 sm:grid-cols-2"><div className="rounded-xl border border-border bg-surface p-4"><p className="text-xs text-muted">总盈亏</p><p className={`mt-2 font-mono text-xl font-semibold ${tone(holdings.data?.total_profit)}`}>{money(holdings.data?.total_profit)}</p></div><div className="rounded-xl border border-border bg-surface p-4"><p className="text-xs text-muted">盈亏比</p><p className={`mt-2 font-mono text-xl font-semibold ${tone(holdings.data?.total_profit_ratio)}`}>{ratio(holdings.data?.total_profit_ratio)}</p></div></section>
+    <SmartMoneyPnlSummary key={`${chain}:${address}`} data={holdings.data?.pnl_windows} />
     <div className="flex items-center justify-between gap-3"><div className="flex rounded-lg border border-border bg-surface p-1"><button onClick={() => setTab('holdings')} className={`rounded-md px-4 py-2 text-sm ${tab === 'holdings' ? 'bg-surface-2 text-foreground' : 'text-muted'}`}>持仓 {(holdings.data?.open?.length ?? 0) + (holdings.data?.closed?.length ?? 0)}</button><button onClick={() => setTab('trades')} className={`rounded-md px-4 py-2 text-sm ${tab === 'trades' ? 'bg-surface-2 text-foreground' : 'text-muted'}`}>交易 {trades.data?.list?.length ?? 0}</button></div><button onClick={() => void active.mutate()} disabled={active.isValidating} className="text-sm text-accent disabled:opacity-50">{active.isValidating ? '刷新中…' : '刷新'}</button></div>
     <section className="overflow-hidden rounded-xl border border-border bg-surface">
       {active.error ? <p className="p-5 text-sm text-down">数据加载失败：{active.error instanceof Error ? active.error.message : '未知错误'}</p> : null}

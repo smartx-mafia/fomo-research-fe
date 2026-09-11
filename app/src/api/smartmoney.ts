@@ -2,6 +2,10 @@
 import {call} from './envelope';
 
 export type SmartMoneyHolding = {
+  chain?: string;
+  launchpad?: string;
+  /** Average holding cost × collected total supply (FDV), decimal USD; empty means unavailable. */
+  avg_cost_market_cap_usd?: string;
   token_address?: string;
   symbol?: string;
   name?: string;
@@ -14,6 +18,8 @@ export type SmartMoneyHolding = {
   accu_amount?: string;
   history_bought_amount?: string;
   history_bought_cost?: string;
+  history_sold_amount?: string;
+  history_sold_income?: string;
   avg_bought_price?: string;
   avg_cost_price?: string;
   realized_profit?: string;
@@ -33,8 +39,16 @@ export type SmartMoneyHoldings = {
   address: string;
   total_profit?: string;
   total_profit_ratio?: string;
+  realized_profit?: string;
+  pnl_windows?: SmartMoneyPnlWindow[];
   open?: SmartMoneyHolding[];
   closed?: SmartMoneyHolding[];
+};
+
+export type SmartMoneyPnlWindow = {
+  window: string;
+  total_profit?: string;
+  realized_profit?: string;
 };
 
 export type SmartMoneyTrade = {
