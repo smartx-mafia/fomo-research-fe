@@ -35,12 +35,14 @@ function result(token: TokenRef, favorite = false) {
 }
 
 function Probe({token, withToggle = false}: {token: TokenRef; withToggle?: boolean}) {
-  const {retainMetadata, metadataMap, statusMap, toggle} = useFavorites();
+  const {retainMetadata, metadataMap, statusMap, badgeFavoriteMap, personalReadyMap, toggle} = useFavorites();
   useEffect(() => retainMetadata(token), [retainMetadata, token]);
   const key = tokenKey(token.chain, token.address)!;
   return <div>
     <span data-testid={`meta-${token.address}`}>{metadataMap[key]?.status ?? 'none'}</span>
     <span data-testid={`fav-${token.address}`}>{String(statusMap[key] === true)}</span>
+    <span data-testid={`badge-fav-${token.address}`}>{String(badgeFavoriteMap[key] === true)}</span>
+    <span data-testid={`personal-ready-${token.address}`}>{String(personalReadyMap[key] === true)}</span>
     {withToggle ? <button type="button" onClick={() => void toggle(token.chain, token.address)}>toggle</button> : null}
   </div>;
 }
@@ -52,9 +54,21 @@ function BatchProbe({tokens}: {tokens: TokenRef[]}) {
 }
 
 function PrimeProbe({token}: {token: TokenRef}) {
-  const {primeFavoriteStatus, statusMap} = useFavorites();
+  const {primeFavoriteStatus, statusMap, badgeFavoriteMap, personalReadyMap} = useFavorites();
   const key = tokenKey(token.chain, token.address)!;
-  return <><button type="button" onClick={() => primeFavoriteStatus([token])}>prime</button><span data-testid="primed">{String(statusMap[key] === true)}</span></>;
+  return <><button type="button" onClick={() => primeFavoriteStatus([token])}>prime</button>
+    <span data-testid="primed">{String(statusMap[key] === true)}</span>
+    <span data-testid="prime-badge">{String(badgeFavoriteMap[key] === true)}</span>
+    <span data-testid="prime-ready">{String(personalReadyMap[key] === true)}</span></>;
+}
+
+function LegacyStatusProbe({token}: {token: TokenRef}) {
+  const {ensureStatus, statusMap, badgeFavoriteMap, personalReadyMap} = useFavorites();
+  const key = tokenKey(token.chain, token.address)!;
+  useEffect(() => ensureStatus([token]), [ensureStatus, token]);
+  return <><span data-testid="legacy-status">{String(statusMap[key] === true)}</span>
+    <span data-testid="legacy-badge">{String(badgeFavoriteMap[key] === true)}</span>
+    <span data-testid="legacy-ready">{String(personalReadyMap[key] === true)}</span></>;
 }
 
 describe('FavoritesProvider metadata hydration', () => {
@@ -156,7 +170,19 @@ describe('FavoritesProvider metadata hydration', () => {
     render(<FavoritesProvider><PrimeProbe token={token} /></FavoritesProvider>);
     fireEvent.click(screen.getByRole('button', {name: 'prime'}));
     expect(screen.getByTestId('primed').textContent).toBe('true');
+    expect(screen.getByTestId('prime-badge').textContent).toBe('false');
+    expect(screen.getByTestId('prime-ready').textContent).toBe('false');
     expect(mocks.favoriteStatus).not.toHaveBeenCalled();
+  });
+
+  it('does not let the legacy WS favorite status source authorize an avatar badge', async () => {
+    mocks.session = {jwt: 'jwt'};
+    mocks.favoriteStatus.mockResolvedValue({data: {results: [{chain: 'bsc', address: '0xa', is_favorited: true}]}});
+    const token = {chain: 'bsc', address: '0xa'};
+    render(<FavoritesProvider><LegacyStatusProbe token={token} /></FavoritesProvider>);
+    await waitFor(() => expect(screen.getByTestId('legacy-status').textContent).toBe('true'));
+    expect(screen.getByTestId('legacy-badge').textContent).toBe('false');
+    expect(screen.getByTestId('legacy-ready').textContent).toBe('false');
   });
 
   it('renders and removes a known Watchlist favorite correctly on the first frame', async () => {
@@ -168,6 +194,7 @@ describe('FavoritesProvider metadata hydration', () => {
     fireEvent.click(button);
     await waitFor(() => expect(mocks.removeFavorite).toHaveBeenCalledTimes(1));
     expect(mocks.addFavorite).not.toHaveBeenCalled();
+    await waitFor(() => expect(button.textContent).toBe('☆'));
   });
 });
 

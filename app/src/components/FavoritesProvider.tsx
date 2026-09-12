@@ -47,6 +47,8 @@ export type ToggleResult = {ok: true; favorited: boolean; changed: boolean} | {o
 
 type FavoritesCtx = {
   statusMap: Record<string, boolean>;
+  /** Favorite state accepted from canonical token metadata or a local mutation; badges read only this map. */
+  badgeFavoriteMap: Record<string, boolean>;
   personalReadyMap: Record<string, boolean>;
   metadataMap: Record<string, TokenMetadataState>;
   loading: boolean;
@@ -77,11 +79,13 @@ export function useOptionalTokenContext(): FavoritesCtx | null {
 export function FavoritesProvider({children}: {children: ReactNode}) {
   const session = useSession();
   const [statusMap, setStatusMapState] = useState<Record<string, boolean>>({});
+  const [badgeFavoriteMap, setBadgeFavoriteMapState] = useState<Record<string, boolean>>({});
   const [personalReadyMap, setPersonalReadyMap] = useState<Record<string, boolean>>({});
   const [metadataMap, setMetadataMapState] = useState<Record<string, TokenMetadataState>>({});
   const [loading, setLoading] = useState(false);
 
   const statusMapRef = useRef(statusMap);
+  const badgeFavoriteMapRef = useRef(badgeFavoriteMap);
   const metadataMapRef = useRef(metadataMap);
   const jwtRef = useRef<string | undefined>(session?.jwt);
   const viewerGenerationRef = useRef(0);
@@ -106,6 +110,7 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
     queriedStatusRef.current = new Set();
     personalGenerationRef.current = new Map();
     statusMapRef.current = EMPTY_BOOLEAN_MAP;
+    badgeFavoriteMapRef.current = EMPTY_BOOLEAN_MAP;
     pendingViewerResetRef.current = true;
   }
 
@@ -113,6 +118,14 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
     setStatusMapState((current) => {
       const next = update(current);
       statusMapRef.current = next;
+      return next;
+    });
+  }, []);
+
+  const setBadgeFavoriteMap = useCallback((update: (current: Record<string, boolean>) => Record<string, boolean>) => {
+    setBadgeFavoriteMapState((current) => {
+      const next = update(current);
+      badgeFavoriteMapRef.current = next;
       return next;
     });
   }, []);
@@ -179,6 +192,7 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
             setMetadataMap((current) => ({...current, ...updates}));
             if (Object.keys(favoriteUpdates).length > 0) {
               setStatusMap((current) => ({...current, ...favoriteUpdates}));
+              setBadgeFavoriteMap((current) => ({...current, ...favoriteUpdates}));
             }
             if (Object.keys(personalReadyUpdates).length > 0) {
               setPersonalReadyMap((current) => ({...current, ...personalReadyUpdates}));
@@ -244,14 +258,12 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
   }, [ensureMetadata]);
 
   const primeFavoriteStatus = useCallback((tokens: TokenRef[]) => {
-    const generation = viewerGenerationRef.current;
     const keys: string[] = [];
     for (const token of tokens) {
       const ref = normalizeTokenRef(token.chain, token.address);
       if (!ref) continue;
       const key = tokenKey(ref.chain, ref.address)!;
       queriedStatusRef.current.add(key);
-      personalGenerationRef.current.set(key, generation);
       keys.push(key);
       if (statusMapRef.current[key] !== true) {
         mutationVersionRef.current.set(key, (mutationVersionRef.current.get(key) ?? 0) + 1);
@@ -264,21 +276,16 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
       statusMapRef.current = next;
       setStatusMapState(next);
     }
-    setPersonalReadyMap((current) => {
-      if (keys.every((key) => current[key] === true)) return current;
-      const next = {...current};
-      for (const key of keys) next[key] = true;
-      return next;
-    });
   }, [setStatusMap]);
 
   useEffect(() => {
     if (!pendingViewerResetRef.current) return;
     pendingViewerResetRef.current = false;
     setStatusMap(() => ({}));
+    setBadgeFavoriteMap(() => ({}));
     setPersonalReadyMap({});
     ensureMetadata([...observedMetadataRef.current.values()].map((entry) => entry.ref));
-  }, [session?.jwt, ensureMetadata, setStatusMap]);
+  }, [session?.jwt, ensureMetadata, setBadgeFavoriteMap, setStatusMap]);
 
   useEffect(() => {
     const refresh = () => {
@@ -351,6 +358,7 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
     mutationVersionRef.current.set(key, version);
     activeMutationRef.current.set(key, marker);
     setStatusMap((current) => ({...current, [key]: !currently}));
+    setBadgeFavoriteMap((current) => ({...current, [key]: !currently}));
     const promise = (async (): Promise<ToggleResult> => {
       try {
         const response = currently
@@ -368,6 +376,12 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
           next[normalizedKey] = favorited;
           return next;
         });
+        setBadgeFavoriteMap((current) => {
+          const next = {...current};
+          delete next[key];
+          next[normalizedKey] = favorited;
+          return next;
+        });
         queriedStatusRef.current.add(normalizedKey);
         personalGenerationRef.current.set(normalizedKey, generation);
         setPersonalReadyMap((current) => ({...current, [normalizedKey]: true}));
@@ -376,6 +390,7 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
         const current = activeMutationRef.current.get(key) === marker && generation === viewerGenerationRef.current && bearer === jwtRef.current;
         if (!current) return {ok: false, code: 0, message: 'Session changed before the favorite update completed'};
         setStatusMap((values) => ({...values, [key]: currently}));
+        setBadgeFavoriteMap((values) => ({...values, [key]: currently}));
         if (error instanceof ApiError) {
           if (error.code === 400000) {
             clearSite();
@@ -398,13 +413,17 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
     })();
     mutationPromiseRef.current.set(key, promise);
     return promise;
-  }, [setStatusMap]);
+  }, [setBadgeFavoriteMap, setStatusMap]);
 
   const viewerMatches = !pendingViewerResetRef.current;
   const visibleStatusMap = viewerMatches ? statusMap : EMPTY_BOOLEAN_MAP;
+  const visibleBadgeFavoriteMap = viewerMatches ? badgeFavoriteMap : EMPTY_BOOLEAN_MAP;
   const visiblePersonalReadyMap = viewerMatches ? personalReadyMap : EMPTY_BOOLEAN_MAP;
-  const value = useMemo(() => ({statusMap: visibleStatusMap, personalReadyMap: visiblePersonalReadyMap, metadataMap, loading, ensureStatus, ensureMetadata, retainMetadata, primeFavoriteStatus, toggle}),
-    [visibleStatusMap, visiblePersonalReadyMap, metadataMap, loading, ensureStatus, ensureMetadata, retainMetadata, primeFavoriteStatus, toggle]);
+  const value = useMemo(() => ({statusMap: visibleStatusMap, badgeFavoriteMap: visibleBadgeFavoriteMap,
+    personalReadyMap: visiblePersonalReadyMap, metadataMap, loading, ensureStatus, ensureMetadata,
+    retainMetadata, primeFavoriteStatus, toggle}),
+    [visibleStatusMap, visibleBadgeFavoriteMap, visiblePersonalReadyMap, metadataMap, loading, ensureStatus,
+      ensureMetadata, retainMetadata, primeFavoriteStatus, toggle]);
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
@@ -414,7 +433,8 @@ export function StarButton({chain, address, size = 'sm', knownFavorited = false}
   const session = useSession();
   const [hint, setHint] = useState<string | null>(null);
   const key = tokenKey(chain, address);
-  const on = knownFavorited || (key ? statusMap[key] === true : false);
+  const hasHydratedStatus = key ? Object.prototype.hasOwnProperty.call(statusMap, key) : false;
+  const on = hasHydratedStatus && key ? statusMap[key] === true : knownFavorited;
 
   async function onClick(event: React.MouseEvent) {
     event.preventDefault();

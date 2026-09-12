@@ -155,6 +155,6 @@ export function useTokenDisplay(chain: string, address: string) {
   const key = tokenKey(chain, address);
   const state = key ? context?.metadataMap[key] : undefined;
   const info = state?.status === 'ready' ? state.info : undefined;
-  return {info, isFavorited: key ? context?.statusMap[key] === true : false,
+  return {info, isFavorited: key ? context?.badgeFavoriteMap[key] === true : false,
     personalReady: key ? context?.personalReadyMap[key] === true : false, state};
 }

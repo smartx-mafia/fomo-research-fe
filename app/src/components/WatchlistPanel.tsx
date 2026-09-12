@@ -164,13 +164,13 @@ function WatchlistRows({items}: {items: FavoriteItem[]}) {
 }
 
 function WatchlistTokenCell({item, market}: {item: FavoriteItem; market?: ReturnType<typeof normalizeTokenMarket>}) {
-  const {info} = useTokenDisplay(item.chain, item.address);
+  const {info, isFavorited, personalReady} = useTokenDisplay(item.chain, item.address);
   const symbol = info?.symbol ?? market?.symbol ?? item.symbol;
   const name = info?.name ?? market?.name ?? item.name;
   return (
     // 路径式详情页在静态导出下无客户端路由，走整页加载经 _redirects 重写。
     <a href={`/token/${item.chain}/${item.address}`} className="flex items-center gap-2">
-      <TokenAvatarView info={info} isFavorited personalReady size={24} fallbackLogo={market?.logo}
+      <TokenAvatarView info={info} isFavorited={isFavorited} personalReady={personalReady} size={24} fallbackLogo={market?.logo}
         fallbackSymbol={market?.symbol ?? item.symbol} fallbackName={market?.name ?? item.name} />
       <div className="flex flex-col leading-tight">
         <span className="font-medium text-foreground">{symbol ?? shortAddr(item.address, 6, 4)}</span>
