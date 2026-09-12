@@ -14,10 +14,33 @@ function snapshot(address: string, buyers = 7): TokenOverview {
   const q = {state: 1, freshness: 1, source: 'codex.filterTokens', definition_version: 'overview-v1', observed_at_ms: Date.now()};
   return normalizeTokenOverview({
     chain: 'solana', address,
-    profile: {website: null, twitter: null, quality: q},
+    profile: {website: null, twitter: null, telegram: null, description: null, quality: q},
     activity: {volume_5m_usd: 0, buyers_1h: buyers, sellers_1h: 0, quality: q},
     holder_summary: {top10_percent: null, quality: {...q, source: 'codex.holders', state: 0}},
-    holder_intelligence: {dev_held_percent: 0, quality: q},
+    holder_intelligence: {
+      dev_held_percent: 0,
+      sniper_count: null,
+      sniper_held_percent: null,
+      insider_count: null,
+      insider_held_percent: null,
+      bundler_count: null,
+      bundler_held_percent: null,
+      suspicious_count: null,
+      suspicious_held_percent: null,
+      top10_percent: null,
+      quality: q,
+    },
+    risk: {result_is_scam: null, token_is_scam: null, potential_scam_reasons: [], quality: q},
+    contract_status: {
+      mint_authority: null,
+      mintable_valid: null,
+      freeze_authority: null,
+      freezable_valid: null,
+      b20_transfer_paused: null,
+      b20_mint_paused: null,
+      b20_burn_paused: null,
+      quality: q,
+    },
     trading_route_display: {label: null, kind: 'display_only', status: 'unavailable'},
   }, 'solana', address);
 }

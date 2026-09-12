@@ -8,16 +8,24 @@ The new section uses only `GET /v1/tokens/{chain}/{address}/overview` on the con
 
 | UI | Field / meaning |
 |---|---|
-| Website, X / Twitter | `profile.website`, `profile.twitter`; safe external links, hidden when unavailable |
+| Website, X / Twitter, Telegram | `profile.website`, `profile.twitter`, `profile.telegram`; HTTP(S)-only external links, hidden when unavailable |
+| About | `profile.description`; bounded untrusted text rendered as text, never source HTML |
 | Volume · 5m | `activity.volume_5m_usd`; total buy + sell USD volume, source-pair scope |
 | Buyers / Sellers · 1h | `activity.buyers_1h`, `activity.sellers_1h`; distinct addresses, not trade counts |
-| Top 10 holders | `holder_summary.top10_percent`; already 0–100, not multiplied again |
+| Holder intelligence | `holder_intelligence.dev_held_percent`, Sniper/Insider/Bundler/Suspicious counts and held percentages; Suspicious is Codex's deduplicated value, not a client-side sum |
+| Top 10 holders | `holder_intelligence.top10_percent`; direct Codex `filterTokens` value, already 0–100 and not multiplied again. The legacy `holder_summary` value is not substituted or merged in this UI |
+| Token risk | Nullable `risk.result_is_scam`, `risk.token_is_scam` and `risk.potential_scam_reasons`; explicit scam takes visual priority over potential-risk reasons |
+| Contract status | Mint/Freeze authority plus validity, and nullable B20 current pause states. B20 values describe “Currently paused”, not pausable capability |
 | Trading route | Explicit `display_only` label only; not a quote, execution route, or default Jupiter assertion |
 | Contract | Current route token address, with copy action |
 
-Unknown/invalid numbers remain null and render as `—`; reported zero renders as `0` or `$0`. Source, version, quality and original observation time gate displayed data. Profile/activity older than 60 seconds are marked “Older snapshot”; all cached metric groups expire at 300 seconds, including during refresh failures. Holder summaries remain usable for less than 300 seconds. No ATH/ATL, risk labels, taxes, unsupported window selectors or placeholder facts are introduced.
+Unknown/invalid numbers remain null and render as `—`; reported zero renders as `0` or `$0`, and explicit false remains false. Source, version, quality and original observation time gate displayed data. Profile, activity, holder intelligence, risk and contract status older than 60 seconds are marked “Older snapshot”; all cached groups expire at 300 seconds, including during refresh failures. Missing v1 groups from an older backend normalize to unavailable instead of throwing.
 
-There is no fallback to holders, bars, market warmup, token lookup or trading endpoints inside Overview. The existing page's market snapshot, live stream and chart remain unchanged. Selecting the pre-existing Holders/Trades sections retains their existing behavior.
+Risk display is not a safety certification. `false` with no reasons produces no “safe” badge, and null means unknown rather than false. Known Codex potential-risk identifiers receive bounded user-facing text; unknown identifiers use a generic fallback. Authority absence is described only when the corresponding validity field is true. A false or missing validity field never becomes a “no authority” claim.
+
+No ATH/ATL, honeypot, tax, source-verification, community-verification, unsupported window selectors or placeholder facts are introduced. Those fields are not available in this version's existing data contract.
+
+There is no fallback to holders, bars, market warmup, token lookup or trading endpoints inside Overview. The expanded fields arrive in the same `/overview` response and add no frontend request, Codex request, waterfall or changed SWR key. The existing page's market snapshot, live stream, chart and trading controls remain unchanged. Selecting the pre-existing Holders/Trades sections retains their existing behavior.
 
 ## Request lifecycle
 
