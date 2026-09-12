@@ -27,13 +27,14 @@ export type OnboardingState = {
 };
 
 /** 在册的功能点码（顺序即引导顺序）。表会变长：新码到来时老版本只是不弹它。 */
-export const ONBOARDING_FEATURES = ['invite', 'nickname', 'x_bind'] as const;
+export const ONBOARDING_FEATURES = ['invite', 'nickname', 'x_bind', 'recommended_traders'] as const;
 export type OnboardingFeature = (typeof ONBOARDING_FEATURES)[number];
 
 export const ONBOARDING_FEATURE_LABELS: Record<string, string> = {
   invite: '邀请准入',
   nickname: '设置昵称',
   x_bind: '绑定 X（Twitter）账号',
+  recommended_traders: '关注推荐交易者',
 };
 
 /** GET /v1/user/onboarding —— 该弹哪个引导页（Required，豁免准入门禁）。 */

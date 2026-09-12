@@ -181,6 +181,12 @@ export async function call<T>(path: string, opts: CallOptions = {}): Promise<Cal
   }
 
   if (env.code !== 200) {
+    // 准入门禁（invite.md §5）：Required 且未豁免的端点对未准入账号一律回
+    // 430114 —— 那是新用户「登录后、绑定前」的正常态，不是故障。这里广播给
+    // 全局监听器（InviteGateListener）统一带去邀请页，各调用方不必各自处理。
+    if (env.code === 430114 && typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('smartx:invite-gate'));
+    }
     throw new ApiError(
       'business',
       env.code,

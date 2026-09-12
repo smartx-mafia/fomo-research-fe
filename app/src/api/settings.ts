@@ -3,7 +3,7 @@
  *
  * 四条贯穿性规则（settings-integration.md §0）：
  *
- * ① **22 个端点全部要求登录**，身份只取自 JWT。
+ * ① **26 个端点 + 推送设备 4 个，全部要求登录**，身份只取自 JWT。
  * ② **每条 POST 回整页**：改一个开关，回包就是那一页的最新全貌，直接
  *    覆盖本地状态，不用再打 GET。
  * ③ **限次是滚动窗口**（最近 24h / 30 天）：到上限回 420104，
@@ -154,6 +154,12 @@ export type Preferences = {
   /** 读自用户资料；改它走 POST /v1/user/language（本域不复制该端点）。 */
   language?: string;
   theme?: string;
+  /**
+   * X 好友自动关注的「被反向带入」开关（2026-09-10 起，默认 true）。
+   * 关掉后本人不再因为 X 好友后来加入而自动被关注；本人绑定 X 后首次导入的
+   * 正向自动关注不受它影响。关掉后回包里 "x_auto_follow":false 在场。
+   */
+  x_auto_follow?: boolean;
 };
 
 export function getPreferences(bearer: string, signal?: AbortSignal) {
@@ -163,6 +169,92 @@ export function getPreferences(bearer: string, signal?: AbortSignal) {
 /** POST /v1/settings/preferences/theme —— 取值 system / light / dark（大小写不敏感）。 */
 export function setTheme(bearer: string, theme: string) {
   return call<Preferences>('/v1/settings/preferences/theme', {method: 'POST', bearer, body: {theme}});
+}
+
+/** POST /v1/settings/preferences/x-auto-follow —— 回整页。 */
+export function setXAutoFollow(bearer: string, enabled: boolean) {
+  return call<Preferences>('/v1/settings/preferences/x-auto-follow', {method: 'POST', bearer, body: {enabled}});
+}
+
+// ── 推送设备（settings.md §2；路由都在 /v1/settings/devices 下） ────────────
+//
+// 两个 token 别混：push_token 是设备的推送地址（移动端经 expo-notifications
+// 的 getExpoPushTokenAsync() 取到），JWT 只放 Authorization 头标身份。
+// Web 端拿不到 Expo token，所以这里只暴露「列表 / 开关 / 删除」的管理面；
+// 注册（registerPushDevice）供移动端 WebView 复用同一份客户端代码。
+
+export type PushDevice = {
+  /** 设备行 id：认出「哪台是本机」靠它（比 token_masked 可靠），调 2.3/2.4 也要它。 */
+  id: number;
+  /** ios / android。 */
+  platform?: string;
+  device_name?: string;
+  manufacturer?: string;
+  model?: string;
+  os_version?: string;
+  app_version?: string;
+  /** 关掉的设备仍在列表里显示 false —— 与删除（从列表消失）是两回事。 */
+  enabled?: boolean;
+  /** 掩码，不是明文；只为人工核对。 */
+  token_masked?: string;
+  last_active_at?: number | string;
+  created_at?: number | string;
+};
+
+export type DeviceListReply = {
+  list?: PushDevice[];
+  /** 数字游标（下一页起点）；has_more=false 时不翻。 */
+  next_cursor?: number | string;
+  has_more?: boolean;
+};
+
+/**
+ * POST /v1/settings/devices/register —— 注册 / 刷新设备（幂等）。
+ * **push_token 必须是 getExpoPushTokenAsync() 的产物**，原生 APNs/FCM token
+ * 会被拒（100125）。同一设备换账号注册时旧账号那行自动解绑，前端无需处理。
+ */
+export function registerPushDevice(
+  bearer: string,
+  input: {
+    push_token: string;
+    platform: 'ios' | 'android';
+    device_name?: string;
+    manufacturer?: string;
+    model?: string;
+    os_version?: string;
+    app_version?: string;
+  },
+) {
+  return call<{id: number; created?: boolean}>('/v1/settings/devices/register', {
+    method: 'POST',
+    bearer,
+    body: input,
+  });
+}
+
+/** GET /v1/settings/devices —— limit 1..100（缺省 100，超过报错不截断）。 */
+export function listPushDevices(
+  bearer: string,
+  query: {cursor?: number | string; limit?: number; platform?: 'ios' | 'android'; status?: 'all' | 'enabled' | 'disabled'} = {},
+  signal?: AbortSignal,
+) {
+  const params = new URLSearchParams();
+  if (query.cursor !== undefined) params.set('cursor', String(query.cursor));
+  if (query.limit !== undefined) params.set('limit', String(query.limit));
+  if (query.platform) params.set('platform', query.platform);
+  if (query.status && query.status !== 'all') params.set('status', query.status);
+  const qs = params.toString();
+  return call<DeviceListReply>(`/v1/settings/devices${qs ? `?${qs}` : ''}`, {bearer, signal});
+}
+
+/** POST /v1/settings/devices/enabled —— 回改后的整条记录，直接拿去刷新该行。 */
+export function setDeviceEnabled(bearer: string, id: number, enabled: boolean) {
+  return call<PushDevice>('/v1/settings/devices/enabled', {method: 'POST', bearer, body: {id, enabled}});
+}
+
+/** POST /v1/settings/devices/delete —— 登出流程里应当调它。删除后重新注册会拿到新 id。 */
+export function deletePushDevice(bearer: string, id: number) {
+  return call<{deleted?: boolean}>('/v1/settings/devices/delete', {method: 'POST', bearer, body: {id}});
 }
 
 // ── 个人资料（Profile 页） ─────────────────────────────────────────────────

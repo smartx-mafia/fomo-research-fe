@@ -59,13 +59,13 @@ export const CODES: Record<number, CodeInfo> = {
     retryable: true,
   },
   430113: {
-    text: '邀请码名额已满',
-    advice: '换一个邀请码；该码只在绑定邀请码流程中出现，不要原样重试。',
+    text: 'bind：这枚邀请码的名额已满',
+    advice: '换一个邀请码，不要重试同一个；check 预检过也可能撞上（预检与提交之间有竞态）。',
     retryable: false,
   },
   430114: {
-    text: '账号已登录，但尚未完成邀请准入',
-    advice: '跳转邀请准入流程（开放期调 POST /v1/invite/bind）；不要重试，也不要当成登录失效。',
+    text: '账号已登录，但尚未完成邀请准入（准入门禁，2026-09-11 起是新用户常态）',
+    advice: '回到邀请页按 next_action 重走（/invite）；不要重试原请求，不要当成登录失效清 token。',
     retryable: false,
   },
   500097: {
@@ -144,9 +144,9 @@ export const CODES: Record<number, CodeInfo> = {
     retryable: true,
   },
 
-  // ── 邀请 / 准入域（invite.md，2026-09-06 错误码重排后） ────────────────
+  // ── 邀请 / 准入域（invite.md，2026-09-11 BREAKING 后） ────────────────
   100124: {
-    text: '邀请参数非法：码空 / 格式不合 / 以 @ 开头；limit>50 / 坏 cursor；或登录时码超 32 字节',
+    text: '邀请参数非法：码空 / 格式不合 / 以 @ 开头；list 的 limit>50 / 坏 cursor',
     advice: '本地校验与服务端分岔（前端 bug）或 cursor 已坏：改参数，坏 cursor 丢弃重拉首页。',
     retryable: false,
   },
@@ -156,13 +156,13 @@ export const CODES: Record<number, CodeInfo> = {
     retryable: false,
   },
   420105: {
-    text: '试码超限（登录带码 / bind 带码）',
-    advice: '按 metadata.retry_after_seconds（字符串，秒）倒计时，期间禁用提交。',
+    text: 'bind 带码试码超限',
+    advice: '按 metadata.retry_after_seconds（字符串，秒）倒计时，期间禁用提交与跳过。',
     retryable: false,
   },
   430111: {
-    text: '已绑定：已准入账号再调 bind，或已注册账号带入场码登录',
-    advice: '前者回到 /v1/invite/status 重判；后者去掉 entry_code 重登。',
+    text: 'bind：本账号已准入（并发请求 / 重复点击）',
+    advice: '不必展示：重新调 GET /v1/invite/status，会是 enter。上级永不改变。',
     retryable: false,
   },
   430112: {
@@ -171,44 +171,66 @@ export const CODES: Record<number, CodeInfo> = {
     retryable: false,
   },
   430115: {
-    text: '登录 / bind：不带邀请码且服务端没开默认绑定（登录时无 JWT）',
-    advice: '弹邀请码页，用**同一个 identity token** 带 invite_code 重调登录，不要重走 Privy。',
+    text: 'bind：不带码且服务端没开默认绑定',
+    advice: '隐藏「跳过」按钮，要求输入邀请码。',
     retryable: false,
   },
   430116: {
-    text: '登录：带了邀请码但不存在 / 不可作上级（无 JWT）',
-    advice: '输入框报错，核对后重输。',
+    text: '（作废）入场码域错误码 —— 2026-09-11 起入场码整套撤销，服务端不再返回',
+    advice: '收到它说明对面是没发新版的旧服务端：核对后端版本。',
     retryable: false,
   },
   430117: {
-    text: '独占期（或未开放期）且邮箱匹配不上冻结名单（无 JWT）',
-    advice: '弹入场码页，用同一个 identity token 带 entry_code 重调登录。',
+    text: '（作废）入场码域错误码 —— 2026-09-11 起入场码整套撤销，服务端不再返回',
+    advice: '收到它说明对面是没发新版的旧服务端：核对后端版本。',
     retryable: false,
   },
   430118: {
-    text: '入场码不存在 / 已撤销 / 已过期（服务端不区分）',
-    advice: '提示核对后重输，不自动重试。',
+    text: '（作废）入场码域错误码 —— 2026-09-11 起入场码整套撤销，服务端不再返回',
+    advice: '收到它说明对面是没发新版的旧服务端：核对后端版本。',
     retryable: false,
   },
   430119: {
-    text: '入场码对应的名额已被别的账号认领，已转人工',
-    advice: '引导联系客服，不重试。',
+    text: '（作废）入场码域错误码 —— 2026-09-11 起入场码整套撤销，服务端不再返回',
+    advice: '收到它说明对面是没发新版的旧服务端：核对后端版本。',
     retryable: false,
   },
   430120: {
-    text: '名额被运营冻结',
-    advice: '引导联系客服。',
+    text: 'bind：本账号状态异常（被冻结 / 审核中）',
+    advice: '引导联系客服，不重试。',
     retryable: false,
   },
   430121: {
     text: '独占期（含未开放期）内调 bind',
-    advice: '「当前阶段暂不可进入」，稍后重新调 /v1/invite/status。',
+    advice: '「当前阶段暂不可进入」，稍后重新调 GET /v1/invite/status（不要直接调 bind）。',
     retryable: false,
   },
   500109: {
     text: '给本人发邀请码时连续撞码（服务端 Redis set 异常）',
     advice: '提示稍后重试，不自动重放。',
     retryable: false,
+  },
+
+  // ── 推送设备（settings.md §2） ────────────────────────────────────────
+  100125: {
+    text: 'push_token 形态不合法',
+    advice: '确认用的是 getExpoPushTokenAsync() 的产物而不是 getDevicePushTokenAsync()（原生 token 形态不同）。不重试。',
+    retryable: false,
+  },
+  100126: {
+    text: '设备参数非法：platform 不是 ios/android，或 limit / cursor / status 越界',
+    advice: '改参数，不重试（limit 超 100 直接报错，不截断）。',
+    retryable: false,
+  },
+  200109: {
+    text: '设备不存在，或不是你的',
+    advice: '刷新设备列表后重试 UI 动作；不自动重试。',
+    retryable: false,
+  },
+  500110: {
+    text: '设备存储不可用（部署事实）',
+    advice: '稍后重试。',
+    retryable: true,
   },
 
   // ── 个人资料 / 设置域（user.md / settings.md） ──────────────────────────

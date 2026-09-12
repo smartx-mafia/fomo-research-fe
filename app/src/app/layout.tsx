@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import Link from "next/link";
 import { PrivyProviders } from "@/components/PrivyProviders";
 import { FavoritesProvider } from "@/components/FavoritesProvider";
+import { InviteGateListener } from "@/components/InviteGateListener";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -66,7 +67,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         </header>
         <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-4">
           <PrivyProviders>
-            <FavoritesProvider>{children}</FavoritesProvider>
+            <FavoritesProvider>
+              <InviteGateListener />
+              {children}
+            </FavoritesProvider>
           </PrivyProviders>
         </main>
         <footer className="border-t border-border px-4 py-3 text-center text-xs text-muted">

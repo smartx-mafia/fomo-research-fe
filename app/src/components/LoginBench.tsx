@@ -9,10 +9,17 @@ import {
 import Link from 'next/link';
 import {useCallback, useEffect, useRef, useState} from 'react';
 
-import {getUserInfo, login, type AuthMethod, type LoginCodes, type UserInfo} from '@/api/auth';
+import {getUserInfo, login, type AuthMethod, type UserInfo} from '@/api/auth';
 import {ApiError} from '@/api/envelope';
+import {
+  getInviteStatus,
+  normalizeNextAction,
+  type InviteInfoReply,
+  type InviteNextAction,
+  type InviteStatusReply,
+} from '@/api/invite';
 import {firstPrompt, getOnboarding, type OnboardingItem} from '@/api/onboarding';
-import {AdmissionGateCard} from '@/components/AdmissionGateCard';
+import {BindInviteCard} from '@/components/BindInviteCard';
 import {EmailOtpCard} from '@/components/EmailOtpCard';
 import {ErrorPanel} from '@/components/ErrorPanel';
 import {EventLog} from '@/components/EventLog';
@@ -31,30 +38,17 @@ import {clearSite, readSite, writeSite, type SiteSession} from '@/session/storag
 /** OAuth 是整页重定向，跳走前把上下文寄存在这里，回来才续得上日志。 */
 const OAUTH_PENDING = 'smartx-login-fe.oauth_pending';
 
-/**
- * 登录域的准入错误码（user.md §1 第 4 步的表）：这些码意味着「注册没发生、
- * 没有 JWT」，处置是**带码重调**（同一个 identity token），不是失败终点。
- */
-function admissionGateFor(code: number): {kind: 'invite' | 'entry'; reason: string} | null {
-  switch (code) {
-    case 430115:
-      return {kind: 'invite', reason: '后端：不带邀请码且服务端没开默认绑定（430115）。填邀请码后重调登录。'};
-    case 430116:
-      return {kind: 'invite', reason: '后端：邀请码不存在 / 不可作上级（430116）。核对后重输。'};
-    case 430113:
-      return {kind: 'invite', reason: '后端：这个邀请码的名额已满（430113）。请换一个码，不要重试同一个。'};
-    case 430117:
-      return {kind: 'entry', reason: '后端：当前阶段需要入场码（430117）。输入运营发给你的 16 位入场码。'};
-    case 430118:
-      return {kind: 'entry', reason: '后端：入场码不存在 / 已撤销 / 已过期（430118）。核对后重输。'};
-    default:
-      return null;
-  }
-}
+/** 邀请链接 ?invite_code= 的落地暂存：登录成功后预填进绑定卡。 */
+const PENDING_INVITE = 'smartx-login-fe.pending_invite';
 
 /**
  * 登录联调台（自 privy-login-demo 的 App.tsx 迁移；X 绑定拆到 /login/x）。
  * 路径不变量：OAuth / X 的回调都整页跳回 /login*，由 Privy SDK 在此收尾。
+ *
+ * 2026-09-11 起登录不再收码、不再因邀请域失败：任何阶段都建号发 JWT。
+ * 新用户流程在登录成功之后 —— GET /v1/invite/status 按 next_action 分支
+ * （invite.md §2.2）：enter 进 App / bind 绑定邀请码 / wait 倒计时等待。
+ * 引导判定（GET /v1/user/onboarding）继续只提示、不拦路。
  */
 export function LoginBench() {
   const {ready, authenticated, user, logout} = usePrivy();
@@ -70,16 +64,15 @@ export function LoginBench() {
   const [infoResult, setInfoResult] = useState<UserInfo | null>(null);
   const [storageFailed, setStorageFailed] = useState(false);
   const [oauthBusy, setOauthBusy] = useState(false);
-  /** 准入凭据门：后端回 430115/430116/430113/430117/430118 时设置。 */
-  const [gate, setGate] = useState<{kind: 'invite' | 'entry'; reason: string} | null>(null);
+  /** 登录成功后的准入判定（invite.md §2.2：每次登录成功都调 /status）。 */
+  const [admission, setAdmission] = useState<InviteStatusReply | null>(null);
+  /** 绑定成功时顺手缓存的邀请页数据（invite.md §4.4：回包本身就是邀请页数据）。 */
+  const [boundInfo, setBoundInfo] = useState<InviteInfoReply | null>(null);
+  /** bind_opens_at 的倒计时（wait 态）；到点后重新调 /status，不直接调 bind。 */
+  const [waitLeft, setWaitLeft] = useState(0);
   /** 登录成功后的引导判定（onboarding.md：冷启动调一次，取首个 should_prompt）。 */
   const [prompt, setPrompt] = useState<OnboardingItem | null>(null);
 
-  /**
-   * 带码重调时**复用**最近一次的 identity token 与 auth_method：
- * 重调不该重走 Privy（token 还在 1 小时有效期内，user.md §1）。
-   */
-  const idtRef = useRef<string | null>(null);
   const methodRef = useRef<AuthMethod>('AUTH_METHOD_EMAIL');
 
   const missing = missingConfig();
@@ -88,10 +81,37 @@ export function LoginBench() {
   // readSite() 会抛错。跨标签页同步也在这里一并接上。
   useEffect(() => {
     setSession(readSite());
+
+    // 邀请链接（/login?invite_code=xxxx）：暂存码、洗掉 URL。登录成功若还需
+    // 绑定，用它预填绑定卡；分享链接仍带在 /invite 页可复制。
+    const params = new URLSearchParams(window.location.search);
+    const fromLink = params.get('invite_code');
+    if (fromLink) {
+      sessionStorage.setItem(PENDING_INVITE, fromLink.trim().toLowerCase());
+      params.delete('invite_code');
+      const rest = params.toString();
+      history.replaceState(null, '', window.location.pathname + (rest ? `?${rest}` : ''));
+      log.push('info', '收到邀请链接的邀请码', '登录成功后将在绑定步骤预填');
+    }
+
     const onStorage = () => setSession(readSite());
     window.addEventListener('storage', onStorage);
     return () => window.removeEventListener('storage', onStorage);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // wait 态倒计时：到点后**重新调 /status**（窗口可被运营改，不要直接调 bind）。
+  useEffect(() => {
+    const opensAt = Number(admission?.bind_opens_at ?? 0);
+    if (!opensAt || normalizeNextAction(admission?.next_action) !== 'wait') {
+      setWaitLeft(0);
+      return;
+    }
+    const tick = () => setWaitLeft(Math.max(0, opensAt - Math.floor(Date.now() / 1000)));
+    tick();
+    const iv = setInterval(tick, 1000);
+    return () => clearInterval(iv);
+  }, [admission]);
 
   // 同时有 EVM/Solana 钱包时 type 都是 wallet；去重避免重复 React key 与重复徽章。
   const linkedTypes = [...new Set((user?.linkedAccounts ?? []).map((a) => a.type))];
@@ -119,15 +139,12 @@ export function LoginBench() {
    *
    * **必须现取 identity token，不能用 useIdentityToken() 的渲染快照** ——
    * 闭包里那个串可能已过期，后端回 400100，排查方向会被带偏。
-   * 例外：带码重调（codes 非空）时复用 idtRef 里那份 —— 那正是准入分支
-   * 的设计（user.md §1：同一个 identity token 重调，不要重走 Privy）。
    */
   const exchange = useCallback(
-    async (method: AuthMethod, codes: LoginCodes = {}): Promise<void> => {
+    async (method: AuthMethod): Promise<void> => {
       setExchanging(true);
       setErr(null);
       setInfoResult(null);
-      setGate(null);
       methodRef.current = method;
       try {
         // 第二轮只为 400100 而存在，且只有一次：token 过期（重取能自愈）与
@@ -135,19 +152,7 @@ export function LoginBench() {
         for (let attempt = 0; attempt < 2; attempt++) {
           try {
             log.begin('换取本站 token');
-            let idt: string | null;
-            if (codes.inviteCode !== undefined || codes.entryCode !== undefined) {
-              idt = idtRef.current;
-              if (!idt) {
-                // 理论到不了：门只在一次失败登录之后出现，那时 idtRef 必有值。
-                setErr(new ApiError('network', 0, '缓存的 identity token 已丢失，请重新发起一次登录'));
-                return;
-              }
-              log.push('info', '用同一个 identity token 带码重调（不重走 Privy）');
-            } else {
-              idt = await getIdentityToken();
-              idtRef.current = idt;
-            }
+            const idt = await getIdentityToken();
             if (!idt) {
               const detail = authenticated
                 ? 'Privy 已登录却拿不到 identity token —— 多半是该 app 没开 identity token（Dashboard → User management → Authentication → Advanced → 「Return user data in an identity token」）'
@@ -156,7 +161,7 @@ export function LoginBench() {
               setErr(new ApiError('network', 0, `identity token 取不到（null）：${detail}`));
               return;
             }
-            const res = await login(method, idt, codes);
+            const res = await login(method, idt);
             const meta = {
               at: Date.now(),
               is_new: res.data.is_new,
@@ -170,37 +175,16 @@ export function LoginBench() {
             log.end(
               'ok',
               '换取本站 token',
+              // is_new 只说明「本次调用建了行」，不等于首次登录（webhook 可能抢先建号）。
               `identifier=${res.data.user.identifier} is_new=${String(res.data.is_new)}`,
               res.traceID,
             );
-            // 登录成功 ≠ 引导完成：invite.md §2.4 要求登录后判引导。
-            // 拉失败不拦使用（onboarding.md：查不出来时宁可少弹一次）。
-            try {
-              const ob = await getOnboarding(res.data.token);
-              const first = firstPrompt(ob.data.items);
-              setPrompt(first);
-              if (first) {
-                log.push('info', '引导判定', `首个待办：${first.feature}`);
-              }
-            } catch {
-              setPrompt(null);
-            }
+            await afterLogin(res.data.token);
             return;
           } catch (e) {
             const apiErr = e as ApiError;
             log.end('error', '换取本站 token', `${apiErr.code} ${apiErr.message}`, apiErr.traceID);
-
-            // 准入分支：这些码不是失败终点，弹码门后由用户带码重调。
-            const gateFor = admissionGateFor(apiErr.code);
-            if (gateFor) {
-              setGate(gateFor);
-              return;
-            }
-            // 已注册账号带入场码登录：认领只能发生在建号之前 —— 去掉码静默重登。
-            if (apiErr.kind === 'business' && apiErr.code === 430111 && codes.entryCode !== undefined) {
-              log.push('warn', '430111：该账号已注册，入场码用不上 —— 去掉入场码重调');
-              return await exchange(method);
-            }
+            // 2026-09-11 起登录不再有邀请域分支（430115~430119 已从登录消失）。
             const retriable =
               apiErr.kind === 'business' && apiErr.code === 400100 && attempt === 0;
             if (!retriable) {
@@ -214,8 +198,62 @@ export function LoginBench() {
         setExchanging(false);
       }
     },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [log, authenticated],
   );
+
+  /**
+   * 登录成功之后的两件事（顺序不敏感、互不拦路）：
+   * ① GET /v1/invite/status —— 按 next_action 分支（invite.md §2.2）；
+   * ② GET /v1/user/onboarding —— 只提示待办，不拦使用（查不出来宁可少弹）。
+   */
+  const afterLogin = useCallback(
+    async (jwt: string) => {
+      try {
+        const st = await getInviteStatus(jwt);
+        setAdmission(st.data);
+        setBoundInfo(null);
+        log.push(
+          'info',
+          '准入判定（GET /v1/invite/status）',
+          `next_action=${st.data.next_action} phase=${st.data.phase ?? ''}`,
+          {traceID: st.traceID},
+        );
+      } catch (e) {
+        const apiErr = e as ApiError;
+        setAdmission(null);
+        log.push('error', '准入判定失败', `${apiErr.code} ${apiErr.message}`, {traceID: apiErr.traceID});
+      }
+      try {
+        const ob = await getOnboarding(jwt);
+        const first = firstPrompt(ob.data.items);
+        setPrompt(first);
+        if (first) {
+          log.push('info', '引导判定', `首个待办：${first.feature}`);
+        }
+      } catch {
+        setPrompt(null);
+      }
+    },
+    [log],
+  );
+
+  /** 绑定成功（含 430111 并发）：重拉 /status 确认 enter。 */
+  const onBound = useCallback(
+    (_info: InviteInfoReply | null) => {
+      if (!session?.jwt) return;
+      sessionStorage.removeItem(PENDING_INVITE);
+      void afterLogin(session.jwt);
+    },
+    [session?.jwt, afterLogin, log],
+  );
+
+  /** wait 到点 / 手动重查：重新调 /status，不直接调 bind（invite.md §4.6）。 */
+  const recheckAdmission = useCallback(() => {
+    if (!session?.jwt) return;
+    log.push('info', '重新判定准入', '倒计时结束 / 手动刷新 → GET /v1/invite/status');
+    void afterLogin(session.jwt);
+  }, [session?.jwt, afterLogin, log]);
 
   async function fetchInfo() {
     if (!session) return;
@@ -240,7 +278,8 @@ export function LoginBench() {
     setSession(null);
     setInfoResult(null);
     setErr(null);
-    setGate(null);
+    setAdmission(null);
+    setBoundInfo(null);
     setPrompt(null);
     log.push('info', '已清除本站 token（Privy 会话保持不变）');
   }
@@ -252,7 +291,8 @@ export function LoginBench() {
     setSession(null);
     setInfoResult(null);
     setErr(null);
-    setGate(null);
+    setAdmission(null);
+    setBoundInfo(null);
     setPrompt(null);
     sessionStorage.removeItem(OAUTH_PENDING);
     // **不手删 privy: 开头的键** —— 那会让 SDK 的内存态与存储不一致。
@@ -268,6 +308,12 @@ export function LoginBench() {
       </div>
     );
   }
+
+  const nextAction: InviteNextAction | null = session
+    ? admission
+      ? normalizeNextAction(admission.next_action)
+      : null
+    : null;
 
   return (
     <div className="space-y-4">
@@ -290,7 +336,8 @@ export function LoginBench() {
       <header className="space-y-1">
         <h1 className="text-xl font-semibold">SmartX 登录联调台</h1>
         <p className="text-muted-foreground text-sm">
-          登录（=注册）→ identity token → POST /v1/auth/login → 本站 JWT（localStorage 保留）。
+          登录（=注册）→ identity token → POST /v1/auth/login → 本站 JWT（localStorage 保留）→ 按
+          /v1/invite/status 的 next_action 走准入。
         </p>
         <p className="text-muted-foreground font-mono text-[11px]">
           appId={PRIVY_APP_ID} · 后端={BUSINESS_ORIGIN_LABEL}
@@ -304,24 +351,47 @@ export function LoginBench() {
         </p>
       )}
 
-      {/* 准入凭据门：后端回 430115/430116/430113（邀请码）或 430117/430118（入场码）后出现。 */}
-      {gate && (
-        <AdmissionGateCard
-          kind={gate.kind}
-          reason={gate.reason}
-          busy={exchanging}
-          onSubmit={(code) =>
-            void exchange(
-              methodRef.current,
-              gate.kind === 'invite' ? {inviteCode: code} : {entryCode: code},
-            )
-          }
-          onSkip={() => void exchange(methodRef.current)}
+      {/* ── 准入分支（invite.md §2.2）：登录成功后唯一要看的字段 next_action ── */}
+      {session && nextAction === 'bind' && (
+        <BindInviteCard
+          bearer={session.jwt}
+          defaultBindEnabled={admission?.default_bind_enabled ?? null}
+          onBound={onBound}
+          onWait={recheckAdmission}
+          initialCode={typeof window !== 'undefined' ? sessionStorage.getItem(PENDING_INVITE) ?? '' : ''}
+          heading="还差一步：绑定邀请码（准入）"
         />
       )}
+      {session && nextAction === 'wait' && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">
+              准入绑定暂未开放
+              {admission?.phase && (
+                <span className="ml-2 rounded bg-amber-500/15 px-1.5 py-0.5 font-mono text-[11px] text-amber-500">
+                  阶段 {admission.phase}
+                </span>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            <p className="text-muted-foreground text-xs">
+              当前阶段还不能绑定上级。你可以浏览行情与搜索，任何写操作要等准入完成。
+            </p>
+            <p className="text-sm">
+              {waitLeft > 0
+                ? `绑定窗口将在 ${Math.floor(waitLeft / 3600)}h ${Math.floor((waitLeft % 3600) / 60)}m ${waitLeft % 60}s 后开放`
+                : '窗口应已开放 —— 点击下方按钮重新判定（不要直接重试绑定）。'}
+            </p>
+            <Button size="sm" variant="outline" onClick={recheckAdmission}>
+              重新判定准入
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
-      {/* 登录成功 ≠ 引导完成：invite.md §2.4，判引导在登录之后。 */}
-      {prompt && !gate && (
+      {/* 登录成功 ≠ 引导完成：onboarding.md，判引导在登录之后。 */}
+      {session && prompt && nextAction !== 'bind' && nextAction !== 'wait' && (
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2 text-base">
@@ -338,6 +408,35 @@ export function LoginBench() {
             <Link href="/onboarding">
               <Button size="sm">进入引导</Button>
             </Link>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* 准入完成：给一个明显的「进 App」出口。 */}
+      {session && nextAction === 'enter' && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex flex-wrap items-center gap-2 text-base">
+              会话有效
+              <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 font-mono text-[11px] text-emerald-500">
+                已准入{admission?.origin ? `（${admission.origin}）` : ''}
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-wrap items-center gap-3 text-sm">
+            <Link href="/">
+              <Button size="sm">进入发现页</Button>
+            </Link>
+            <Link href="/onboarding">
+              <Button size="sm" variant="outline">
+                引导页
+              </Button>
+            </Link>
+            {boundInfo?.invite_code && (
+              <span className="text-muted-foreground text-xs">
+                我的邀请码 {boundInfo.invite_code}（详情在邀请页）
+              </span>
+            )}
           </CardContent>
         </Card>
       )}

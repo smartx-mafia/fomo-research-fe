@@ -4,6 +4,7 @@ const {callMock} = vi.hoisted(() => ({callMock: vi.fn()}));
 vi.mock('./envelope', () => ({call: callMock}));
 
 import {
+  deletePushDevice,
   getAvatarHistory,
   getAvatarPresets,
   getNotificationSettings,
@@ -12,16 +13,20 @@ import {
   getSecuritySettings,
   getTradingSettings,
   importProfileFromX,
+  listPushDevices,
   recordKeyExport,
+  registerPushDevice,
   setAvatar,
   setBio,
   setCurrency,
+  setDeviceEnabled,
   setFaceId,
   setFollowingEnabled,
   setPushEnabled,
   setSlippage,
   setTheme,
   setTradeConfirmation,
+  setXAutoFollow,
   validateSlippage,
 } from './settings';
 
@@ -159,5 +164,79 @@ describe('profile aggregate / avatar / bio / x-import', () => {
       bearer: 'jwt',
       body: {fields: ['nickname', 'bio']},
     });
+  });
+});
+
+describe('push devices (settings.md §2) + x_auto_follow (§1.4)', () => {
+  beforeEach(() => callMock.mockReset());
+
+  it('registerPushDevice posts the full body to /v1/settings/devices/register', async () => {
+    callMock.mockResolvedValue({data: {id: 1024, created: true}});
+    const input = {
+      push_token: 'ExponentPushToken[a1b2c3d4e5f6g7h8i9j0]',
+      platform: 'ios' as const,
+      device_name: 'iPhone 15 Pro',
+      manufacturer: 'Apple',
+      model: 'iPhone16,1',
+      os_version: '17.5',
+      app_version: '1.2.0',
+    };
+    await registerPushDevice('jwt', input);
+    expect(callMock).toHaveBeenCalledWith('/v1/settings/devices/register', {
+      method: 'POST',
+      bearer: 'jwt',
+      body: input,
+    });
+  });
+
+  it('listPushDevices builds the query with cursor/limit/platform/status in order', async () => {
+    callMock.mockResolvedValue({data: {list: [], next_cursor: 1024, has_more: true}});
+    await listPushDevices('jwt', {cursor: 1024, limit: 100, platform: 'android', status: 'disabled'});
+    expect(callMock).toHaveBeenCalledWith('/v1/settings/devices?cursor=1024&limit=100&platform=android&status=disabled', {
+      bearer: 'jwt',
+      signal: undefined,
+    });
+  });
+
+  it('listPushDevices omits empty params, and status "all" is never sent (it is the server default)', async () => {
+    callMock.mockResolvedValue({data: {list: [], has_more: false}});
+    await listPushDevices('jwt', {status: 'all'});
+    expect(callMock).toHaveBeenLastCalledWith('/v1/settings/devices', {bearer: 'jwt', signal: undefined});
+    await listPushDevices('jwt');
+    expect(callMock).toHaveBeenLastCalledWith('/v1/settings/devices', {bearer: 'jwt', signal: undefined});
+    await listPushDevices('jwt', {limit: 50, status: 'enabled'});
+    expect(callMock).toHaveBeenLastCalledWith('/v1/settings/devices?limit=50&status=enabled', {
+      bearer: 'jwt',
+      signal: undefined,
+    });
+  });
+
+  it('setDeviceEnabled posts {id, enabled} and deletePushDevice posts {id}', async () => {
+    callMock.mockResolvedValue({data: {id: 7, enabled: false}});
+    await setDeviceEnabled('jwt', 7, false);
+    expect(callMock).toHaveBeenCalledWith('/v1/settings/devices/enabled', {
+      method: 'POST',
+      bearer: 'jwt',
+      body: {id: 7, enabled: false},
+    });
+    callMock.mockResolvedValue({data: {deleted: true}});
+    await deletePushDevice('jwt', 7);
+    expect(callMock).toHaveBeenCalledWith('/v1/settings/devices/delete', {
+      method: 'POST',
+      bearer: 'jwt',
+      body: {id: 7},
+    });
+  });
+
+  it('setXAutoFollow posts {enabled} and returns the whole preferences page', async () => {
+    const page = {language: 'en', theme: 'dark', x_auto_follow: false};
+    callMock.mockResolvedValue({data: page});
+    const res = await setXAutoFollow('jwt', false);
+    expect(callMock).toHaveBeenCalledWith('/v1/settings/preferences/x-auto-follow', {
+      method: 'POST',
+      bearer: 'jwt',
+      body: {enabled: false},
+    });
+    expect(res.data).toEqual(page); // 回整页 —— 调用方直接覆盖本地状态
   });
 });

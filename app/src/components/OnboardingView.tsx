@@ -5,16 +5,19 @@ import Link from 'next/link';
 import {useCallback, useEffect, useState} from 'react';
 
 import {ApiError} from '@/api/envelope';
-import {bindInvite, getInviteStatus, INVITE_CODE_RE, normalizeCode, type InviteStatusReply} from '@/api/invite';
+import {getInviteStatus, type InviteStatusReply} from '@/api/invite';
 import {
   firstPrompt,
   getOnboarding,
+  ONBOARDING_FEATURES,
   ONBOARDING_FEATURE_LABELS,
   skipOnboarding,
   type OnboardingItem,
 } from '@/api/onboarding';
 import {setNickname as setNicknameApi, validateNickname} from '@/api/user';
+import {BindInviteCard} from '@/components/BindInviteCard';
 import {ErrorPanel} from '@/components/ErrorPanel';
+import {RecommendedTradersCard} from '@/components/RecommendedTradersCard';
 import {Button} from '@/components/ui/button';
 import {Card, CardContent, CardHeader, CardTitle} from '@/components/ui/card';
 import {Input} from '@/components/ui/input';
@@ -26,13 +29,18 @@ import {useSession} from '@/session/storage';
  * 引导页（onboarding.md）：服务端说该弹哪个就处理哪个。
  *
  * 规则都在契约里、这里只做搬运：
- * - 取 items 里**第一个** should_prompt 的项，其余不弹；
- * - `invite` 不能 skip —— 它的「跳过」产品动作就是无码 bind（也是准入）；
+ * - 取 items 里**第一个** should_prompt 的项（firstPrompt），其余不弹；
+ * - `invite` 不能 skip —— 它的「跳过」产品动作就是无码 bind（也是准入），
+ *   复用与 /invite 页共用的 BindInviteCard；`default_bind_enabled` 来自
+ *   同一次 refresh() 里的 GET /v1/invite/status（true 才渲染「跳过」）；
  * - nickname / x_bind 的「以后再说」走 POST /v1/user/onboarding/skip，
- *   幂等、单向、没有撤销；
- * - 读到不认识的 feature 直接当作「没有待办」，不崩（新引导项上线时
- *   老版本只是暂时不弹）。
+ *   幂等、单向、没有撤销；recommended_traders 的 skip 在卡片的 CTA 里一并调；
+ * - 读到不认识的 feature 就跳过它，不要崩（onboarding.md §3）—— 但**不要
+ *   替用户 skip**：只提示「需要更新前端版本」，此时其余步骤卡都不渲染。
  */
+
+/** 在册功能点码集合（onboarding.md §3）：用来识别「老前端不认识的新引导项」。 */
+const KNOWN_FEATURES: ReadonlySet<string> = new Set(ONBOARDING_FEATURES);
 export function OnboardingView() {
   const session = useSession();
   const jwt = session?.jwt ?? null;
@@ -43,7 +51,6 @@ export function OnboardingView() {
   const [status, setStatus] = useState<InviteStatusReply | null>(null);
   const [err, setErr] = useState<ApiError | null>(null);
   const [busy, setBusy] = useState(false);
-  const [inviteCode, setInviteCode] = useState('');
   const [nickname, setNickname] = useState('');
 
   const xbind = useXBind(jwt, log);
@@ -71,7 +78,7 @@ export function OnboardingView() {
     try {
       const [ob, st] = await Promise.all([
         getOnboarding(jwt),
-        // 引导判定的风向标：admission_optional 与 phase 都从这里读（invite.md §3.3）。
+        // 引导判定的风向标：next_action 与 default_bind_enabled 都从这里读（invite.md §2.2）。
         getInviteStatus(jwt).catch((e: unknown) => {
           const apiErr = e as ApiError;
           if (apiErr.kind === 'business' && apiErr.code === 430114) return null; // 残留态，不是报错页
@@ -109,8 +116,6 @@ export function OnboardingView() {
   }
 
   const active = items ? firstPrompt(items) : null;
-  const inviteItem = items?.find((i) => i.feature === 'invite');
-  const xItem = items?.find((i) => i.feature === 'x_bind');
 
   /** 执行一个动作并重拉引导状态。写接口的回包不需要单独处理 —— 引导真源在 GET。 */
   const run = async (step: string, fn: () => Promise<unknown>) => {
@@ -128,9 +133,6 @@ export function OnboardingView() {
       await refresh();
     }
   };
-
-  const normalizedInvite = normalizeCode(inviteCode);
-  const inviteFormatOk = INVITE_CODE_RE.test(normalizedInvite);
 
   return (
     <div className="space-y-4">
@@ -172,57 +174,20 @@ export function OnboardingView() {
         </CardContent>
       </Card>
 
-      {/* ── 步骤 1：invite 准入 ── */}
-      {inviteItem && !inviteItem.done && inviteItem.should_prompt && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">① 邀请准入</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <p className="text-muted-foreground text-xs">
-              {status
-                ? `阶段 ${status.phase}` +
-                  (status.admission_optional ? ' · 当前不强制准入（bind 仍可主动绑上级）' : ' · 需要完成准入')
-                : '…'}
-            </p>
-            <div className="flex flex-wrap items-center gap-2">
-              <Input
-                value={inviteCode}
-                onChange={(e) => setInviteCode(e.target.value)}
-                placeholder="邀请码（8 位，可留空走默认）"
-                className="max-w-xs font-mono"
-                autoComplete="off"
-                spellCheck={false}
-              />
-              <Button
-                size="sm"
-                disabled={busy || (inviteCode.trim() !== '' && !inviteFormatOk)}
-                onClick={() =>
-                  void run('POST /v1/invite/bind（带码）', () =>
-                    bindInvite(jwt, inviteCode.trim() === '' ? undefined : normalizedInvite),
-                  )
-                }
-              >
-                {busy ? '绑定中…' : '绑定邀请码'}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                title="invite 的「跳过」= 无码 bind，也是准入（onboarding.md §2）"
-                onClick={() => void run('POST /v1/invite/bind（无码准入）', () => bindInvite(jwt))}
-              >
-                跳过（无码准入）
-              </Button>
-            </div>
-            {inviteCode.trim() !== '' && !inviteFormatOk && (
-              <p className="text-xs text-red-500">邀请码是 8 位小写字母数字（不收 @handle）</p>
-            )}
-            <p className="text-muted-foreground text-[11px]">
-              上级一次绑定永不改变；绑错的唯一补救是注销重來。默认绑定开着时无码跳过即准入。
-            </p>
-          </CardContent>
-        </Card>
+      {/* ── 步骤 1：invite 准入（复用 /invite 页的 BindInviteCard） ──
+          输入正则、逐码处置、Skip 只在 default_bind_enabled=true 时渲染等
+          契约义务全在 BindInviteCard 里；这里只喂 /status 的两个判定字段。
+          标题展示服务端算好的 next_action（invite.md §2.2：enter/bind/wait）。 */}
+      {active?.feature === 'invite' && (
+        <BindInviteCard
+          bearer={jwt}
+          // default_bind_enabled 只在 true 时渲染「跳过」；/status 没拉到（null）先不渲染。
+          defaultBindEnabled={status?.default_bind_enabled ?? null}
+          onBound={() => void refresh()}
+          onWait={() => void refresh()}
+          busy={busy}
+          heading={status ? `① 邀请准入 · 当前 next_action=${status.next_action}` : '① 邀请准入'}
+        />
       )}
 
       {/* ── 步骤 2：nickname ── */}
@@ -304,6 +269,28 @@ export function OnboardingView() {
                 </div>
               </>
             )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── 步骤 4：recommended_traders（social.md §5.4） ──
+          榜、单行关注、批量关注与 skip 全在 RecommendedTradersCard 里；
+          onDone 只负责重拉引导状态（真源在 GET /v1/user/onboarding）。 */}
+      {active?.feature === 'recommended_traders' && (
+        <RecommendedTradersCard bearer={jwt} busy={busy} onDone={() => void refresh()} />
+      )}
+
+      {/* ── 不认识的 feature（onboarding.md §3：跳过它、不当错误、不崩） ──
+          新引导项上线时老版本暂时处理不了：不替用户 skip（那是单向的），
+          只提示升级前端；此时上面四张步骤卡都不渲染。 */}
+      {active && !KNOWN_FEATURES.has(active.feature) && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">待更新的引导项</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-sm">
+            <p>这个引导项需要更新前端版本才能处理。清单里其余已完成 / 已跳过的项不受影响。</p>
+            <p className="font-mono text-xs text-muted-foreground">feature: {active.feature}</p>
           </CardContent>
         </Card>
       )}

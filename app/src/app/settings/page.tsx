@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 
+import {AccountDeletionCard} from '@/components/settings/AccountDeletionCard';
 import {SETTINGS_NAV} from '@/components/settings/SettingsNav';
 import {Button} from '@/components/ui/button';
 import {Card, CardContent, CardHeader, CardTitle} from '@/components/ui/card';
@@ -75,6 +76,9 @@ export default function SettingsPage() {
           </Button>
         </CardContent>
       </Card>
+
+      {/* Danger zone（user.md §4）：只在已登录时出现，两步确认后 POST /v1/user/delete。 */}
+      {session && <AccountDeletionCard />}
 
       <p className="text-muted-foreground px-1 text-[11px]">FOMO web · settings v1</p>
     </div>
