@@ -185,6 +185,34 @@ describe('FavoritesProvider metadata hydration', () => {
     expect(screen.getByTestId('legacy-ready').textContent).toBe('false');
   });
 
+  it('restores the canonical badge snapshot and rehydrates after a failed cross-source mutation', async () => {
+    mocks.session = {jwt: 'jwt'};
+    let settleMetadata!: (value: unknown) => void;
+    let rejectRemove!: (reason: unknown) => void;
+    const token = {chain: 'bsc', address: '0xa'};
+    mocks.batch
+      .mockImplementationOnce(() => new Promise((resolve) => { settleMetadata = resolve; }))
+      .mockResolvedValueOnce({data: {results: [result(token, false)]}, sentRequestID: 'rehydrated'});
+    mocks.removeFavorite.mockImplementationOnce(() => new Promise((_, reject) => { rejectRemove = reject; }));
+
+    render(<FavoritesProvider><PrimeProbe token={token} /><Probe token={token} withToggle /></FavoritesProvider>);
+    await waitFor(() => expect(mocks.batch).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole('button', {name: 'prime'}));
+    expect(screen.getByTestId('fav-0xa').textContent).toBe('true');
+    expect(screen.getByTestId('badge-fav-0xa').textContent).toBe('false');
+
+    fireEvent.click(screen.getByRole('button', {name: 'toggle'}));
+    await waitFor(() => expect(mocks.removeFavorite).toHaveBeenCalledTimes(1));
+    await act(async () => settleMetadata({data: {results: [result(token, false)]}, sentRequestID: 'during-mutation'}));
+    expect(screen.getByTestId('badge-fav-0xa').textContent).toBe('false');
+
+    await act(async () => rejectRemove(new Error('favorite store unavailable')));
+    await waitFor(() => expect(mocks.batch).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.getByTestId('personal-ready-0xa').textContent).toBe('true'));
+    expect(screen.getByTestId('fav-0xa').textContent).toBe('false');
+    expect(screen.getByTestId('badge-fav-0xa').textContent).toBe('false');
+  });
+
   it('renders and removes a known Watchlist favorite correctly on the first frame', async () => {
     mocks.session = {jwt: 'jwt'};
     mocks.removeFavorite.mockResolvedValue({data: {favorited: false, changed: true, chain: 'bsc', address: '0xa'}});

@@ -353,6 +353,8 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
     const existing = activeMutationRef.current.get(key);
     if (existing?.generation === generation) return mutationPromiseRef.current.get(key)!;
     const currently = statusMapRef.current[key] === true;
+    const hadBadgeFavorite = Object.prototype.hasOwnProperty.call(badgeFavoriteMapRef.current, key);
+    const previousBadgeFavorite = badgeFavoriteMapRef.current[key] === true;
     const version = (mutationVersionRef.current.get(key) ?? 0) + 1;
     const marker = {generation, version};
     mutationVersionRef.current.set(key, version);
@@ -390,7 +392,17 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
         const current = activeMutationRef.current.get(key) === marker && generation === viewerGenerationRef.current && bearer === jwtRef.current;
         if (!current) return {ok: false, code: 0, message: 'Session changed before the favorite update completed'};
         setStatusMap((values) => ({...values, [key]: currently}));
-        setBadgeFavoriteMap((values) => ({...values, [key]: currently}));
+        setBadgeFavoriteMap((values) => {
+          const next = {...values};
+          if (hadBadgeFavorite) next[key] = previousBadgeFavorite;
+          else delete next[key];
+          return next;
+        });
+        // A metadata response that arrived during the mutation deliberately skipped its
+        // personal value. Do not leave that generation marked fresh after the mutation failed.
+        personalGenerationRef.current.delete(key);
+        setPersonalReadyMap((values) => ({...values, [key]: false}));
+        ensureMetadata([ref]);
         if (error instanceof ApiError) {
           if (error.code === 400000) {
             clearSite();
@@ -413,7 +425,7 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
     })();
     mutationPromiseRef.current.set(key, promise);
     return promise;
-  }, [setBadgeFavoriteMap, setStatusMap]);
+  }, [ensureMetadata, setBadgeFavoriteMap, setStatusMap]);
 
   const viewerMatches = !pendingViewerResetRef.current;
   const visibleStatusMap = viewerMatches ? statusMap : EMPTY_BOOLEAN_MAP;
