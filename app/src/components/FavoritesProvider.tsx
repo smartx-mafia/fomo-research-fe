@@ -94,6 +94,7 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
   const observedMetadataRef = useRef<Map<string, {ref: TokenRef; count: number}>>(new Map());
   const pendingMetadataRef = useRef<Map<string, TokenRef>>(new Map());
   const inFlightMetadataRef = useRef<Set<string>>(new Set());
+  const forcedPersonalRefreshRef = useRef<Map<string, TokenRef>>(new Map());
   const personalGenerationRef = useRef<Map<string, number>>(new Map());
   const mutationVersionRef = useRef<Map<string, number>>(new Map());
   const activeMutationRef = useRef<Map<string, {generation: number; version: number}>>(new Map());
@@ -109,6 +110,7 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
     viewerGenerationRef.current += 1;
     queriedStatusRef.current = new Set();
     personalGenerationRef.current = new Map();
+    forcedPersonalRefreshRef.current = new Map();
     statusMapRef.current = EMPTY_BOOLEAN_MAP;
     badgeFavoriteMapRef.current = EMPTY_BOOLEAN_MAP;
     pendingViewerResetRef.current = true;
@@ -179,13 +181,24 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
                 updates[key] = {status: 'missing', checkedAt, retryAt: checkedAt + META_RETRY_MS};
               }
               if (generation === viewerGenerationRef.current) {
-                personalGenerationRef.current.set(key, generation);
-                personalReadyUpdates[key] = true;
                 const mutation = activeMutationRef.current.get(key);
-                if (result.status === TOKEN_META_STATUS_OK && mutation?.generation !== generation &&
-                    (mutationVersionRef.current.get(key) ?? 0) === versions[index]) {
-                  favoriteUpdates[key] = result.personal.is_favorited;
-                  if (bearer) queriedStatusRef.current.add(key);
+                const canAcceptFavorite = mutation?.generation !== generation &&
+                  (mutationVersionRef.current.get(key) ?? 0) === versions[index];
+                if (result.status !== TOKEN_META_STATUS_OK || canAcceptFavorite) {
+                  personalGenerationRef.current.set(key, generation);
+                  personalReadyUpdates[key] = true;
+                  forcedPersonalRefreshRef.current.delete(key);
+                  if (result.status === TOKEN_META_STATUS_OK) {
+                    favoriteUpdates[key] = result.personal.is_favorited;
+                    if (bearer) queriedStatusRef.current.add(key);
+                  }
+                } else if (mutation?.generation === generation ||
+                  personalGenerationRef.current.get(key) !== generation) {
+                  // This canonical personal value raced a mutation and was not accepted.
+                  // Keep it visibly unready and force a new request after both operations finish.
+                  personalGenerationRef.current.delete(key);
+                  personalReadyUpdates[key] = false;
+                  forcedPersonalRefreshRef.current.set(key, batch[index]);
                 }
               }
             });
@@ -208,7 +221,15 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
               return next;
             });
           } finally {
-            for (const key of keys) inFlightMetadataRef.current.delete(key);
+            for (let index = 0; index < keys.length; index += 1) {
+              const key = keys[index];
+              inFlightMetadataRef.current.delete(key);
+              const refresh = forcedPersonalRefreshRef.current.get(key);
+              if (refresh && activeMutationRef.current.get(key)?.generation !== viewerGenerationRef.current) {
+                forcedPersonalRefreshRef.current.delete(key);
+                pendingMetadataRef.current.set(key, refresh);
+              }
+            }
             endRequest();
             if (generation !== viewerGenerationRef.current) {
               for (const token of batch) {
@@ -402,7 +423,7 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
         // personal value. Do not leave that generation marked fresh after the mutation failed.
         personalGenerationRef.current.delete(key);
         setPersonalReadyMap((values) => ({...values, [key]: false}));
-        ensureMetadata([ref]);
+        forcedPersonalRefreshRef.current.set(key, ref);
         if (error instanceof ApiError) {
           if (error.code === 400000) {
             clearSite();
@@ -420,12 +441,18 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
           activeMutationRef.current.delete(key);
           mutationPromiseRef.current.delete(key);
           mutationVersionRef.current.set(key, version + 1);
+          const refresh = forcedPersonalRefreshRef.current.get(key);
+          if (refresh && !inFlightMetadataRef.current.has(key)) {
+            forcedPersonalRefreshRef.current.delete(key);
+            pendingMetadataRef.current.set(key, refresh);
+            drainMetadataRef.current();
+          }
         }
       }
     })();
     mutationPromiseRef.current.set(key, promise);
     return promise;
-  }, [ensureMetadata, setBadgeFavoriteMap, setStatusMap]);
+  }, [setBadgeFavoriteMap, setStatusMap]);
 
   const viewerMatches = !pendingViewerResetRef.current;
   const visibleStatusMap = viewerMatches ? statusMap : EMPTY_BOOLEAN_MAP;
