@@ -24,6 +24,7 @@ const nextConfig: NextConfig = {
       return [
         { source: "/token/:chain/:address", destination: "/token?chain=:chain&address=:address" },
         { source: "/smart-money/:chain/:address", destination: "/smart-money?chain=:chain&address=:address" },
+        { source: "/user/:identifier", destination: "/user" },
       ];
     }
     return [];

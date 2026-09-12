@@ -3,3 +3,4 @@
 # 由客户端从 location.pathname 解析参数渲染，见 src/hooks/useDetailRouteParams.ts。
 /token/:chain/:address        /token        200
 /smart-money/:chain/:address  /smart-money 200
+/user/:identifier             /user        200

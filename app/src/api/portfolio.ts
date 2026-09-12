@@ -494,3 +494,61 @@ export function positionTargetID(position: PortfolioPosition): string | undefine
     return undefined;
   }
 }
+
+// ── 客态 Portfolio（portfolio.md 第一部分：/v1/users/{id}/portfolio，2026-09） ──
+//
+// 看别人的总览 / closed / 流水。四个接口均为 **Optional 档**：匿名可看、
+// 带有效 JWT 放行、**带坏 JWT 一律 400000 拒绝（不降级成匿名）** —— 未登录就
+// 不传 bearer，绝不要把过期 token 传进来。回包类型与主态共用（契约原文：
+// 「与旧主态总览共用返回类型和计算逻辑」），归一化直接复用上面的函数。
+// 目标不存在/受限按不存在处理（不是空账户）；切换用户时调用方要清空旧游标、
+// 丢弃上一用户的迟到响应。
+
+/** 客态总览：open 持仓、账户 PnL、现金、总资产及曲线。 */
+export async function getUserPortfolio(userIdentifier: string, bearer?: string, signal?: AbortSignal): Promise<PortfolioReply> {
+  const response = await call<unknown>(`/v1/users/${encodeURIComponent(userIdentifier)}/portfolio`, {
+    bearer,
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
+    preserveInt64Fields: ['opened_entry_id', 'chain_id'],
+  });
+  try {
+    return normalizePortfolio(response.data);
+  } catch (error) {
+    throw new PortfolioDataError(error instanceof Error ? error.message : 'Invalid viewer Portfolio response.', response.traceID);
+  }
+}
+
+/** 客态 closed 轮次列表：limit 上限 20；条目比主态多 cycle_key / ending_* / valuation_status（此处宽容忽略）。 */
+export async function getUserClosedPositions(userIdentifier: string, cursor = '', bearer?: string, signal?: AbortSignal): Promise<PortfolioClosedPage> {
+  const query = new URLSearchParams({limit: '20'});
+  if (cursor) query.set('cursor', cursor);
+  const response = await call<unknown>(`/v1/users/${encodeURIComponent(userIdentifier)}/portfolio/closed?${query}`, {
+    bearer,
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
+    preserveInt64Fields: ['chain_id', 'opened_entry_id', 'closed_entry_id'],
+  });
+  try {
+    return normalizePortfolioClosedPage(response.data);
+  } catch (error) {
+    throw new PortfolioDataError(error instanceof Error ? error.message : 'Invalid viewer closed positions.', response.traceID);
+  }
+}
+
+/** 客态跨币流水：默认 50、上限 200；before_id 游标与主态同语义。 */
+export async function getUserPortfolioTrades(userIdentifier: string, beforeID = '0', limit = 50, bearer?: string, signal?: AbortSignal): Promise<PortfolioTradePage> {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw new Error('Viewer trade history limit must be between 1 and 200.');
+  if (!/^\d+$/.test(beforeID)) throw new Error('Viewer trade history cursor is invalid.');
+  const cursor = BigInt(beforeID).toString();
+  const query = new URLSearchParams({limit: String(limit)});
+  if (cursor !== '0') query.set('before_id', cursor);
+  const response = await call<unknown>(`/v1/users/${encodeURIComponent(userIdentifier)}/portfolio/trades?${query}`, {
+    bearer,
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
+    preserveInt64Fields: ['next_cursor', 'cycle_opened_entry_id'],
+  });
+  try {
+    return normalizePortfolioTradePage(response.data);
+  } catch (error) {
+    throw new PortfolioDataError(error instanceof Error ? error.message : 'Invalid viewer trade history.', response.traceID);
+  }
+}

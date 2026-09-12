@@ -1,9 +1,13 @@
 'use client';
 
-import {Fragment, useState} from 'react';
+import {Fragment, useEffect, useState} from 'react';
 import useSWR from 'swr';
 import useSWRInfinite from 'swr/infinite';
+import {ApiError} from '@/api/envelope';
+import {followTarget, getRelations, setRemark, unfollowTarget, type SmartMoneyRelation} from '@/api/social';
 import {getSmartMoneyHoldings, getSmartMoneyTokenTrades, getSmartMoneyTrades, type SmartMoneyHolding, type SmartMoneyTokenTrades, type SmartMoneyTrade} from '@/api/smartmoney';
+import {useSession} from '@/session/storage';
+import {ErrorPanel} from './ErrorPanel';
 import {decimalSign, formatDecimalExact, marketValueFromBaseUnits} from '@/lib/exact-decimal';
 import {chainLabel, shortAddr, fmtUsd} from '@/lib/format';
 import {SmartMoneyTokenMetadata} from './SmartMoneyTokenMetadata';
@@ -69,6 +73,171 @@ function RecentTrades({list, chain}: {list: SmartMoneyTrade[]; chain: string}) {
   return <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-xs"><thead className="text-muted"><tr><th className="p-3">时间</th><th className="p-3">类型</th><th className="p-3">Token</th><th className="p-3 text-right">数量</th><th className="p-3 text-right">计价</th><th className="p-3 text-right">成交价</th><th className="p-3 text-right">金额</th><th className="p-3 text-right">Tx</th></tr></thead><tbody>{list.map((trade, index) => <tr key={`${trade.tx_hash ?? ''}:${index}`} className="border-t border-border"><td className="p-3">{when(trade.occurred_at)}</td><td className="p-3"><EventBadge type={trade.event_type} /></td><td className="p-3"><Token chain={chain} entry={{token_address: trade.token_address, symbol: trade.token_symbol, logo: trade.token_logo}} /></td><td className="p-3 text-right font-mono">{qty(trade.token_amount)}</td><td className="p-3 text-right font-mono">{qty(trade.quote_amount)} {trade.quote_symbol ?? ''}</td><td className="p-3 text-right font-mono">{price(trade.price_usd)}</td><td className="p-3 text-right font-mono">{money(trade.cost_usd)}</td><td className="p-3 text-right font-mono" title={trade.tx_hash}>{shortAddr(trade.tx_hash ?? '', 6, 4) || '—'}</td></tr>)}</tbody></table></div>;
 }
 
+/**
+ * 聪明钱客态页的头部 + 关注行（social.md §5 / §5.1 / §5.2）。
+ * 聪明钱的身份键只有地址不带链：关注 / 备注 / 关系批查都把地址**原样**传，
+ * 不改大小写（§5.1）。登录前只显示一句灰字，不挡页面内容。
+ */
+function SmartMoneyFollowHeader({chain, address}: {chain: string; address: string}) {
+  const session = useSession();
+  const jwt = session?.jwt ?? null;
+  // undefined = 批查进行中；null = 回包里没有该地址的占位（按未关注处理）。
+  const [relation, setRelation] = useState<SmartMoneyRelation | null | undefined>(undefined);
+  const [loadErr, setLoadErr] = useState<ApiError | null>(null);
+  const [reloadNonce, setReloadNonce] = useState(0);
+  const [pending, setPending] = useState(false);
+  const [remarkEditing, setRemarkEditing] = useState(false);
+  const [remarkDraft, setRemarkDraft] = useState('');
+  const [remarkSaving, setRemarkSaving] = useState(false);
+  const [actionErr, setActionErr] = useState<ApiError | null>(null);
+
+  // 登录后按 §5 关系批查拉「已关注 + 备注」；单目标就传单元素数组（没有单查端点）。
+  useEffect(() => {
+    if (!jwt) return;
+    let cancelled = false;
+    setRelation(undefined);
+    setLoadErr(null);
+    getRelations(jwt, {userIdentifiers: [], addresses: [address]})
+      .then((res) => {
+        if (!cancelled) setRelation(res.data.smart_money?.[0] ?? null);
+      })
+      .catch((error: unknown) => {
+        // call() 的失败恒为 ApiError（三类之一），与 RecommendedTradersCard 同口径直接收下。
+        if (!cancelled) setLoadErr(error as ApiError);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [jwt, address, reloadNonce]);
+
+  const following = !!relation?.following;
+  const remark = relation?.remark ?? '';
+
+  /** 乐观切换，失败回滚；成功后本页没有别的计数要刷新（§5.1）。 */
+  async function toggleFollow() {
+    if (!jwt || pending || relation === undefined) return;
+    setActionErr(null);
+    setPending(true);
+    setRelation((current) => (current ? {...current, following: !following} : current));
+    try {
+      const res = following
+        ? await unfollowTarget(jwt, 'smart_money', address)
+        : await followTarget(jwt, 'smart_money', address);
+      setRelation((current) => ({
+        address,
+        following: !!res.data.following,
+        chains: res.data.chains ?? current?.chains,
+        remark: current?.remark,
+      }));
+    } catch (error) {
+      setRelation((current) => (current ? {...current, following} : current));
+      setActionErr(error as ApiError);
+    } finally {
+      setPending(false);
+    }
+  }
+
+  /** 备注与关注完全解耦（§5.2）：value 为空串 = 清除（逻辑删除，可再设）。 */
+  async function saveRemark(value: string) {
+    if (!jwt || remarkSaving) return;
+    setActionErr(null);
+    setRemarkSaving(true);
+    try {
+      const res = await setRemark(jwt, 'smart_money', address, value);
+      // 清除成功回包 remark 缺席 → 折叠成空串。
+      setRelation((current) => ({
+        address,
+        following: current?.following,
+        chains: current?.chains,
+        remark: res.data.remark ?? '',
+      }));
+      setRemarkEditing(false);
+    } catch (error) {
+      setActionErr(error as ApiError);
+    } finally {
+      setRemarkSaving(false);
+    }
+  }
+
+  return (
+    <>
+      <header className="rounded-xl border border-border bg-surface p-5">
+        <div className="flex items-center gap-2"><span className="rounded-full bg-accent/10 px-2 py-1 text-xs font-semibold text-accent">Smart Money</span><span className="text-xs text-muted">{chainName(chain)}</span></div>
+        {/* 备注徽标与地址刻意不同样式：地址是 mono 正文，备注是我起的名字（accent 胶囊）。 */}
+        <h1 className="mt-3 flex flex-wrap items-center gap-2 font-mono text-lg font-semibold">
+          {shortAddr(address, 10, 8)}
+          {remark ? <span title="我给这个地址起的备注" className="rounded-full bg-accent/10 px-2 py-0.5 font-sans text-[11px] font-medium text-accent">{remark}</span> : null}
+        </h1>
+        <p className="break-all text-xs text-muted">{address}</p>
+      </header>
+      {!jwt ? (
+        // 未登录不挡页面：一行灰字说明，正文照常。
+        <section className="rounded-xl border border-border bg-surface px-5 py-3 text-xs text-muted">登录后可关注</section>
+      ) : (
+        <section className="rounded-xl border border-border bg-surface p-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => void toggleFollow()}
+              disabled={pending || relation === undefined}
+              className={`rounded px-3 py-1.5 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                following ? 'bg-surface-2 text-muted hover:text-foreground' : 'border border-border text-foreground hover:border-accent/60'
+              }`}
+            >
+              {relation === undefined ? '…' : following ? 'Following' : 'Follow'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setRemarkDraft(remark);
+                setRemarkEditing((open) => !open);
+              }}
+              className="rounded px-3 py-1.5 text-xs text-muted hover:text-foreground"
+            >
+              备注
+            </button>
+            {relation === undefined && !loadErr ? <span className="text-xs text-muted">正在获取关注状态…</span> : null}
+          </div>
+          {remarkEditing ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <input
+                value={remarkDraft}
+                maxLength={64}
+                placeholder="只有自己可见的备注（1–64 字）"
+                onChange={(event) => setRemarkDraft(event.target.value)}
+                className="w-64 rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none placeholder:text-muted focus:border-accent/60"
+              />
+              <button
+                type="button"
+                disabled={remarkSaving || remarkDraft.trim().length === 0}
+                onClick={() => void saveRemark(remarkDraft.trim())}
+                className="rounded border border-border px-3 py-1.5 text-xs text-accent disabled:opacity-50"
+              >
+                {remarkSaving ? '保存中…' : '保存'}
+              </button>
+              <button type="button" disabled={remarkSaving} onClick={() => void saveRemark('')} className="rounded px-2 py-1.5 text-xs text-muted hover:text-down">
+                清除
+              </button>
+              <button type="button" disabled={remarkSaving} onClick={() => setRemarkEditing(false)} className="rounded px-2 py-1.5 text-xs text-muted hover:text-foreground">
+                取消
+              </button>
+            </div>
+          ) : null}
+          {loadErr ? (
+            <div className="mt-3 space-y-2">
+              <button type="button" onClick={() => setReloadNonce((value) => value + 1)} className="text-xs text-accent hover:underline">
+                重试
+              </button>
+              <ErrorPanel err={loadErr} />
+            </div>
+          ) : null}
+          {actionErr ? <div className="mt-3"><ErrorPanel err={actionErr} /></div> : null}
+        </section>
+      )}
+    </>
+  );
+}
+
 export function SmartMoneyProfile({chain, address}: {chain: string; address: string}) {
   const holdings = useSWR(['smart-money-holdings-v2', chain, address], ([, c, a]) => getSmartMoneyHoldings(c, a).then((result) => result.data), {refreshInterval: 10_000, shouldRetryOnError: false});
   const trades = useSWR(['smart-money-trades-v2', chain, address], ([, c, a]) => getSmartMoneyTrades(c, a).then((result) => result.data), {shouldRetryOnError: false});
@@ -78,7 +247,7 @@ export function SmartMoneyProfile({chain, address}: {chain: string; address: str
   const active = tab === 'holdings' ? holdings : trades;
   return <div className="space-y-5">
     <a href="/leaderboard" className="text-sm text-muted hover:text-foreground">← 返回榜单</a>
-    <header className="rounded-xl border border-border bg-surface p-5"><div className="flex items-center gap-2"><span className="rounded-full bg-accent/10 px-2 py-1 text-xs font-semibold text-accent">Smart Money</span><span className="text-xs text-muted">{chainName(chain)}</span></div><h1 className="mt-3 font-mono text-lg font-semibold">{shortAddr(address, 10, 8)}</h1><p className="break-all text-xs text-muted">{address}</p></header>
+    <SmartMoneyFollowHeader chain={chain} address={address} />
     <SmartMoneyPnlSummary key={`${chain}:${address}`} data={holdings.data?.pnl_windows} />
     <div className="flex items-center justify-between gap-3"><div className="flex rounded-lg border border-border bg-surface p-1"><button onClick={() => setTab('holdings')} className={`rounded-md px-4 py-2 text-sm ${tab === 'holdings' ? 'bg-surface-2 text-foreground' : 'text-muted'}`}>持仓 {(holdings.data?.open?.length ?? 0) + (holdings.data?.closed?.length ?? 0)}</button><button onClick={() => setTab('trades')} className={`rounded-md px-4 py-2 text-sm ${tab === 'trades' ? 'bg-surface-2 text-foreground' : 'text-muted'}`}>交易 {trades.data?.list?.length ?? 0}</button></div><button onClick={() => void active.mutate()} disabled={active.isValidating} className="text-sm text-accent disabled:opacity-50">{active.isValidating ? '刷新中…' : '刷新'}</button></div>
     <section className="overflow-hidden rounded-xl border border-border bg-surface">

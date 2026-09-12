@@ -44,6 +44,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               <Link href="/leaderboard" className="hover:text-foreground">
                 Leaderboard
               </Link>
+              <Link href="/people" className="hover:text-foreground">
+                People
+              </Link>
               <Link href="/portfolio" className="hover:text-foreground">
                 Portfolio
               </Link>

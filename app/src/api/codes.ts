@@ -97,6 +97,22 @@ export const CODES: Record<number, CodeInfo> = {
   500100: {text: '社交数据存储暂不可用', advice: '稍后重试；持续出现时联系运维。', retryable: true},
   500101: {text: '社交数据内部状态不一致', advice: '稍后重试；持续出现时附 trace_id 报障。', retryable: true},
   600100: {text: '观点未通过发布审查', advice: '修改正文或链接后重新提交。', retryable: false},
+  100128: {text: 'Square 筛选参数非法（filters 含未定义枚举值）', advice: '前端 Bug：修正筛选名；cursor/锚点跨筛选复用也会失效。', retryable: false},
+  100119: {
+    text: '关注者持仓参数非法：chain 不在已接入链集合 / address 为空、超长或含空白 / 批量超 100',
+    advice: 'chain 用小写链 slug（bsc/solana/…，不是聪明钱面的 sol）；address 原样传。不重试。',
+    retryable: false,
+  },
+  500098: {
+    text: '上游已接入但接口未实现（关注者持仓：trade 的 ListTokenHolders 未实现）',
+    advice: '找后端；不要重试。叠加场景应隐藏角标。',
+    retryable: false,
+  },
+  430102: {
+    text: '（已废弃）持仓可见性概念已删除，无触发路径',
+    advice: '按 200103（持仓不存在）同样处理。',
+    retryable: false,
+  },
 
   // ── X（Twitter）账号绑定域 ──────────────────────────────────────────
   // 这一域里有三个码**不是"报错"而是流程分支**（200106 / 400103 / 100117），

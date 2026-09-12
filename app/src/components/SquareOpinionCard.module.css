@@ -48,3 +48,8 @@
 .tokenAvatar img { width: 100%; height: 100%; object-fit: cover; }
 .symbol a:hover { text-decoration: underline; }
 .symbol a:focus-visible { outline: 2px solid #00cdae; outline-offset: 2px; }
+/* 作者身份块链接（/user/:identifier）：保留 .identity 的布局，加可点击的视觉反馈。 */
+.identityLink { display: block; color: inherit; text-decoration: none; }
+.identityLink:hover .name { text-decoration: underline; }
+.identityLink:hover .handle { color: #d4d4d4; }
+.identityLink:focus-visible { outline: 2px solid #00cdae; outline-offset: 2px; border-radius: 4px; }

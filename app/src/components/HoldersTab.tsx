@@ -79,7 +79,17 @@ export default function HoldersTab({ chain, address }: { chain: string; address:
                   <tr key={h.wallet_address ?? i} className="border-t border-border">
                     <td className="tabular px-3 py-2 text-muted">{offset + i + 1}</td>
                     <td className="px-3 py-2 font-mono text-foreground" title={h.wallet_address}>
-                      {shortAddr(h.wallet_address)}
+                      {/* 持仓人钱包 → 聪明钱客态页；不加关注按钮（持有者是匿名地址）。 */}
+                      {h.wallet_address ? (
+                        <a
+                          href={`/smart-money/${encodeURIComponent(chain)}/${encodeURIComponent(h.wallet_address)}`}
+                          className="hover:text-accent hover:underline"
+                        >
+                          {shortAddr(h.wallet_address)}
+                        </a>
+                      ) : (
+                        shortAddr(h.wallet_address)
+                      )}
                     </td>
                     <td className="tabular px-3 py-2 text-right text-foreground">
                       {fmtUsd(h.token_amount_usd)}{" "}

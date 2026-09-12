@@ -180,6 +180,10 @@ export function RecommendedTradersCard({
           // 空列表不是错误（social.md §5.4）：按 PRD 给兜底文案 + 可继续。
           <div className="space-y-3">
             <p className="text-sm">暂时没有推荐，可稍后在 People 关注交易者</p>
+            {/* People 页入口：路径式导航用整页 <a>（本仓约定）。 */}
+            <a href="/people" className="text-primary text-sm underline underline-offset-2">
+              前往 People 页 →
+            </a>
             {leaderboardNotReady && (
               <p className="text-muted-foreground text-xs">榜单还没算好（每小时重算一次），数据就绪后这里会列出推荐。</p>
             )}
