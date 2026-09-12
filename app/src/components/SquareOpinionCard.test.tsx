@@ -6,10 +6,11 @@ import type {SquareFeedItem} from '@/api/social-content';
 import {SquareOpinionCard} from './SquareOpinionCard';
 
 vi.mock('next/image', () => ({default: ({unoptimized: _u, ...props}: React.ImgHTMLAttributes<HTMLImageElement> & {unoptimized?: boolean}) => <img {...props} />}));
+vi.mock('@/components/TokenAvatar', () => ({TokenAvatar: () => <span data-testid="token-avatar" />}));
 const item = (closed: boolean): SquareFeedItem => ({type: 1, sourceID: '1', actorIdentifier: 'alice', actor: {identifier: 'alice', nickname: 'Alice'}, sortTime: {seconds: 100, nanos: 0}, content: {
   kind: 'opinion', opinion: {opinionID: '1', authorIdentifier: 'alice', targetType: 1, targetID: '56:erc20:0xabc:1', latestVersion: {versionID: '1', versionNo: 1, body: 'My opinion', items: [], likeCount: 0, publishedAt: {seconds: 100, nanos: 0}, viewerLike: false}, createdAt: {seconds: 100, nanos: 0}, updatedAt: {seconds: 100, nanos: 0}},
   position: {asset: {chain: 'bsc', chain_id: '56', kind: 'erc20', token_address: '0xabc'}, shares_raw: closed ? '0' : '60', opened_entry_id: '1', cycle_status: 'ready', market_value_usd: '90', unrealized_pnl_usd: '30', realized_pnl_usd: '40', pnl_ratio: '0.4'},
-  token: {chain: 'bsc', address: '0xabc', symbol: 'SYM', name: 'Do not show full name', decimals: 0, logo: 'https://example.com/token.png'},
+  token: {chain: 'bsc', address: '0xabc', symbol: 'SYM', name: 'Do not show full name', decimals: 0, logo: 'https://example.com/token.png', is_verify: false},
 }});
 afterEach(cleanup);
 describe('PRD 08-square §7.2', () => {

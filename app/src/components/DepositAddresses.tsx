@@ -7,6 +7,22 @@ import type {DepositAddress} from '@/api/deposit';
 import {CopyButton} from '@/components/CopyButton';
 import {chainLabel} from '@/lib/format';
 import type {SolanaBalanceMonitor} from '@/lib/deposit-polling';
+import {TokenAvatarView, useTokenDisplay} from '@/components/TokenAvatar';
+
+function AcceptedTokenRow({chain, token}: {chain: string; token: DepositAddress['accepted_tokens'][number]}) {
+  const {info, isFavorited, personalReady} = useTokenDisplay(chain, token.address);
+  const symbol = info?.symbol ?? token.symbol;
+  return (
+    <li className="flex items-start gap-2.5 rounded border border-border p-2">
+      <TokenAvatarView info={info} isFavorited={isFavorited} personalReady={personalReady} size={28} fallbackSymbol={token.symbol} />
+      <div className="min-w-0 flex-1 space-y-1">
+        <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-medium text-foreground">{symbol}</span><span>{token.decimals} decimals</span></div>
+        <code className="block break-all font-mono text-[11px] text-foreground">{token.address}</code>
+        <CopyButton value={token.address} label={`Copy ${symbol} token address`} />
+      </div>
+    </li>
+  );
+}
 
 export function DepositAddresses({
   addresses, loading, solanaMonitor, canMonitorSolana, onStartSolanaMonitor, onStopSolanaMonitor,
@@ -51,11 +67,7 @@ export function DepositAddresses({
               {item.accepted_tokens.length ? (
                 <ul className="mt-2 space-y-1 text-xs text-muted">
                   {item.accepted_tokens.map((token) => (
-                    <li key={`${item.chain}:${token.address}`} className="space-y-1 rounded border border-border p-2">
-                      <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-medium text-foreground">{token.symbol}</span><span>{token.decimals} decimals</span></div>
-                      <code className="block break-all font-mono text-[11px] text-foreground">{token.address}</code>
-                      <CopyButton value={token.address} label={`Copy ${token.symbol} token address`} />
-                    </li>
+                    <AcceptedTokenRow key={`${item.chain}:${token.address}`} chain={item.chain} token={token} />
                   ))}
                 </ul>
               ) : <p className="mt-2 text-xs text-down">No tokens are accepted on this route.</p>}

@@ -11,6 +11,7 @@
  */
 import {call} from './envelope';
 import {normalizePortfolioPosition, positionTargetID, type PortfolioPosition} from './portfolio';
+import type {TokenInfo} from './token-metadata';
 
 function socialCall(path: string, options: Parameters<typeof call>[1] = {}) {
   return call<unknown>(path, {...options, preserveInt64Fields: SOCIAL_INT64_FIELDS});
@@ -90,7 +91,7 @@ export type UserActor = {
   avatarURL?: string;
 };
 
-export type PositionToken = {chain: string; address: string; symbol: string; name: string; decimals: number; logo?: string; creator?: string; twitter?: string; website?: string; launchpad?: string; launchpad_name?: string; launchpad_logo?: string};
+export type PositionToken = TokenInfo;
 
 export type OpinionFeedContent = {
   kind: 'opinion';
@@ -323,7 +324,8 @@ function normalizePositionToken(card: UnknownRecord, position: PortfolioPosition
     throw new SocialContentShapeError('feed token does not match position');
   }
   return {chain: position.asset.chain, address: position.asset.token_address, symbol: token.symbol, name: token.name, decimals: token.decimals,
-    ...Object.fromEntries(['logo', 'creator', 'twitter', 'website', 'launchpad', 'launchpad_name', 'launchpad_logo'].map((key) => [key, nonEmptyString(token[key])]))};
+    is_verify: token.is_verify === true,
+    ...Object.fromEntries(['logo', 'creator', 'twitter', 'website', 'launchpad', 'launchpad_name', 'launchpad_logo', 'total_supply', 'circulating_supply'].map((key) => [key, nonEmptyString(token[key])]))};
 }
 
 function normalizeOpinionCard(value: unknown): OpinionFeedContent {

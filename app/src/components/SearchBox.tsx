@@ -10,8 +10,9 @@ import {
   type SocialTargetType,
 } from "@/api/social";
 import { clearSite, useSession } from "@/session/storage";
-import type { SearchAccountEntry, SearchData, SearchScope, SearchSmartMoney } from "@/lib/types";
+import type { SearchAccountEntry, SearchData, SearchItem, SearchScope, SearchSmartMoney } from "@/lib/types";
 import { chainLabel, fmtPrice, fmtCompact, fmtPct, shortAddr } from "@/lib/format";
+import {TokenAvatarView, useTokenDisplay} from '@/components/TokenAvatar';
 
 /**
  * 顶栏搜索（GET /v1/search）：产品仍展示 Token / People 两个范围，后端分别使用
@@ -462,43 +463,47 @@ function TokenResults({
   }
   return (
     <>
-      {tokens.map((result) => (
-        <button
-          key={`${result.chain}:${result.address}`}
-          type="button"
-          onClick={() => onGo(result.chain, result.address)}
-          className="flex w-full items-center justify-between gap-3 border-b border-border/50 px-3 py-2 text-left last:border-0 hover:bg-surface-2"
-        >
-          <div className="flex min-w-0 flex-col leading-tight">
-            <span className="text-sm font-medium text-foreground">
-              {result.symbol ?? result.address.slice(0, 8)}
-              <span className="ml-1.5 text-[10px] font-normal text-muted">
-                {chainLabel(result.chain)} · {shortAddr(result.address, 6, 4)}
-              </span>
-            </span>
-            <span className="truncate text-xs text-muted">{result.name ?? result.address}</span>
-          </div>
-          <div className="shrink-0 text-right">
-            {result.market ? (
-              <>
-                <div className="text-sm tabular text-foreground">{fmtPrice(result.market.price)}</div>
-                <div className="text-[11px] tabular text-muted">
-                  MC {fmtCompact(result.market.market_cap)}
-                  {result.market.price_change_24h !== undefined && (
-                    <span className={result.market.price_change_24h >= 0 ? " text-up" : " text-down"}>
-                      {" "}
-                      {fmtPct(result.market.price_change_24h)}
-                    </span>
-                  )}
-                </div>
-              </>
-            ) : (
-              <span className="text-xs text-muted">No market data</span>
-            )}
-          </div>
-        </button>
-      ))}
+      {tokens.map((result) => <TokenResult key={`${result.chain}:${result.address}`} result={result} onGo={onGo} />)}
     </>
+  );
+}
+
+function TokenResult({result, onGo}: {result: SearchItem; onGo: (chain: string, address: string) => void}) {
+  const {info, isFavorited, personalReady} = useTokenDisplay(result.chain, result.address);
+  const symbol = info?.symbol ?? result.symbol;
+  const name = info?.name ?? result.name;
+  return (
+    <button type="button" onClick={() => onGo(result.chain, result.address)}
+      className="flex w-full items-center justify-between gap-3 border-b border-border/50 px-3 py-2 text-left last:border-0 hover:bg-surface-2">
+      <div className="flex min-w-0 items-center gap-2.5">
+        <TokenAvatarView info={info} isFavorited={isFavorited} personalReady={personalReady} size={28} fallbackLogo={result.market?.logo}
+          fallbackSymbol={result.symbol} fallbackName={result.name} />
+        <div className="flex min-w-0 flex-col leading-tight">
+          <span className="text-sm font-medium text-foreground">
+            {symbol ?? result.address.slice(0, 8)}
+            <span className="ml-1.5 text-[10px] font-normal text-muted">
+              {chainLabel(result.chain)} · {shortAddr(result.address, 6, 4)}
+            </span>
+          </span>
+          <span className="truncate text-xs text-muted">{name ?? result.address}</span>
+        </div>
+      </div>
+      <div className="shrink-0 text-right">
+        {result.market ? (
+          <>
+            <div className="text-sm tabular text-foreground">{fmtPrice(result.market.price)}</div>
+            <div className="text-[11px] tabular text-muted">
+              MC {fmtCompact(result.market.market_cap)}
+              {result.market.price_change_24h !== undefined ? (
+                <span className={result.market.price_change_24h >= 0 ? " text-up" : " text-down"}>
+                  {' '}{fmtPct(result.market.price_change_24h)}
+                </span>
+              ) : null}
+            </div>
+          </>
+        ) : <span className="text-xs text-muted">No market data</span>}
+      </div>
+    </button>
   );
 }
 

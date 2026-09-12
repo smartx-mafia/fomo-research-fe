@@ -1,5 +1,8 @@
 /** Browser-side client for docs/contracts/meme.md. Amounts stay exact decimal strings. */
 import {call} from './envelope';
+import {normalizeTokenInfo, type TokenInfo} from './token-metadata';
+
+export type {TokenInfo} from './token-metadata';
 
 export type TradeSide = 'buy' | 'sell';
 
@@ -7,14 +10,6 @@ export type MemeChain = {
   chain: string;
   chain_id: number;
   kind: 'evm' | 'svm' | string;
-};
-
-export type TokenInfo = {
-  chain: string;
-  address: string;
-  symbol?: string;
-  name?: string;
-  decimals: number;
 };
 
 export type TradeIntent = {
@@ -160,14 +155,14 @@ export async function listTradeChains(bearer: string, signal?: AbortSignal) {
 }
 
 export async function getTokenInfo(chain: string, address: string, signal?: AbortSignal): Promise<TokenInfo> {
-  const response = await call<{info?: TokenInfo}>(
+  const response = await call<{info?: unknown}>(
     `/v1/tokens/${encodeURIComponent(chain)}/${encodeURIComponent(address)}`,
     {signal},
   );
-  if (!response.data.info || !Number.isInteger(response.data.info.decimals) || response.data.info.decimals < 0) {
+  const info = normalizeTokenInfo(response.data.info);
+  if (!info) {
     throw new Error('Token metadata is unavailable.');
   }
-  const info = response.data.info;
   const evmAddress = /^0x[0-9a-f]{40}$/i.test(address);
   const addressMatches = evmAddress
     ? info.address.toLowerCase() === address.toLowerCase()
