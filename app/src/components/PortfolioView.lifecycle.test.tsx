@@ -6,11 +6,12 @@ import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 import {normalizePortfolio, type PortfolioReply} from '@/api/portfolio';
 
 const {control} = vi.hoisted(() => ({control: {jwt: 'A', fetch: vi.fn()}}));
-vi.mock('@/api/portfolio', async (load) => ({...await load<typeof import('@/api/portfolio')>(), getPortfolio: control.fetch, getPortfolioBalanceCurve: async () => ({points: [], simulated: false})}));
-vi.mock('@/session/storage', () => ({useSession: () => ({jwt: control.jwt}), clearSite: vi.fn(), readSite: () => ({jwt: control.jwt})}));
+vi.mock('@/api/user-portfolio', () => ({getUserPortfolio: control.fetch}));
+vi.mock('@/session/storage', () => ({useSession: () => ({jwt: control.jwt, user: {identifier: control.jwt}}), clearSite: vi.fn(), readSite: () => ({jwt: control.jwt})}));
 vi.mock('@/components/PortfolioActivity', () => ({PortfolioActivity: () => null}));
 vi.mock('@/components/PortfolioCycles', () => ({ClosedPortfolioPositions: () => null, PortfolioCycleTrades: () => null}));
 vi.mock('@/components/OpinionComposer', () => ({OpinionComposer: () => <div>Opinion dialog</div>}));
+vi.mock('@/hooks/useLivePortfolio', () => ({useLivePortfolio: (data: unknown) => data}));
 import {PortfolioView} from './PortfolioView';
 
 function data(symbol: string): PortfolioReply {

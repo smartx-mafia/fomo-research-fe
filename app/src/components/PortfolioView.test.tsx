@@ -5,10 +5,11 @@ import {normalizePortfolio, PortfolioDataError, type PortfolioReply} from '@/api
 
 const {state} = vi.hoisted(() => ({state: {data: undefined as PortfolioReply | undefined, error: undefined as Error | undefined}}));
 vi.mock('swr', () => ({default: () => ({...state, isLoading: false, isValidating: false, mutate: vi.fn()})}));
-vi.mock('@/session/storage', () => ({useSession: () => ({jwt: 'test-session'}), clearSite: vi.fn(), readSite: () => null}));
+vi.mock('@/session/storage', () => ({useSession: () => ({jwt: 'test-session', user: {identifier: 'test-user'}}), clearSite: vi.fn(), readSite: () => null}));
 vi.mock('@/components/PortfolioActivity', () => ({PortfolioActivity: () => null}));
 vi.mock('@/components/PortfolioCycles', () => ({ClosedPortfolioPositions: () => null, PortfolioCycleTrades: () => null}));
 vi.mock('@/components/OpinionComposer', () => ({OpinionComposer: () => null}));
+vi.mock('@/hooks/useLivePortfolio', () => ({useLivePortfolio: (data: unknown) => data}));
 import {PortfolioView} from './PortfolioView';
 
 describe('Portfolio deployed response presentation', () => {

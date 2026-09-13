@@ -2,11 +2,13 @@
 
 import {AlertTriangle, LoaderCircle, RefreshCw, WalletCards} from 'lucide-react';
 import Link from 'next/link';
-import {useEffect, useState} from 'react';
+import {useEffect, useRef, useState} from 'react';
 import useSWR from 'swr';
 
 import {ApiError} from '@/api/envelope';
-import {getPortfolio, PortfolioDataError, positionTargetID, type PortfolioPosition, type ProtoTimestamp, type PortfolioCycleScope} from '@/api/portfolio';
+import {getUserPortfolio} from '@/api/user-portfolio';
+import {useLivePortfolio} from '@/hooks/useLivePortfolio';
+import {PortfolioDataError, positionTargetID, type PortfolioPosition, type ProtoTimestamp, type PortfolioCycleScope} from '@/api/portfolio';
 import {ClosedPortfolioPositions, PortfolioCycleTrades} from '@/components/PortfolioCycles';
 import {OpinionComposer} from '@/components/OpinionComposer';
 import {PortfolioActivity} from '@/components/PortfolioActivity';
@@ -46,15 +48,15 @@ function PositionRow({position, onOpenOpinion, onOpenCycle}: {position: Portfoli
       <td className="px-3 py-3">
         <PortfolioTokenIdentity chain={position.asset.chain} address={position.asset.token_address} symbol={position.symbol} logo={position.logo} />
       </td>
-      <td className="px-3 py-3 text-right font-mono text-xs">{formatBaseUnitsExact(position.shares_raw, position.decimals)}</td>
+      <td className="px-3 py-3 text-right font-mono text-xs">{formatBaseUnitsExact(position.shares_raw, position.decimals)}{position.pending_shares && position.pending_shares !== '0' ? <p className="mt-1 text-accent">Settlement pending: {position.pending_shares} raw</p> : null}<p className="mt-1 text-muted">Sellable: {position.sellable_shares === undefined ? '—' : formatBaseUnitsExact(position.sellable_shares, position.decimals)}</p></td>
       <td className="px-3 py-3 text-right font-mono text-xs">{usd(position.price_usd, 12)}</td>
       <td className="px-3 py-3 text-right font-mono text-xs">{usd(position.market_value_usd)}</td>
       <td className={`px-3 py-3 text-right font-mono text-xs ${pnlClass(position.pnl_ratio)}`}>{position.pnl_ratio === undefined ? '—' : `${formatDecimalExact(marketValueFromBaseUnits('100', 0, position.pnl_ratio), 4)}%`}</td>
       <td className="px-3 py-3 text-right font-mono text-xs">{usd(position.buy_value_usd)}</td>
       <td className="px-3 py-3 text-right font-mono text-xs">{usd(position.avg_buy_price_usd, 12)}</td>
       <td className="px-3 py-3 text-right text-xs">
-        <button type="button" disabled={targetID === undefined} title={targetID === undefined ? 'This cycle is not ready yet' : undefined}
-          onClick={() => {if (targetID) onOpenCycle({chain: position.asset.chain, asset: position.asset.token_address, opened_entry_id: position.opened_entry_id});}}
+        <button type="button" disabled={!position.cycle_key || position.cycle_status !== 'ready'} title={!position.cycle_key ? 'This cycle is not ready yet' : undefined}
+          onClick={() => {if (position.cycle_key) onOpenCycle({chain: position.asset.chain, asset: position.asset.token_address, cycle_key: position.cycle_key});}}
           className="block w-full whitespace-nowrap rounded-md border border-border px-2 py-1 text-[11px] text-accent disabled:cursor-not-allowed disabled:opacity-50">Cycle trades</button>
         <button
           type="button"
@@ -75,17 +77,26 @@ function PositionRow({position, onOpenOpinion, onOpenCycle}: {position: Portfoli
 
 export function PortfolioView() {
   const session = useSession();
+  return <PortfolioAccountView key={`${session?.user?.identifier ?? ''}:${session?.jwt ?? ''}`} />;
+}
+
+function PortfolioAccountView() {
+  const session = useSession();
+  const identifier = session?.user?.identifier;
+  const forceRefresh = useRef(false);
   const [opinionTarget, setOpinionTarget] = useState<{targetID: string; label?: string}>();
   const [opinionNotice, setOpinionNotice] = useState<string>();
   const [cycle, setCycle] = useState<{bearer: string; scope: PortfolioCycleScope}>();
   useEffect(() => setCycle(undefined), [session?.jwt]);
-  useEffect(() => {setOpinionTarget(undefined); setOpinionNotice(undefined);}, [session?.jwt]);
-  const {data, error, isLoading, isValidating, mutate} = useSWR(
-    session ? ['portfolio-ledger-v2', session.jwt] : null,
+  useEffect(() => {setOpinionTarget(undefined); setOpinionNotice(undefined);}, [session?.jwt, identifier]);
+  const {data: snapshot, error, isLoading, isValidating, mutate} = useSWR(
+    session && identifier ? ['user-portfolio-v1', identifier, session.jwt] : null,
     async () => {
       const bearer = session!.jwt;
       try {
-        return await getPortfolio(bearer);
+        const force = forceRefresh.current;
+        forceRefresh.current = false;
+        return await getUserPortfolio(identifier!, bearer, force);
       } catch (cause) {
         if (cause instanceof ApiError && cause.code === 400000 && readSite()?.jwt === bearer) clearSite();
         throw cause;
@@ -100,6 +111,9 @@ export function PortfolioView() {
     },
   );
 
+  const data = useLivePortfolio(snapshot, identifier);
+  useEffect(() => setCycle(undefined), [identifier, snapshot?.history_epoch]);
+
   if (!session) {
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3 text-center">
@@ -110,6 +124,8 @@ export function PortfolioView() {
       </div>
     );
   }
+
+  if (!identifier) return <p role="alert">Your user identifier is unavailable. Please sign in again.</p>;
 
   const apiError = error instanceof ApiError ? error : undefined;
   if (apiError?.code === 430114) {
@@ -150,7 +166,7 @@ export function PortfolioView() {
         </div>
         <button
           type="button"
-          onClick={() => void mutate()}
+          onClick={() => {forceRefresh.current = true; void mutate();}}
           disabled={isValidating}
           className="inline-flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm text-muted hover:text-foreground disabled:opacity-50"
         >
@@ -183,6 +199,14 @@ export function PortfolioView() {
         ))}
       </section>
 
+      {data?.cash_balances?.length ? <section className="overflow-x-auto rounded-lg border border-border bg-surface p-4">
+        <h2 className="mb-3 font-semibold">Cash by chain</h2>
+        <table className="w-full text-left text-xs"><thead className="text-muted"><tr><th className="p-2">Chain</th><th className="p-2">Asset</th><th className="p-2">Wallet</th><th className="p-2 text-right">Balance</th></tr></thead>
+          <tbody>{data.cash_balances.map((cash) => <tr key={`${cash.chain_id}:${cash.token.address}`} className="border-t border-border"><td className="p-2">{cash.chain}</td><td className="p-2">{cash.token.symbol}</td><td className="p-2 font-mono" title={cash.wallet_address}>{shortAddr(cash.wallet_address)}</td><td className="p-2 text-right font-mono">{cash.amount_raw === undefined ? '—' : formatBaseUnitsExact(cash.amount_raw, cash.token.decimals)}</td></tr>)}</tbody>
+        </table>
+      </section> : null}
+      {data?.quantity_completeness === 'partial' || data?.completeness === 'partial' ? <p role="status" className="text-sm text-accent">Some portfolio inputs are incomplete. Unavailable amounts are shown as —.</p> : null}
+
       {data?.partial_errors.length ? (
         <section role="status" aria-live="polite" className="rounded-lg border border-accent/40 bg-accent/5 p-4">
           <div className="flex items-center gap-2 text-sm font-semibold text-foreground"><AlertTriangle className="h-4 w-4 text-accent" />Partial portfolio</div>
@@ -197,13 +221,13 @@ export function PortfolioView() {
         </section>
       ) : null}
 
-      <PortfolioPnlChart key={`pnl:${session.jwt}`} bearer={session.jwt} pnl={data?.pnl} loading={isLoading} refreshing={isValidating} stale={!!error} observedAt={data?.observed_at} onRefresh={() => void mutate()} />
+      <PortfolioPnlChart key={`pnl:${session.jwt}`} balance={data?.balance} pnl={data?.pnl} loading={isLoading} refreshing={isValidating} stale={!!error} observedAt={data?.observed_at} onRefresh={() => void mutate()} />
 
       {opinionNotice ? (
         <p role="status" className="rounded-lg border border-up/30 bg-up/5 p-3 text-sm text-up">{opinionNotice}</p>
       ) : null}
 
-      {cycle?.bearer === session.jwt ? <PortfolioCycleTrades key={`${session.jwt}:${JSON.stringify(cycle.scope)}`} bearer={session.jwt} scope={cycle.scope} onClose={() => setCycle(undefined)} /> : null}
+      {cycle?.bearer === session.jwt ? <PortfolioCycleTrades key={`${session.jwt}:${JSON.stringify(cycle.scope)}`} bearer={session.jwt} userIdentifier={identifier} scope={cycle.scope} onClose={() => setCycle(undefined)} /> : null}
 
       <section className="overflow-hidden rounded-lg border border-border bg-surface">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
@@ -225,7 +249,7 @@ export function PortfolioView() {
               </thead>
               <tbody>{data.positions.map((position) => (
                 <PositionRow
-                  key={`${position.asset.chain_id}:${position.asset.kind}:${position.asset.token_address}:${position.opened_entry_id}`}
+                  key={`${position.asset.chain_id}:${position.asset.kind}:${position.asset.token_address}:${position.cycle_key ?? position.opened_entry_id}`}
                   position={position}
                   onOpenCycle={(scope) => setCycle({bearer: session.jwt, scope})}
                   onOpenOpinion={(targetID, label) => {setOpinionNotice(undefined); setOpinionTarget({targetID, label});}}
@@ -234,13 +258,13 @@ export function PortfolioView() {
             </table>
           </div>
         ) : (
-          <div className="p-10 text-center text-sm text-muted">No open trading positions were returned. USDC cash is shown separately above.</div>
+          <div className="p-10 text-center text-sm text-muted">{data?.quantity_completeness && data.quantity_completeness !== 'complete' ? 'Position quantities are incomplete. Holdings cannot be confirmed yet.' : 'No open trading positions were returned. USDC cash is shown separately above.'}</div>
         )}
       </section>
 
       <p className="text-xs text-muted">Shares represent your recorded trading position, not the amount currently available to sell. Execution checks wallet balances separately.</p>
-      <ClosedPortfolioPositions key={`closed:${session.jwt}`} bearer={session.jwt} onOpenCycle={(scope) => setCycle({bearer: session.jwt, scope})} />
-      <PortfolioActivity key={session.jwt} bearer={session.jwt} />
+      <ClosedPortfolioPositions key={`closed:${identifier}:${session.jwt}`} historyEpoch={data?.history_epoch} bearer={session.jwt} userIdentifier={identifier} onOpenCycle={(scope) => setCycle({bearer: session.jwt, scope})} />
+      <PortfolioActivity key={`${identifier}:${session.jwt}`} bearer={session.jwt} userIdentifier={identifier} />
 
       {opinionTarget ? (
         <OpinionComposer

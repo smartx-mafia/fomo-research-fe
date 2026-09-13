@@ -6,7 +6,8 @@ import {useState} from 'react';
 import useSWRInfinite from 'swr/infinite';
 
 import {ApiError} from '@/api/envelope';
-import {getGlobalPortfolioTrades, type PortfolioTrade, type PortfolioTradePage, type ProtoTimestamp} from '@/api/portfolio';
+import {getUserPortfolioTrades} from '@/api/user-portfolio';
+import {type PortfolioTrade, type PortfolioTradePage, type ProtoTimestamp} from '@/api/portfolio';
 import {listTransfers, type TransferEntry, type TransferPage} from '@/api/transfers';
 import {formatBaseUnitsExact} from '@/lib/exact-decimal';
 import {chainLabel, shortAddr} from '@/lib/format';
@@ -63,7 +64,7 @@ export function TradeRow({trade}: {trade: PortfolioTrade}) {
       <td className="px-3 py-3 text-right font-mono text-xs"><p>{trade.token_amount ?? '—'} {trade.symbol ?? 'token'}</p>{trade.asset_decimals !== undefined ? <p className="mt-1 text-[10px] text-muted">{trade.asset_decimals} decimals</p> : null}</td>
       <td className="px-3 py-3 text-right font-mono text-xs">{trade.trade_value_usd === undefined ? '—' : `$${trade.trade_value_usd}`}</td>
       <td className="px-3 py-3 text-xs text-muted"><p>{isoTime(trade.created_at)}</p>{trade.confirmed_at ? <p className="mt-1 text-[10px]">Confirmed {isoTime(trade.confirmed_at)}</p> : null}</td>
-      <td className="px-3 py-3"><p className="text-foreground">{trade.status}</p><p className="mt-1 text-[10px] text-muted">{trade.lifecycle}</p>{trade.fee_app ? <p className="mt-1 font-mono text-[10px] text-muted">Fee {trade.fee_app} raw · {shortAddr(trade.fee_currency)}</p> : null}</td>
+      <td className="px-3 py-3"><p className="text-foreground">{trade.status}</p><p className="mt-1 text-[10px] text-muted">{trade.lifecycle}</p>{trade.fee_total_usd !== undefined ? <p className="mt-1 text-[10px] text-muted">Total fees ${trade.fee_total_usd}</p> : null}{trade.fee_app ? <p className="mt-1 font-mono text-[10px] text-muted">Fee {trade.fee_app} raw · {shortAddr(trade.fee_currency)}</p> : null}</td>
       <td className="px-3 py-3 font-mono text-xs text-muted"><p>{trade.tx_chain ? chainLabel(trade.tx_chain) : '—'}</p><p className="mt-1" title={trade.tx_hash}>{shortAddr(trade.tx_hash, 8, 6)}</p><p className="mt-1" title={trade.trade_id}>Trade {shortAddr(trade.trade_id, 8, 6)}</p></td>
     </tr>
   );
@@ -83,16 +84,16 @@ function TransferRow({transfer}: {transfer: TransferEntry}) {
   );
 }
 
-export function PortfolioActivity({bearer}: {bearer: string}) {
+export function PortfolioActivity({bearer, userIdentifier}: {bearer: string; userIdentifier: string}) {
   const [tab, setTab] = useState<ActivityTab>('trades');
-  const getTradeKey = (index: number, previous: PortfolioTradePage | null): readonly ['portfolio-activity-trades', string, string] | null => {
+  const getTradeKey = (index: number, previous: PortfolioTradePage | null): readonly ['portfolio-activity-trades', string, string, string] | null => {
       if (tab !== 'trades' || (index > 0 && !previous?.next_cursor)) return null;
-      return ['portfolio-activity-trades', bearer, previous?.next_cursor ?? '0'] as const;
+      return ['portfolio-activity-trades', bearer, previous?.next_cursor ?? '0', userIdentifier] as const;
   };
   const trades = useSWRInfinite<PortfolioTradePage, Error, typeof getTradeKey>(
     getTradeKey,
-    async ([, jwt, cursor]) => {
-      try {return await getGlobalPortfolioTrades(jwt, cursor, 50);} catch (cause) {return recordError(cause, jwt);}
+    async ([, jwt, cursor, identifier]) => {
+      try {return await getUserPortfolioTrades(identifier, cursor, jwt);} catch (cause) {return recordError(cause, jwt);}
     },
     {persistSize: false, revalidateOnFocus: true, shouldRetryOnError: false},
   );
