@@ -7,7 +7,7 @@ import {ApiError} from '@/api/envelope';
 import {decimalSign, formatDecimalExact, marketValueFromBaseUnits} from '@/lib/exact-decimal';
 import {chainLabel, shortAddr} from '@/lib/format';
 
-const chainName = (chain: string) => chain === 'sol' ? 'Solana' : chainLabel(chain);
+const chainName = (chain: string) => chain === 'all' ? 'ALL' : chain === 'sol' ? 'Solana' : chainLabel(chain);
 const windowName = (window: string) => ({'1d': '24H', '7d': '7D', '30d': '30D', all: '全部'}[window] ?? window.toUpperCase());
 const metricName = (metric: string) => ({total_profit: '总收益', realized_profit: '已实现收益', roi: 'ROI'}[metric] ?? metric);
 function money(value?: string) {
@@ -30,7 +30,7 @@ function WalletRow({entry, query}: {entry: LeaderboardEntry; query: LeaderboardQ
   const metric = entry.metric_value;
   return <tr className="border-t border-border transition hover:bg-surface-2/60">
     <td className="px-4 py-3"><span className={`inline-flex h-6 min-w-6 items-center justify-center rounded-md px-1 font-mono text-xs font-bold ${entry.rank <= 3 ? 'bg-accent/15 text-accent' : 'text-muted'}`}>{entry.rank}</span></td>
-    <td className="px-3 py-3"><a href={`/smart-money/${encodeURIComponent(query.chain)}/${encodeURIComponent(entry.address)}`} className="font-mono text-sm text-foreground hover:text-accent">{shortAddr(entry.address, 8, 6)}</a><p className="mt-1 text-[10px] text-muted">{entry.address}</p></td>
+    <td className="px-3 py-3"><div className="flex flex-wrap items-center gap-2"><a href={`/smart-money/${encodeURIComponent(entry.chain)}/${encodeURIComponent(entry.address)}`} className="font-mono text-sm text-foreground hover:text-accent">{shortAddr(entry.address, 8, 6)}</a><span title="所属链" className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted">{chainName(entry.chain)}</span></div><p className="mt-1 text-[10px] text-muted">{entry.address}</p></td>
     <td className={`px-3 py-3 text-right font-mono text-xs ${tone(entry.total_profit)}`}>{money(entry.total_profit)}</td>
     <td className={`px-3 py-3 text-right font-mono text-xs ${tone(entry.realized_profit)}`}>{money(entry.realized_profit)}</td>
     <td className={`px-3 py-3 text-right font-mono text-xs ${tone(entry.unrealized_profit)}`}>{money(entry.unrealized_profit)}</td>
@@ -41,14 +41,16 @@ function WalletRow({entry, query}: {entry: LeaderboardEntry; query: LeaderboardQ
 }
 
 export function LeaderboardView() {
-  const meta = useSWR('leaderboard-meta-v1', () => getLeaderboardMeta(), {shouldRetryOnError: false});
+  const meta = useSWR('leaderboard-meta-v2', () => getLeaderboardMeta(), {shouldRetryOnError: false});
   const [selection, setSelection] = useState<LeaderboardQuery>();
   useEffect(() => {
     if (!meta.data || selection) return;
-    const [chain] = meta.data.chains, [window] = meta.data.windows, [metric] = meta.data.metrics;
+    const chain = meta.data.chains.includes('all') ? 'all' : meta.data.chains[0];
+    const window = meta.data.windows.includes('7d') ? '7d' : meta.data.windows[0];
+    const metric = meta.data.metrics.includes('total_profit') ? 'total_profit' : meta.data.metrics[0];
     if (chain && window && metric) setSelection({chain, window, metric});
   }, [meta.data, selection]);
-  const board = useSWR(selection ? ['leaderboard-v1', selection.chain, selection.window, selection.metric] : null,
+  const board = useSWR(selection ? ['leaderboard-v2', selection.chain, selection.window, selection.metric] : null,
     ([, chain, window, metric]) => getLeaderboard({chain, window, metric}),
     {shouldRetryOnError: false, revalidateOnFocus: true});
   const patch = (next: Partial<LeaderboardQuery>) => setSelection((current) => current ? {...current, ...next} : current);
@@ -67,7 +69,7 @@ export function LeaderboardView() {
       {board.error ? <ErrorPanel error={board.error} retry={() => void board.mutate()} /> : null}
       {board.isLoading && !board.data ? <p className="p-10 text-center text-sm text-muted">正在加载榜单…</p> : null}
       {board.data && board.data.list.length === 0 ? <p className="p-10 text-center text-sm text-muted">该筛选组合暂无榜单数据。</p> : null}
-      {board.data?.list.length && selection ? <div className="overflow-x-auto"><table className="w-full min-w-[980px] text-left"><thead className="text-[11px] uppercase tracking-wide text-muted"><tr><th className="px-4 py-3">#</th><th className="px-3 py-3">钱包地址</th><th className="px-3 py-3 text-right">总收益</th><th className="px-3 py-3 text-right">已实现</th><th className="px-3 py-3 text-right">未实现</th><th className="px-3 py-3 text-right">成本</th><th className="px-3 py-3 text-right">交易 买/卖</th><th className="px-4 py-3 text-right text-accent">{metricName(board.data.metric)} ↓</th></tr></thead><tbody>{board.data.list.map((entry) => <WalletRow key={entry.address} entry={entry} query={selection} />)}</tbody></table></div> : null}
+      {board.data?.list.length && selection ? <div className="overflow-x-auto"><table className="w-full min-w-[980px] text-left"><thead className="text-[11px] uppercase tracking-wide text-muted"><tr><th className="px-4 py-3">#</th><th className="px-3 py-3">钱包地址</th><th className="px-3 py-3 text-right">总收益</th><th className="px-3 py-3 text-right">已实现</th><th className="px-3 py-3 text-right">未实现</th><th className="px-3 py-3 text-right">成本</th><th className="px-3 py-3 text-right">交易 买/卖</th><th className="px-4 py-3 text-right text-accent">{metricName(board.data.metric)} ↓</th></tr></thead><tbody>{board.data.list.map((entry) => <WalletRow key={`${entry.chain}:${entry.address}`} entry={entry} query={selection} />)}</tbody></table></div> : null}
       {board.data?.list.length ? <footer className="flex justify-between border-t border-border px-4 py-3 text-xs text-muted"><span>共 {board.data.count} 个钱包</span><span>{chainName(board.data.chain)} · {windowName(board.data.window)} · {metricName(board.data.metric)}</span></footer> : null}
     </section>
     {apiError?.traceID ? <p className="text-xs text-muted">Trace {apiError.traceID}</p> : null}
