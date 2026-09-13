@@ -15,35 +15,22 @@ const pnl: PortfolioPnl = {
 };
 const props = {pnl, loading: false, refreshing: false, stale: false, onRefresh: vi.fn()};
 describe('Portfolio PnL chart', () => {
-  it('shows available total assets even when the selected historical PnL is missing', async () => {
-    balanceMock.mockResolvedValue({points: [{at: '2026-09-09T00:00:00Z', balance_usd: '123.45'}], now_usd: '999', simulated: false});
-    render(<SWRConfig value={{provider: () => new Map()}}><PortfolioPnlChart {...props} bearer="missing-pnl" pnl={{d1: {amount_usd: '5', curve: []}}} /></SWRConfig>);
-    await screen.findByText('$999');
+  it('shows balance history independently when current assets and PnL are unavailable', () => {
+    render(<PortfolioPnlChart {...props} pnl={undefined} balance={{d1: {curve: [{at: '2026-09-09T00:00:00Z', balance_usd: '123.45'}], simulated: false}}} />);
+    fireEvent.click(screen.getByRole('button', {name: 'Total assets'}));
+    expect(screen.getByRole('img')).toBeTruthy();
     fireEvent.change(screen.getByRole('slider', {name: 'PnL sample'}), {target: {value: '22'}});
-    expect(screen.getByTestId('pnl-sample').textContent).toBe('—');
     expect(screen.getByTestId('pnl-assets').textContent).toBe('$123.45');
+    expect(screen.getByTestId('pnl-total').textContent).toBe('—');
   });
-  it('shows the actual API error code and trace instead of an ambiguous dash', async () => {
-    balanceMock.mockRejectedValue(new ApiError('business', 500000, 'Cash source unavailable', undefined, 'balance-trace'));
-    render(<SWRConfig value={{provider: () => new Map()}}><PortfolioPnlChart {...props} bearer="balance-failed" /></SWRConfig>);
-    const error = await screen.findByRole('alert');
-    expect(error.textContent).toContain('Cash source unavailable');
-    expect(error.textContent).toContain('500000');
-    expect(error.textContent).toContain('balance-trace');
-    expect(screen.getByTestId('pnl-sample').textContent).toBe('$5');
-  });
-  it('shows total assets alongside the selected historical PnL and leaves unmatched times unavailable', async () => {
-    balanceMock.mockResolvedValue({points: [{at: '2026-09-09T00:00:00Z', balance_usd: '123.45'}], now_usd: '999', as_of: '2026-09-09T01:04:00Z', simulated: false});
-    render(<SWRConfig value={{provider: () => new Map()}}><PortfolioPnlChart {...props} bearer="assets-test" /></SWRConfig>);
-    await screen.findByText('$999');
-    const svg = screen.getByRole('img');
-    vi.spyOn(svg, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 960, 300));
-    fireEvent(svg, new MouseEvent('pointermove', {bubbles: true, clientX: 794}));
-    expect(screen.getByTestId('pnl-sample').textContent).toBe('$-2');
+  it('uses the overview balance windows without fetching a separate curve', () => {
+    render(<PortfolioPnlChart {...props} balance={{d1: {curve: [{at: '2026-09-09T00:00:00Z', balance_usd: '123.45'}], amount_usd: '999', simulated: false}}} />);
+    expect(screen.getByTestId('pnl-assets').textContent).toBe('$999');
+    fireEvent.change(screen.getByRole('slider', {name: 'PnL sample'}), {target: {value: '22'}});
     expect(screen.getByTestId('pnl-assets').textContent).toBe('$123.45');
-    fireEvent.change(screen.getByRole('slider', {name: 'PnL sample'}), {target: {value: '23'}});
+    fireEvent.click(screen.getByRole('button', {name: '7D'}));
     expect(screen.getByTestId('pnl-assets').textContent).toBe('—');
-    expect(balanceMock).toHaveBeenCalledWith('assets-test', '1d');
+    expect(balanceMock).not.toHaveBeenCalled();
   });
   beforeEach(() => {vi.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-09-09T01:04:00Z'));});
   afterEach(() => vi.restoreAllMocks());
