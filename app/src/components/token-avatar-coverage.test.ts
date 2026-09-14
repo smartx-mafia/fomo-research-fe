@@ -23,6 +23,7 @@ describe('token avatar coverage boundary', () => {
       './DepositAddresses.tsx',
       './SweepDepositCard.tsx',
       './SquareOpinionCard.tsx',
+      './SquareTradeCard.tsx',
       './SmartMoneyProfile.tsx',
     ]) {
       expect(source(file), `${file} must use the canonical TokenAvatar`).toMatch(/TokenAvatar(?:View)?/);

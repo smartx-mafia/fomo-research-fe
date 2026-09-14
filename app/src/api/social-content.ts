@@ -11,7 +11,7 @@
  */
 import {call} from './envelope';
 import {normalizePortfolioPosition, positionTargetID, type PortfolioPosition} from './portfolio';
-import type {TokenInfo} from './token-metadata';
+import {normalizeTokenInfo, tokenKey, type TokenInfo} from './token-metadata';
 
 function socialCall(path: string, options: Parameters<typeof call>[1] = {}) {
   return call<unknown>(path, {...options, preserveInt64Fields: SOCIAL_INT64_FIELDS});
@@ -36,7 +36,8 @@ export const SQUARE_LANES = {
 export type SquareLane = (typeof SQUARE_LANES)[keyof typeof SQUARE_LANES];
 export type OpinionTargetName = 'POSITION';
 export type OpinionTargetType = 1;
-export type SquareItemType = 1;
+export type SquareItemType = 1 | 2;
+export type SquareFilter = 'SQUARE_FILTER_OPINION' | 'SQUARE_FILTER_BUY' | 'SQUARE_FILTER_SELL';
 
 declare const squarePageCursorBrand: unique symbol;
 declare const squareRefreshAnchorBrand: unique symbol;
@@ -91,6 +92,25 @@ export type UserActor = {
   avatarURL?: string;
 };
 
+export type SmartMoneyActor = {address: string; chains: string[]};
+
+export type TradeCard = {
+  side: 'buy' | 'sell';
+  chain: string;
+  tokenAddress: string;
+  token?: PositionToken;
+  tokenAmount?: string;
+  usd?: string;
+  /** Trade 权威成交均价（USD/枚）；缺席时不得用 usd/tokenAmount 反推。 */
+  executionPriceUSD?: string;
+  /** 成交价 × 首次采集时固化的流通量；缺席时不得用当前行情或供应量补算。 */
+  marketCapUSDAtTrade?: string;
+  occurredAt: ProtoTimestamp;
+  txHash?: string;
+  positionTargetID?: string;
+  txChain?: string;
+};
+
 export type PositionToken = TokenInfo;
 
 export type OpinionFeedContent = {
@@ -100,14 +120,19 @@ export type OpinionFeedContent = {
   token?: PositionToken;
 };
 
-export type SquareFeedItem = {
-  type: SquareItemType;
+export type TradeFeedContent = {kind: 'trade'; trade: TradeCard};
+
+type SquareFeedItemBase = {
   sourceID: string;
   actorIdentifier: string;
   actor: UserActor;
+  actorType?: 'user' | 'smart_money';
+  smartMoney?: SmartMoneyActor;
   sortTime: ProtoTimestamp;
-  content: OpinionFeedContent;
 };
+export type SquareOpinionItem = SquareFeedItemBase & {type: 1; content: OpinionFeedContent};
+export type SquareTradeItem = SquareFeedItemBase & {type: 2; content: TradeFeedContent};
+export type SquareFeedItem = SquareOpinionItem | SquareTradeItem;
 
 export type SquareFeedData = {
   /** The encoder returns data={} for an empty page. */
@@ -172,6 +197,7 @@ export type SquareFeedOptions = {
   bearer?: string;
   cursor?: SquarePageCursor;
   limit?: number;
+  filters?: readonly SquareFilter[];
   signal?: AbortSignal;
 };
 
@@ -180,6 +206,7 @@ export type SquareFeedUpdatesOptions = {
   bearer?: string;
   /** The refreshAnchor returned by listSquareFeedPage for the same lane. */
   anchor?: SquareRefreshAnchor;
+  filters?: readonly SquareFilter[];
   signal?: AbortSignal;
 };
 
@@ -300,10 +327,10 @@ function normalizeOpinion(value: unknown): Opinion {
   };
 }
 
-function normalizeActor(value: unknown): UserActor {
+function normalizeActor(value: unknown, allowEmpty = false): UserActor {
   const row = record(value);
-  const identifier = nonEmptyString(row?.identifier);
-  if (!row || !identifier) throw new SocialContentShapeError('feed actor.identifier is missing');
+  const identifier = nonEmptyString(row?.identifier) ?? '';
+  if (!row || (!allowEmpty && !identifier)) throw new SocialContentShapeError('feed actor.identifier is missing');
   const username = nonEmptyString(row.username);
   const nickname = nonEmptyString(row.nickname);
   const avatarURL = nonEmptyString(row.avatar_url);
@@ -313,6 +340,18 @@ function normalizeActor(value: unknown): UserActor {
     ...(nickname ? {nickname} : {}),
     ...(avatarURL ? {avatarURL} : {}),
   };
+}
+
+function normalizeSmartMoney(value: unknown): SmartMoneyActor | undefined {
+  const row = record(value);
+  if (!row) return undefined;
+  const address = nonEmptyString(row.address);
+  const chains = row.chains;
+  if (!address) return undefined;
+  if (chains !== undefined && (!Array.isArray(chains) || chains.some((chain) => typeof chain !== 'string'))) {
+    throw new SocialContentShapeError('feed smart_money.chains is invalid');
+  }
+  return {address, chains: (chains as string[] | undefined) ?? []};
 }
 
 function normalizePositionToken(card: UnknownRecord, position: PortfolioPosition): PositionToken | undefined {
@@ -338,23 +377,58 @@ function normalizeOpinionCard(value: unknown): OpinionFeedContent {
   return {kind: 'opinion', opinion, position, ...(token ? {token} : {})};
 }
 
+function normalizeTradeToken(value: unknown, chain: string, address: string): PositionToken | undefined {
+  const row = record(value);
+  if (!row || !nonEmptyString(row.address)) return undefined;
+  const token = normalizeTokenInfo(row);
+  if (!token || tokenKey(token.chain, token.address) !== tokenKey(chain, address)) {
+    throw new SocialContentShapeError('trade token does not match chain/address or decimals');
+  }
+  return token;
+}
+
+function normalizeTrade(value: unknown): TradeCard {
+  const row = record(value);
+  if (!row || (row.side !== 'buy' && row.side !== 'sell')) throw new SocialContentShapeError('feed trade.side is invalid');
+  const chain = nonEmptyString(row.chain);
+  const tokenAddress = nonEmptyString(row.token_address);
+  if (!chain || !tokenAddress) throw new SocialContentShapeError('feed trade identity is missing');
+  const token = normalizeTradeToken(row.token, chain, tokenAddress);
+  return {side: row.side, chain, tokenAddress, ...(token ? {token} : {}),
+    tokenAmount: nonEmptyString(row.token_amount), usd: nonEmptyString(row.usd),
+    executionPriceUSD: nonEmptyString(row.execution_price_usd), marketCapUSDAtTrade: nonEmptyString(row.market_cap_usd_at_trade),
+    occurredAt: normalizeTimestamp(row.occurred_at, 'feed trade.occurred_at'),
+    txHash: nonEmptyString(row.tx_hash), positionTargetID: nonEmptyString(row.position_target_id), txChain: nonEmptyString(row.tx_chain)};
+}
+
 function normalizeFeedItem(value: unknown): SquareFeedItem | undefined {
   const row = record(value);
   if (!row) throw new SocialContentShapeError('feed item is not an object');
 
   // Unknown future card types are ignored until the UI has a renderer for them.
-  if (row.type !== 1) return undefined;
+  if (row.type !== 1 && row.type !== 2) return undefined;
   const sourceID = nonEmptyString(row.source_id);
   const actorIdentifier = nonEmptyString(row.actor_identifier);
   if (!sourceID) throw new SocialContentShapeError('feed item.source_id is missing');
   if (!actorIdentifier) throw new SocialContentShapeError('feed item.actor_identifier is missing');
 
+  const actorType = row.actor_type === 'smart_money' ? 'smart_money' : row.actor_type === 'user' ? 'user' : row.type === 2 ? undefined : 'user';
+  if (row.type === 2 && !actorType) throw new SocialContentShapeError('feed trade.actor_type is missing');
+  const smartMoney = normalizeSmartMoney(row.smart_money);
+  const actor = normalizeActor(row.actor, actorType === 'smart_money');
+  if (actorType === 'smart_money' && (!smartMoney || smartMoney.address !== actorIdentifier)) throw new SocialContentShapeError('feed smart money identity mismatch');
+  if (actorType === 'user' && actor.identifier !== actorIdentifier) throw new SocialContentShapeError('feed user identity mismatch');
+
+  if (row.type === 2) {
+    const trade = normalizeTrade(row.trade);
+    return {type: 2, sourceID, actorIdentifier, actorType, actor, ...(smartMoney ? {smartMoney} : {}), sortTime: normalizeTimestamp(row.sort_time, 'feed item.sort_time'), content: {kind: 'trade', trade}};
+  }
+
   // oneof content 平铺成字段名 opinion（README 规则）；未选中时线上是 null。
   const opinionCard = record(row.opinion);
   if (!opinionCard) throw new SocialContentShapeError('feed item.opinion card is missing');
   const content = normalizeOpinionCard(opinionCard);
-  const actor = normalizeActor(row.actor);
-  if (content.opinion.authorIdentifier !== actorIdentifier || sourceID !== content.opinion.opinionID || actor.identifier !== actorIdentifier) {
+  if (content.opinion.authorIdentifier !== actorIdentifier || sourceID !== content.opinion.opinionID) {
     throw new SocialContentShapeError('feed position, author or opinion identity mismatch');
   }
 
@@ -362,7 +436,7 @@ function normalizeFeedItem(value: unknown): SquareFeedItem | undefined {
     type: 1,
     sourceID,
     actorIdentifier,
-    actor,
+    actor, actorType: 'user',
     sortTime: normalizeTimestamp(row.sort_time, 'feed item.sort_time'),
     content,
   };
@@ -401,7 +475,7 @@ function normalizeUpdatesData(value: unknown): SquareUpdatesData {
   return {
     count: omittedInteger(row, 'count'),
     hasMore: omittedBoolean(row, 'has_more'),
-    actors: (row.actors ?? []).map(normalizeActor),
+    actors: (row.actors ?? []).map((value) => normalizeActor(value)),
   };
 }
 
@@ -457,6 +531,7 @@ export async function listSquareFeedPage(
   const query = new URLSearchParams({lane});
   if (options.cursor) query.set('cursor', options.cursor);
   if (options.limit !== undefined) query.set('limit', String(options.limit));
+  for (const filter of options.filters ?? []) query.append('filters', filter);
   const response = await socialCall(`/v1/social/square/feed?${query.toString()}`, {
     bearer: options.bearer,
     signal: options.signal,
@@ -476,6 +551,7 @@ export async function getSquareFeedUpdates(
 ): Promise<SquareUpdatesData> {
   const query = new URLSearchParams({lane});
   if (options.anchor) query.set('anchor', options.anchor);
+  for (const filter of options.filters ?? []) query.append('filters', filter);
   const response = await socialCall(`/v1/social/square/feed/updates?${query.toString()}`, {
     bearer: options.bearer,
     signal: options.signal,

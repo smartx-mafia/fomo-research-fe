@@ -3,17 +3,18 @@
 import Image from 'next/image';
 import {ExternalLink, Heart, LoaderCircle} from 'lucide-react';
 import {useState} from 'react';
-import type {SquareFeedItem} from '@/api/social-content';
+import type {SquareOpinionItem} from '@/api/social-content';
 import {opinionAge, opinionCycleReturn} from '@/lib/opinion-card-display';
 import {decimalSign, formatDecimalExact} from '@/lib/exact-decimal';
 import styles from './SquareOpinionCard.module.css';
 import {TokenAvatar} from '@/components/TokenAvatar';
 
-export function SquareOpinionCard({item, remark, likePending, onToggleLike, now}: {
-  item: SquareFeedItem;
+export function SquareOpinionCard({item, remark, followControl, likePending, onToggleLike, now}: {
+  item: SquareOpinionItem;
   remark?: string;
+  followControl?: {phase: 'anonymous' | 'loading' | 'ready' | 'saving' | 'failed'; following?: boolean; onToggle: () => void};
   likePending: boolean;
-  onToggleLike: (item: SquareFeedItem) => void;
+  onToggleLike: (item: SquareOpinionItem) => void;
   now: number;
 }) {
   const [failedAvatar, setFailedAvatar] = useState<string>();
@@ -40,8 +41,7 @@ export function SquareOpinionCard({item, remark, likePending, onToggleLike, now}
       </div>
       <div className={styles.content}>
         <header className={styles.header}>
-          {/* 作者身份块整块链到用户资料页：整页 <a>（仓库约定 —— 路径式详情页在
-              静态导出下无客户端路由，同下方 token 链接）；feed 行保持轻量，不加关注按钮。 */}
+          {/* 作者身份块整块链到用户资料页；关注是相邻的独立操作，避免在链接内嵌按钮。 */}
           <a href={`/user/${encodeURIComponent(actor.identifier)}`} className={`${styles.identity} ${styles.identityLink}`}>
             <div className={styles.nameRow}>
               <span className={styles.name} title={name}>{name}</span>
@@ -49,10 +49,20 @@ export function SquareOpinionCard({item, remark, likePending, onToggleLike, now}
             </div>
             {actor.username ? <p className={styles.handle}>@{actor.username}</p> : null}
           </a>
+          <div className={styles.authorActions}>
           <time className={styles.time} dateTime={Number.isFinite(published.getTime()) ? published.toISOString() : undefined}
             title={Number.isFinite(published.getTime()) ? published.toLocaleString() : undefined}>
             {opinionAge(item.sortTime.seconds, now)}
           </time>
+          {followControl ? <button type="button" className={styles.follow}
+            disabled={followControl.phase === 'loading' || followControl.phase === 'saving'}
+            aria-pressed={followControl.following}
+            aria-label={followControl.phase === 'failed' ? `Retry follow status for ${name}` : followControl.following ? `Unfollow ${name}` : `Follow ${name}`}
+            onClick={followControl.onToggle}>
+            {followControl.phase === 'loading' || followControl.phase === 'saving' ? <LoaderCircle className={styles.spinner} size={13} aria-hidden="true" /> : null}
+            {followControl.phase === 'failed' ? 'Retry status' : followControl.phase === 'loading' ? 'Checking…' : followControl.phase === 'saving' ? 'Saving…' : followControl.following ? 'Following' : 'Follow'}
+          </button> : null}
+          </div>
         </header>
 
         <p className={styles.body}>{version.body}</p>

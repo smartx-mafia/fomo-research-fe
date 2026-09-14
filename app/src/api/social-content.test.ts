@@ -99,6 +99,7 @@ describe('social content square feed contract', () => {
     expect(page.refreshAnchor).toBeUndefined();
     expect(page.asOf).toBeUndefined();
     const item = page.items[0];
+    if (!item || item.type !== 1) throw new Error('expected opinion item');
     expect(item?.actor).toEqual({identifier: 'author-1', nickname: 'Author'});
     expect(item?.content.position.pnl_ratio).toBeUndefined();
     expect(item?.content.position.decimals).toBeUndefined();
@@ -109,6 +110,23 @@ describe('social content square feed contract', () => {
       viewerLike: false,
       items: [{kind: 'x_link', url: 'https://x.com/a/status/1'}],
     });
+  });
+
+  it('parses Trade-owned execution price and persisted circulating market cap without deriving fallbacks', async () => {
+    callMock.mockResolvedValue({data: {items: [{
+      type: 2, source_id: '4296196', actor_identifier: 'u1', actor_type: 'user',
+      sort_time: {seconds: 1789287308, nanos: 169338000}, actor: {identifier: 'u1'},
+      trade: {side: 'buy', chain: 'robinhood', token_address: '0x39dbed3a2bd333467115de45665cc57f813c4571',
+        token: {chain: '', address: '', symbol: '', name: '', decimals: 0}, token_amount: '1.287794545161634048', usd: '1',
+        execution_price_usd: '0.56553974602259984068', market_cap_usd_at_trade: '402723546.2776984',
+        occurred_at: {seconds: 1789287308, nanos: 169338000}, tx_hash: 'sig', position_target_id: '', tx_chain: 'solana'},
+    }]}});
+
+    const page = await listSquareFeedPage(SQUARE_LANES.NEWEST);
+    const item = page.items[0];
+    if (!item || item.type !== 2) throw new Error('expected trade item');
+    expect(item.content.trade.executionPriceUSD).toBe('0.56553974602259984068');
+    expect(item.content.trade.marketCapUSDAtTrade).toBe('402723546.2776984');
   });
 });
 

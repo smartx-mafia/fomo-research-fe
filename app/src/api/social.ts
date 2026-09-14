@@ -4,7 +4,7 @@ import {call} from './envelope';
 export type SocialTargetType = 'user' | 'smart_money';
 
 export type FollowMutationReply = {
-  /** protojson 省略 false；读取时统一使用 !!following。 */
+  /** 当前线格式显式返回 boolean；缺失表示无法确认关系，不能当作 false。 */
   following?: boolean;
   changed?: boolean;
   /** 仅关注聪明钱成功时可能出现。 */
