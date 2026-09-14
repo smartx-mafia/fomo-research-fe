@@ -2,14 +2,16 @@
 
 import Link from 'next/link';
 import {
+  ListFilter,
   LoaderCircle,
   LockKeyhole,
   RefreshCw,
   UserRound,
 } from 'lucide-react';
-import {useCallback, useEffect, useRef, useState} from 'react';
+import {Fragment, useCallback, useEffect, useRef, useState} from 'react';
 
 import {SquareOpinionCard} from './SquareOpinionCard';
+import {SquareTradeCard} from './SquareTradeCard';
 
 import {ApiError} from '@/api/envelope';
 import {
@@ -21,13 +23,15 @@ import {
   type LikeMutationResult,
   type ProtoTimestamp,
   type SquareFeedItem,
+  type SquareFilter,
+  type SquareOpinionItem,
   type SquareLane,
   type SquarePageCursor,
   type SquareRefreshAnchor,
   type SquareUpdatesData,
   type UserActor,
 } from '@/api/social-content';
-import {getRelations} from '@/api/social';
+import {useSquareAuthorRelations} from '@/hooks/useSquareAuthorRelations';
 import {clearSite, useSession} from '@/session/storage';
 
 export type SquareLaneSlug = 'for-you' | 'newest' | 'friends';
@@ -67,6 +71,21 @@ type Notice = {
   message: string;
 };
 
+type FilterSelection = {opinions: boolean; buys: boolean; sells: boolean};
+const DEFAULT_FILTERS: FilterSelection = {opinions: true, buys: true, sells: true};
+
+function apiFilters(filters: FilterSelection): SquareFilter[] {
+  return [
+    filters.opinions ? 'SQUARE_FILTER_OPINION' : undefined,
+    filters.buys ? 'SQUARE_FILTER_BUY' : undefined,
+    filters.sells ? 'SQUARE_FILTER_SELL' : undefined,
+  ].filter((filter): filter is SquareFilter => filter !== undefined);
+}
+
+function sameFilters(left: FilterSelection, right: FilterSelection) {
+  return left.opinions === right.opinions && left.buys === right.buys && left.sells === right.sells;
+}
+
 const LANE_ORDER: SquareLaneSlug[] = ['for-you', 'newest', 'friends'];
 
 const LANE_META: Record<SquareLaneSlug, {label: string; description: string; apiLane: SquareLane}> = {
@@ -77,7 +96,7 @@ const LANE_META: Record<SquareLaneSlug, {label: string; description: string; api
   },
   newest: {
     label: 'Newest',
-    description: 'The latest public opinions across SmartX.',
+    description: 'The latest public opinions and confirmed trades across SmartX.',
     apiLane: SQUARE_LANES.NEWEST,
   },
   friends: {
@@ -148,6 +167,7 @@ function withUpdatedVersion(
   liked: boolean,
   likeCount: number,
 ): SquareFeedItem {
+  if (item.type !== 1) return item;
   const version = item.content.opinion.latestVersion;
   if (version.versionID !== versionID) return item;
   return {
@@ -251,8 +271,14 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
   }, []);
   const [activeLane, setActiveLane] = useState<SquareLaneSlug>(initialLane);
   const [laneStates, setLaneStates] = useState<LaneStates>(initialLaneStates);
+  const [filtersByLane, setFiltersByLane] = useState<Record<SquareLaneSlug, FilterSelection>>({
+    'for-you': {...DEFAULT_FILTERS}, newest: {...DEFAULT_FILTERS}, friends: {...DEFAULT_FILTERS},
+  });
+  const filtersByLaneRef = useRef(filtersByLane);
+  filtersByLaneRef.current = filtersByLane;
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [filterDraft, setFilterDraft] = useState<FilterSelection>();
   const [pendingLikes, setPendingLikes] = useState<Record<string, boolean>>({});
-  const [remarks, setRemarks] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState<Notice>();
   /** §6.2 当前 activeLane 的未读气泡数据；切 lane 即弃，由轮询 effect 重新查询。 */
   const [unreads, setUnreads] = useState<SquareUpdatesData>();
@@ -263,14 +289,12 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
   const requestGenerationRef = useRef<Record<SquareLaneSlug, number>>({'for-you': 0, newest: 0, friends: 0});
   const requestInFlightRef = useRef<Record<SquareLaneSlug, boolean>>({'for-you': false, newest: false, friends: false});
   const requestAbortRef = useRef<Partial<Record<SquareLaneSlug, AbortController>>>({});
-  const remarksAbortRef = useRef<Set<AbortController>>(new Set());
   const mountedRef = useRef(false);
   /** 与点赞写入重叠的旧 Feed 快照不得覆盖 mutation 的最终状态。 */
   const likeMutationEpochRef = useRef(0);
   const activeLikeMutationsRef = useRef(0);
   const staleReadsAfterLikeRef = useRef<Partial<Record<SquareLaneSlug, 'first' | 'more'>>>({});
   const loadMoreSentinelRef = useRef<HTMLDivElement>(null);
-  const queriedRemarksRef = useRef<Set<string>>(new Set());
 
   activeLaneRef.current = activeLane;
   sessionJWTRef.current = session?.jwt;
@@ -286,49 +310,42 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
     setLaneStates((states) => ({...states, [lane]: updater(states[lane])}));
   }, []);
 
-  const ensureRemarks = useCallback(async (items: SquareFeedItem[]) => {
-    const bearer = sessionJWTRef.current;
-    if (!bearer) return;
-    const identifiers = [...new Set(items.map((item) => item.actor.identifier))]
-      .filter((identifier) => !queriedRemarksRef.current.has(identifier));
-    if (identifiers.length === 0) return;
-    identifiers.forEach((identifier) => queriedRemarksRef.current.add(identifier));
-    const batches = Array.from(
-      {length: Math.ceil(identifiers.length / 100)},
-      (_, index) => identifiers.slice(index * 100, (index + 1) * 100),
-    );
-    const controller = new AbortController();
-    remarksAbortRef.current.add(controller);
-    try {
-      const responses = await Promise.all(
-        batches.map((userIdentifiers) => getRelations(
-          bearer,
-          {userIdentifiers, addresses: []},
-          controller.signal,
-        )),
-      );
-      if (!mountedRef.current || sessionJWTRef.current !== bearer) return;
-      const next: Record<string, string> = {};
-      responses.forEach((response, batchIndex) => {
-        batches[batchIndex].forEach((identifier, index) => {
-          const remark = response.data.users?.[index]?.remark;
-          if (remark) next[identifier] = remark;
-        });
-      });
-      setRemarks((current) => ({...current, ...next}));
-    } catch (error) {
-      if (controller.signal.aborted || !mountedRef.current) return;
-      identifiers.forEach((identifier) => queriedRemarksRef.current.delete(identifier));
-      if (error instanceof ApiError && error.code === 400000 && sessionJWTRef.current === bearer) clearSite();
-      // Private labels are optional viewer enrichment. Their failure must not hide the public feed.
-    } finally {
-      remarksAbortRef.current.delete(controller);
-    }
-  }, []);
+  const authorRelations = useSquareAuthorRelations(session?.jwt, {
+    onError: (error) => {
+      const normalized = requestError(error);
+      if (error instanceof ApiError && error.code === 400000) clearSite();
+      setNotice({...normalized, message: normalized.kind === 'failed'
+        ? 'Follow status could not be confirmed. Retry the status beside the author before trying again.' : normalized.message});
+    },
+    onMutation: (identifier, following) => {
+      // Newest includes followed users' buys, so its cached membership changes too.
+      for (const lane of ['newest', 'friends'] as const) {
+        requestAbortRef.current[lane]?.abort();
+        delete requestAbortRef.current[lane];
+        requestGenerationRef.current[lane] += 1;
+        requestInFlightRef.current[lane] = false;
+        delete staleReadsAfterLikeRef.current[lane];
+        replaceLane(lane, (state) => ({...state,
+          items: lane === 'newest' ? [] : following === false ? state.items.filter((item) => item.actorIdentifier !== identifier) : state.items,
+          hydrated: false, nextCursor: undefined, refreshAnchor: undefined,
+          loadingInitial: false, loadingMore: false, refreshing: false, error: undefined, loadMoreError: undefined,
+        }));
+      }
+      if (activeLaneRef.current === 'friends' || activeLaneRef.current === 'newest') setUnreads(undefined);
+    },
+  });
+  const ensureRemarks = useCallback((items: SquareFeedItem[], refresh = false) =>
+    authorRelations.ensure(items.filter((item) => item.actorType !== 'smart_money' && item.actor.identifier).map((item) => item.actor.identifier), refresh), [authorRelations.ensure]);
 
-  const loadFirstPage = useCallback(async (lane: SquareLaneSlug, refresh: boolean) => {
+  const loadFirstPage = useCallback(async (lane: SquareLaneSlug, refresh: boolean, overrideFilters?: FilterSelection) => {
     const bearer = sessionJWTRef.current;
     if (lane === 'friends' && !bearer) return;
+    const selectedFilters = overrideFilters ?? filtersByLaneRef.current[lane];
+    const filters = apiFilters(selectedFilters);
+    if (filters.length === 0) {
+      replaceLane(lane, () => ({...emptyLaneState(), hydrated: true}));
+      return;
+    }
     if (requestInFlightRef.current[lane]) {
       if (!refresh) return;
       // A user refresh supersedes pagination. The older response is ignored by generation.
@@ -355,6 +372,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
       const data = await listSquareFeedPage(LANE_META[lane].apiLane, {
         bearer,
         limit: 20,
+        filters,
         signal: controller.signal,
       });
       if (!mountedRef.current || requestGenerationRef.current[lane] !== generation || sessionJWTRef.current !== bearer) return;
@@ -379,7 +397,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
         refreshing: false,
         loadingMore: false,
       }));
-      void ensureRemarks(data.items);
+      void ensureRemarks(data.items, refresh);
       if (refresh) {
         scrollByLaneRef.current[lane] = 0;
         if (activeLaneRef.current === lane) {
@@ -415,6 +433,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
     requestAbortRef.current[lane] = controller;
     const generation = ++requestGenerationRef.current[lane];
     const likeEpoch = likeMutationEpochRef.current;
+    const filters = apiFilters(filtersByLaneRef.current[lane]);
     replaceLane(lane, (current) => ({...current, loadingMore: true, loadMoreError: undefined}));
 
     try {
@@ -422,6 +441,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
         bearer,
         cursor: state.nextCursor,
         limit: 20,
+        filters,
         signal: controller.signal,
       });
       if (!mountedRef.current || requestGenerationRef.current[lane] !== generation || sessionJWTRef.current !== bearer) return;
@@ -492,23 +512,16 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
       requestGenerationRef.current[lane] += 1;
       requestInFlightRef.current[lane] = false;
     }
-    for (const controller of remarksAbortRef.current) controller.abort();
-    remarksAbortRef.current.clear();
     likeMutationEpochRef.current += 1;
     activeLikeMutationsRef.current = 0;
     staleReadsAfterLikeRef.current = {};
     setPendingLikes({});
-    queriedRemarksRef.current = new Set();
-    setRemarks({});
     setLaneStates((states) => {
       const invalidatePublicLane = (state: LaneState): LaneState => ({
         ...state,
-        items: state.items.map((item) => withUpdatedVersion(
-          item,
-          item.content.opinion.latestVersion.versionID,
-          false,
-          item.content.opinion.latestVersion.likeCount,
-        )),
+        items: state.items.map((item) => item.content.kind === 'opinion' ? withUpdatedVersion(
+          item, item.content.opinion.latestVersion.versionID, false, item.content.opinion.latestVersion.likeCount,
+        ) : item),
         hydrated: false,
         loadingInitial: false,
         refreshing: false,
@@ -518,7 +531,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
       });
       return {
         'for-you': invalidatePublicLane(states['for-you']),
-        newest: invalidatePublicLane(states.newest),
+        newest: emptyLaneState(),
         friends: emptyLaneState(),
       };
     });
@@ -584,6 +597,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
         const updates = await getSquareFeedUpdates(LANE_META[lane].apiLane, {
           bearer: jwt,
           anchor,
+          filters: apiFilters(filtersByLaneRef.current[lane]),
           signal: controller.signal,
         });
         if (stopped || activeLaneRef.current !== lane || sessionJWTRef.current !== jwt) return;
@@ -654,7 +668,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
     });
   };
 
-  const toggleLike = async (item: SquareFeedItem) => {
+  const toggleLike = async (item: SquareOpinionItem) => {
     const bearer = sessionJWTRef.current;
     if (!bearer) {
       setNotice({kind: 'sign-in', message: 'Square is public, but liking an opinion requires a SmartX session.'});
@@ -666,6 +680,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
     const snapshots: LikeSnapshot[] = [];
     for (const lane of LANE_ORDER) {
       for (const candidate of laneStates[lane].items) {
+        if (candidate.content.kind !== 'opinion') continue;
         const candidateVersion = candidate.content.opinion.latestVersion;
         if (candidateVersion.versionID === version.versionID) {
           snapshots.push({
@@ -737,6 +752,25 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
 
   const state = laneStates[activeLane];
   const isFriendsLocked = activeLane === 'friends' && !session;
+  const toggleFollow = (identifier: string) => {
+    if (!sessionJWTRef.current) {
+      setNotice({kind: 'sign-in', message: 'Sign in to follow this author and see their opinions in Friends.'});
+      return;
+    }
+    if (identifier === session?.user?.identifier) return;
+    setNotice(undefined);
+    void authorRelations.toggle(identifier);
+  };
+  const activeFilters = filtersByLane[activeLane];
+  const filterCount = [activeFilters.opinions, activeFilters.buys, activeFilters.sells].filter(Boolean).length;
+  const openFilters = () => { setFilterDraft({...activeFilters}); setFilterOpen(true); };
+  const applyFilters = () => {
+    const next = filterDraft ?? activeFilters;
+    setFiltersByLane((current) => ({...current, [activeLane]: next}));
+    filtersByLaneRef.current = {...filtersByLaneRef.current, [activeLane]: next};
+    setFilterDraft(undefined); setFilterOpen(false); setUnreads(undefined);
+    void loadFirstPage(activeLane, true, next);
+  };
 
   return (
     <section className="mx-auto w-full max-w-xl pb-12">
@@ -750,15 +784,20 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
           </div>
           <p className="mt-1 text-sm text-muted">{LANE_META[activeLane].description}</p>
         </div>
-        <button
-          type="button"
-          disabled={state.refreshing || state.loadingInitial || isFriendsLocked}
-          onClick={() => void loadFirstPage(activeLane, true)}
-          className="inline-flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-sm text-muted hover:border-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <RefreshCw className={`h-4 w-4 ${state.refreshing ? 'animate-spin' : ''}`} aria-hidden="true" />
-          {state.refreshing ? 'Refreshing' : 'Refresh'}
-        </button>
+        <div className="flex items-center gap-2">
+          {activeLane !== 'for-you' ? <button type="button" onClick={openFilters} className={`inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm ${sameFilters(activeFilters, DEFAULT_FILTERS) ? 'border-border bg-surface text-muted' : 'border-accent/60 bg-accent/10 text-accent'}`} aria-label="Open filters">
+            <ListFilter className="h-4 w-4" aria-hidden="true" /> Filter{sameFilters(activeFilters, DEFAULT_FILTERS) ? '' : ` (${filterCount})`}
+          </button> : null}
+          <button
+            type="button"
+            disabled={state.refreshing || state.loadingInitial || isFriendsLocked}
+            onClick={() => void loadFirstPage(activeLane, true)}
+            className="inline-flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-sm text-muted hover:border-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${state.refreshing ? 'animate-spin' : ''}`} aria-hidden="true" />
+            {state.refreshing ? 'Refreshing' : 'Refresh'}
+          </button>
+        </div>
       </header>
 
       <div className="sticky top-[57px] z-10 mb-4 border-b border-border bg-background/95 backdrop-blur">
@@ -781,6 +820,25 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
           ))}
         </div>
       </div>
+
+      {filterOpen && activeLane !== 'for-you' ? (() => {
+        const draft = filterDraft ?? activeFilters;
+        return <div className="fixed inset-0 z-40 flex items-end bg-black/60" role="presentation" onClick={() => {setFilterOpen(false); setFilterDraft(undefined);}}>
+          <section role="dialog" aria-modal="true" aria-label="Square filters" onClick={(event) => event.stopPropagation()} className="w-full rounded-t-3xl border border-border bg-surface px-5 pb-7 pt-4 shadow-2xl sm:mx-auto sm:mb-4 sm:max-w-xl sm:rounded-2xl">
+            <div className="mx-auto mb-5 h-1 w-12 rounded-full bg-border" aria-hidden="true" />
+            <div className="flex items-center justify-between"><h2 className="text-xl font-semibold text-foreground">Filters</h2><button type="button" onClick={() => setFilterDraft({...DEFAULT_FILTERS})} className="text-sm text-accent">Reset</button></div>
+            <div className="mt-5 space-y-1">
+              <FilterRow label="Opinions" checked={draft.opinions} onChange={(checked) => setFilterDraft({...draft, opinions: checked})} />
+              <FilterRow label="Buys" checked={draft.buys} onChange={(checked) => setFilterDraft({...draft, buys: checked})} />
+              <FilterRow label="Sells" checked={draft.sells} onChange={(checked) => setFilterDraft({...draft, sells: checked})} />
+              <FilterRow label="PnL milestones" checked={false} disabled note="Not available in the current Square API" />
+              <FilterRow label="Closed positions" checked={false} disabled note="Use Portfolio cycle history" />
+            </div>
+            <p className="mt-4 text-xs text-muted">Filters apply to {LANE_META[activeLane].label}. The server binds filters to the cursor and unread anchor.</p>
+            <button type="button" onClick={applyFilters} className="mt-5 w-full rounded-lg bg-accent px-4 py-3 text-sm font-semibold text-white">Apply filters</button>
+          </section>
+        </div>;
+      })() : null}
 
       {unreads ? (
         <button
@@ -851,7 +909,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
           </div>
           <div>
             <p className="text-sm font-medium text-foreground">
-              {activeLane === 'friends' ? 'No opinions from friends yet' : 'No opinions here yet'}
+              {activeLane === 'friends' ? 'No activities from friends yet' : 'No activities here yet'}
             </p>
             <p className="mt-1 text-sm text-muted">
               {activeLane === 'friends' ? 'Follow people to build this lane, then refresh.' : 'This is a real empty feed, not a loading error.'}
@@ -864,14 +922,26 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
             <InlineNotice notice={state.error} onDismiss={() => replaceLane(activeLane, (current) => ({...current, error: undefined}))} />
           ) : null}
           {state.items.map((item) => (
-            <SquareOpinionCard
-              now={displayNow}
-              key={`${item.type}:${item.sourceID}`}
-              item={item}
-              remark={item.actor.identifier === session?.user?.identifier ? undefined : remarks[item.actor.identifier]}
-              likePending={!!pendingLikes[item.content.opinion.latestVersion.versionID]}
-              onToggleLike={(candidate) => void toggleLike(candidate)}
-            />
+            <Fragment key={`${item.type}:${item.sourceID}`}>
+              {item.type === 1 ? <SquareOpinionCard
+                now={displayNow} item={item}
+                remark={item.actor.identifier === session?.user?.identifier ? undefined : authorRelations.entries[item.actor.identifier]?.remark}
+                followControl={(item.actorType ?? (item.type === 1 ? 'user' : undefined)) === 'user' && item.actor.identifier !== session?.user?.identifier ? {
+                  phase: session?.jwt ? authorRelations.entries[item.actor.identifier]?.phase ?? 'loading' : 'anonymous',
+                  following: authorRelations.entries[item.actor.identifier]?.following,
+                  onToggle: () => toggleFollow(item.actor.identifier),
+                } : undefined}
+                likePending={!!pendingLikes[item.content.opinion.latestVersion.versionID]}
+                onToggleLike={(candidate) => void toggleLike(candidate)}
+              /> : <SquareTradeCard
+                now={displayNow} item={item}
+                followControl={item.actorType === 'user' && item.actor.identifier !== session?.user?.identifier ? {
+                  phase: session?.jwt ? authorRelations.entries[item.actor.identifier]?.phase ?? 'loading' : 'anonymous',
+                  following: authorRelations.entries[item.actor.identifier]?.following,
+                  onToggle: () => toggleFollow(item.actor.identifier),
+                } : undefined}
+              />}
+            </Fragment>
           ))}
 
           <div ref={loadMoreSentinelRef} className="flex min-h-14 items-center justify-center py-2">
@@ -900,4 +970,11 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
       )}
     </section>
   );
+}
+
+function FilterRow({label, checked, disabled, note, onChange}: {label: string; checked: boolean; disabled?: boolean; note?: string; onChange?: (checked: boolean) => void}) {
+  return <label className={`flex items-center justify-between rounded-lg px-1 py-3 ${disabled ? 'opacity-45' : 'cursor-pointer hover:bg-surface-2'}`}>
+    <span><span className="block text-base text-foreground">{label}</span>{note ? <span className="mt-0.5 block text-xs text-muted">{note}</span> : null}</span>
+    <input type="checkbox" checked={checked} disabled={disabled} onChange={(event) => onChange?.(event.target.checked)} className="h-5 w-5 accent-accent" />
+  </label>;
 }

@@ -3,16 +3,17 @@
 import Image from 'next/image';
 import {ExternalLink, Heart, LoaderCircle} from 'lucide-react';
 import {useState} from 'react';
-import type {SquareFeedItem} from '@/api/social-content';
+import type {SquareOpinionItem} from '@/api/social-content';
 import {opinionAge, opinionCycleReturn} from '@/lib/opinion-card-display';
 import {decimalSign, formatDecimalExact} from '@/lib/exact-decimal';
 import styles from './SquareOpinionCard.module.css';
 
-export function SquareOpinionCard({item, remark, likePending, onToggleLike, now}: {
-  item: SquareFeedItem;
+export function SquareOpinionCard({item, remark, followControl, likePending, onToggleLike, now}: {
+  item: SquareOpinionItem;
   remark?: string;
+  followControl?: {phase: 'anonymous' | 'loading' | 'ready' | 'saving' | 'failed'; following?: boolean; onToggle: () => void};
   likePending: boolean;
-  onToggleLike: (item: SquareFeedItem) => void;
+  onToggleLike: (item: SquareOpinionItem) => void;
   now: number;
 }) {
   const [failedAvatar, setFailedAvatar] = useState<string>();
@@ -48,10 +49,20 @@ export function SquareOpinionCard({item, remark, likePending, onToggleLike, now}
             </div>
             {actor.username ? <p className={styles.handle}>@{actor.username}</p> : null}
           </div>
+          <div className={styles.authorActions}>
           <time className={styles.time} dateTime={Number.isFinite(published.getTime()) ? published.toISOString() : undefined}
             title={Number.isFinite(published.getTime()) ? published.toLocaleString() : undefined}>
             {opinionAge(item.sortTime.seconds, now)}
           </time>
+          {followControl ? <button type="button" className={styles.follow}
+            disabled={followControl.phase === 'loading' || followControl.phase === 'saving'}
+            aria-pressed={followControl.following}
+            aria-label={followControl.phase === 'failed' ? `Retry follow status for ${name}` : followControl.following ? `Unfollow ${name}` : `Follow ${name}`}
+            onClick={followControl.onToggle}>
+            {followControl.phase === 'loading' || followControl.phase === 'saving' ? <LoaderCircle className={styles.spinner} size={13} aria-hidden="true" /> : null}
+            {followControl.phase === 'failed' ? 'Retry status' : followControl.phase === 'loading' ? 'Checking…' : followControl.phase === 'saving' ? 'Saving…' : followControl.following ? 'Following' : 'Follow'}
+          </button> : null}
+          </div>
         </header>
 
         <p className={styles.body}>{version.body}</p>

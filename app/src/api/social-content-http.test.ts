@@ -23,6 +23,7 @@ describe('Social standard Position wire contract', () => {
   it('preserves all int64 identities and permits closed cycles and real zero decimals', async () => {
     serve(feed());
     const item = (await listSquareFeedPage(SQUARE_LANES.NEWEST)).items[0];
+    if (!item || item.type !== 1) throw new Error('expected opinion item');
     expect(item.content.opinion.opinionID).toBe('9007199254740993');
     expect(item.content.opinion.latestVersion.versionID).toBe('9007199254740994');
     expect(item.content.position.opened_entry_id).toBe('9007199254740995');
