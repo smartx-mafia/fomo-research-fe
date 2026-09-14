@@ -18,6 +18,7 @@ function card(author: string, id: string) {
 }
 beforeEach(() => {
   vi.clearAllMocks(); control.jwt = 'jwt'; control.following = {bob: true, alice: false, viewer: false};
+  window.history.replaceState({}, '', '/square');
   vi.spyOn(window, 'scrollTo').mockImplementation(() => {});
   vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {callback(0); return 1;});
   control.relations.mockImplementation(async (_jwt, {userIdentifiers}) => ({data: {users: userIdentifiers.map((identifier: string) => ({identifier, following: control.following[identifier] ?? false}))}}));
@@ -30,6 +31,13 @@ beforeEach(() => {
 afterEach(() => {cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals();});
 
 describe('Square user follow integration', () => {
+  it('does not overwrite a valid lane deep link before the parent page can hydrate it', async () => {
+    window.history.replaceState({}, '', '/square?mode=token&lane=newest');
+    render(<SquareFeed initialLane="for-you" />);
+    await screen.findByText('alice post 2');
+    expect(new URLSearchParams(window.location.search).get('lane')).toBe('newest');
+  });
+
   it('updates every card for the author, hides self follow and refreshes cached Friends', async () => {
     render(<SquareFeed initialLane="friends" />);
     await screen.findByRole('button', {name: 'Unfollow bob'});

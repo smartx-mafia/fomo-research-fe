@@ -545,7 +545,13 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
       url.searchParams.set('lane', lane);
       window.history[method]({}, '', `${url.pathname}?${url.searchParams.toString()}${url.hash}`);
     };
-    canonicalize(activeLaneRef.current, 'replaceState');
+    // 子组件 effect 会先于 SquarePage 的 effect 运行。若这里无条件写回默认
+    // for-you，父页面还没来得及读取的 newest/friends 深链就会永久丢失。
+    const requestedLane = new URL(window.location.href).searchParams.get('lane');
+    const initialURLLane = requestedLane && (LANE_ORDER as readonly string[]).includes(requestedLane)
+      ? requestedLane as SquareLaneSlug
+      : activeLaneRef.current;
+    canonicalize(initialURLLane, 'replaceState');
 
     const onPopState = () => {
       const value = new URL(window.location.href).searchParams.get('lane');
