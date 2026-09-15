@@ -118,7 +118,7 @@ describe('social content square feed contract', () => {
       sort_time: {seconds: 1789287308, nanos: 169338000}, actor: {identifier: 'u1'},
       trade: {side: 'buy', chain: 'robinhood', token_address: '0x39dbed3a2bd333467115de45665cc57f813c4571',
         token: {chain: '', address: '', symbol: '', name: '', decimals: 0}, token_amount: '1.287794545161634048', usd: '1',
-        execution_price_usd: '0.56553974602259984068', market_cap_usd_at_trade: '402723546.2776984', market_cap_is_fdv: true,
+        execution_price_usd: '0.56553974602259984068', market_cap_usd_at_trade: '402723546.2776984',
         occurred_at: {seconds: 1789287308, nanos: 169338000}, tx_hash: 'sig', position_target_id: '', tx_chain: 'solana'},
     }]}});
 
@@ -127,7 +127,6 @@ describe('social content square feed contract', () => {
     if (!item || item.type !== 2) throw new Error('expected trade item');
     expect(item.content.trade.executionPriceUSD).toBe('0.56553974602259984068');
     expect(item.content.trade.marketCapUSDAtTrade).toBe('402723546.2776984');
-    expect(item.content.trade.marketCapIsFDV).toBe(true);
   });
 });
 
