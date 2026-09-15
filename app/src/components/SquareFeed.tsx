@@ -265,7 +265,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
   const [displayNow, setDisplayNow] = useState(() => Date.now());
   useEffect(() => {
     const update = () => { if (document.visibilityState === 'visible') setDisplayNow(Date.now()); };
-    const timer = window.setInterval(update, 60_000);
+    const timer = window.setInterval(update, 1_000);
     document.addEventListener('visibilitychange', update);
     return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', update); };
   }, []);

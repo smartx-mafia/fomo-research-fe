@@ -6,7 +6,7 @@ describe('Square card display', () => {
     const now = 1_788_855_000_000;
     expect(opinionAge(now / 1000 - 32 * 60, now)).toBe('32m');
     expect(opinionAge(now / 1000 - 7200, now)).toBe('2h');
-    expect(opinionAge(now / 1000 + 30, now)).toBe('now');
+    expect(opinionAge(now / 1000 + 30, now)).toBe('0s');
     expect(opinionAge(NaN, now)).toBe('');
   });
   it('uses a direction marker instead of a duplicate minus sign', () => {
