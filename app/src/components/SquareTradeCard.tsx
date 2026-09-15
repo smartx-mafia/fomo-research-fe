@@ -21,6 +21,7 @@ export function SquareTradeCard({item, followControl, now}: {
   const profile = isSmartMoney ? item.smartMoney : undefined;
   const actorName = isSmartMoney ? profile?.displayName || profile?.handle || shortAddress(item.actorIdentifier) : actorLabel(item.actor);
   const sourceURL = safeWebURL(profile?.sourceURL);
+  const platformHandle = profile?.handle?.replace(/^@/, '');
   const xHandle = profile?.xHandle?.replace(/^@/, '');
   const tokenSymbol = trade.token?.symbol || shortAddress(trade.tokenAddress);
   const tokenHref = `/token/${encodeURIComponent(trade.chain)}/${encodeURIComponent(trade.tokenAddress)}`;
@@ -31,7 +32,7 @@ export function SquareTradeCard({item, followControl, now}: {
   return (
     <article className={styles.card} aria-label={`${trade.side} activity by ${actorName}`}>
       <div className={styles.avatar}>
-        {actorAvatar && failedAvatar !== actorAvatar ? <Image src={actorAvatar} alt="" width={36} height={36} unoptimized onError={() => setFailedAvatar(actorAvatar)} /> : <span aria-hidden="true">{actorName.slice(0, 1).toUpperCase() || '•'}</span>}
+        {actorAvatar && failedAvatar !== actorAvatar ? <Image src={actorAvatar} alt={`${actorName} avatar`} width={36} height={36} unoptimized onError={() => setFailedAvatar(actorAvatar)} /> : <span aria-hidden="true">{actorName.slice(0, 1).toUpperCase() || '•'}</span>}
       </div>
       <div className={styles.content}>
         <header className={styles.header}>
@@ -39,7 +40,8 @@ export function SquareTradeCard({item, followControl, now}: {
             <div className={styles.nameRow}><span className={styles.name} title={actorName}>{actorName}</span><span className={`${styles.sideBadge} ${sideClass}`}>{trade.side === 'buy' ? 'Buy' : 'Sell'}</span></div>
             {isSmartMoney ? <p className={styles.handle}>
               <span title={item.actorIdentifier}>{shortAddress(item.actorIdentifier)}</span> · {trade.chain}
-              {profile?.source ? <> · {sourceURL ? <a href={sourceURL} target="_blank" rel="noreferrer noopener">{profile.source}</a> : profile.source}</> : null}
+              {platformHandle ? <> · {sourceURL ? <a href={sourceURL} target="_blank" rel="noreferrer noopener">@{platformHandle}</a> : <span>@{platformHandle}</span>}</> : null}
+              {profile?.source ? <> · {sourceURL && !platformHandle ? <a href={sourceURL} target="_blank" rel="noreferrer noopener">{profile.source}</a> : profile.source}</> : null}
               {xHandle ? <> · <a href={`https://x.com/${encodeURIComponent(xHandle)}`} target="_blank" rel="noreferrer noopener">@{xHandle}</a></> : null}
             </p> : item.actor.username ? <p className={styles.handle}>@{item.actor.username}</p> : null}
           </div>
