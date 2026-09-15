@@ -1,6 +1,6 @@
 # Token Overview frontend
 
-Implemented on 2026-09-09 in the existing token detail page. Overview is the default detail section, above the unchanged Trade panel; Trades and Holders remain available on explicit selection. The existing live statistics card is titled “Market stats”.
+Implemented on 2026-09-09 in the existing token detail page and updated on 2026-09-15 for the Codex risk and board-stream contract. Overview is the default detail section, above the unchanged Trade panel; Trades and Holders remain available on explicit selection. The existing live statistics card is titled “Market stats”.
 
 ## Data boundary
 
@@ -27,6 +27,52 @@ No ATH/ATL, honeypot, tax, source-verification, community-verification, unsuppor
 
 There is no fallback to holders, bars, market warmup, token lookup or trading endpoints inside Overview. The expanded fields arrive in the same `/overview` response and add no frontend request, Codex request, waterfall or changed SWR key. The existing page's market snapshot, live stream, chart and trading controls remain unchanged. Selecting the pre-existing Holders/Trades sections retains their existing behavior.
 
+## Risk API and board-stream boundary
+
+`isScam` is public only through the detail Overview contract. Recommendation lists consume the same Codex evidence on the backend, but neither HTTP board rows nor WebSocket `TokenMarket` frames expose the raw risk fields.
+
+| Surface | Returns raw risk fields? | Frontend contract |
+|---|---|---|
+| `GET /v1/tokens/{chain}/{address}/overview` | Yes | Read `risk.result_is_scam`, `risk.token_is_scam`, `risk.potential_scam_reasons` and `risk.quality` |
+| `GET /v1/boards/{board}` | No | Rows have already passed the backend recommendation gate; do not expect or synthesize `risk` |
+| WS `board:{trending\|bonding\|graduated\|crypto\|most_held}` | No | `snapshot`/`update` contain the same post-gate `TokenMarket` shape as the HTTP board; `remove` identifies members to delete |
+| `GET /v1/search?scope=SEARCH_SCOPE_TOKEN` | No | Exact-address risk tokens remain searchable; opening the detail page loads their risk evidence from Overview |
+| TokenInfo, TokenMarket and token-market WS | No | Do not infer scam state from `security_score`, liquidity, verification badges or missing fields |
+
+The backend order is:
+
+```text
+Codex filterTokens
+  -> includeScams=false + potentialScam=false for dynamic-board candidate queries
+  -> local scam/potential-scam gate
+  -> Redis board snapshot and diff
+  -> HTTP board and WebSocket snapshot/update/remove
+```
+
+For `Trending`, the browser subscribes with:
+
+```json
+{"op":"subscribe","topic":"board:trending"}
+```
+
+The client does not run a second risk filter. `useBoardStream` replaces local membership on `snapshot`, merges `update` by normalized `chain + address`, and removes matching members on `remove`. If a listed token later becomes ineligible, it disappears after the next successful backend board rebuild and the stream publishes the resulting `remove`; a WebSocket reconnect or sequence gap is recovered by requesting a new snapshot.
+
+Risk qualification currently behaves as follows:
+
+- either raw scam field explicitly `true` excludes the token from recommendation boards;
+- a non-empty `potential_scam_reasons` list excludes the token;
+- `null/null/[]` remains unknown and is not a safety certification; V1 does not block it solely because the supplier gave no explicit evidence;
+- the detail, exact search, watchlist and existing-holding paths remain visible even when the token is excluded from recommendation boards;
+- recommendation removal does not by itself disable Buy or Sell. Trading policy is a separate backend decision.
+
+Frontend implications:
+
+- fetch raw risk only through the existing Overview request; do not add a board-row lookup or per-token request;
+- never add `risk` to `TokenMarket` locally or persist an Overview warning as if it were part of a later WS frame;
+- do not hide exact search results, watchlist items or holdings merely because the recommendation stream omitted them;
+- treat `risk.quality.state=AVAILABLE` as “the fields were observed”, not “the token is safe”; explicit `false` is also not a SmartX verification;
+- keep unknown reason identifiers bounded and render the generic risk copy rather than exposing arbitrary supplier text.
+
 ## Request lifecycle
 
 - SWR caches by normalized `chain + address` and does not reuse previous-token data.
@@ -44,6 +90,7 @@ There is no fallback to holders, bars, market warmup, token lookup or trading en
 - Browser QA used the existing local dev server with the real test API: website/X and changing activity values rendered; missing Top10 and unconfigured route showed `—`. Desktop and 390px mobile layouts were checked. The new section does not trigger Holders or Trades on initial mount. No trade submission or wallet action was performed.
 - Top10 with data, configured route text, zero/null, expiry, failures and cancellation are covered by controlled tests; the real browser sample did not have cached Top10 or a configured route.
 - Non-blocking tooling notices: existing peer/deprecation and ignored external `yarn.lock` warnings; DOM visibility tests produce a Node `TimeoutNaNWarning` from SWR's global focus event timer binding (Event passed as delay), not an Overview retry delay. Tests pass without suppressing this notice.
+- Codex risk rollout verification used one current risk sample end to end: the token remained available through unified exact search and `/overview`, while both HTTP Trending and a real `board:trending` WebSocket snapshot excluded it. The WS snapshot contained only `TokenMarket` keys, confirming that the backend filters membership before publication rather than exposing `isScam` for client-side filtering. Supplier reasons are time-varying evidence, so fixtures—not a permanently labelled address—own deterministic regression coverage.
 
 Source publication was authorized separately after local verification. The current main branch's Cloudflare static export, token shell route, redirects and other features are preserved. Frontend deployment is a separate step and is not manually performed by this commit/push workflow.
 
