@@ -92,7 +92,16 @@ export type UserActor = {
   avatarURL?: string;
 };
 
-export type SmartMoneyActor = {address: string; chains: string[]};
+export type SmartMoneyActor = {
+  address: string;
+  chains: string[];
+  displayName?: string;
+  avatarURL?: string;
+  handle?: string;
+  xHandle?: string;
+  source?: string;
+  sourceURL?: string;
+};
 
 export type TradeCard = {
   side: 'buy' | 'sell';
@@ -351,7 +360,10 @@ function normalizeSmartMoney(value: unknown): SmartMoneyActor | undefined {
   if (chains !== undefined && (!Array.isArray(chains) || chains.some((chain) => typeof chain !== 'string'))) {
     throw new SocialContentShapeError('feed smart_money.chains is invalid');
   }
-  return {address, chains: (chains as string[] | undefined) ?? []};
+  return {address, chains: (chains as string[] | undefined) ?? [],
+    displayName: nonEmptyString(row.display_name), avatarURL: nonEmptyString(row.avatar_url),
+    handle: nonEmptyString(row.handle), xHandle: nonEmptyString(row.x_handle),
+    source: nonEmptyString(row.source), sourceURL: nonEmptyString(row.source_url)};
 }
 
 function normalizePositionToken(card: UnknownRecord, position: PortfolioPosition): PositionToken | undefined {

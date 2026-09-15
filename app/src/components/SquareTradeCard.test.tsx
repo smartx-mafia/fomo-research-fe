@@ -20,6 +20,28 @@ describe('Square Trade card', () => {
     expect(screen.getByRole('link', {name: /Tx/}).getAttribute('href')).toContain('robinhoodchain.blockscout.com');
     expect(screen.queryByRole('button', {name: /Follow/})).toBeNull();
   });
+  it('renders an external wallet profile and source without platform follow controls', () => {
+    const trade = item('sell');
+    Object.assign(trade.smartMoney!, {displayName: '阿峰_Afeng', avatarURL: 'https://gmgn.ai/avatar.jpg',
+      xHandle: '@aa_AFeng', source: 'gmgn', sourceURL: 'https://gmgn.ai/robinhood/address/0xwallet'});
+    trade.content.trade.chain = 'eth';
+    trade.content.trade.txChain = 'eth';
+    render(<SquareTradeCard item={trade} now={100000} />);
+    expect(screen.getByText('阿峰_Afeng')).toBeTruthy();
+    expect(screen.getByRole('link', {name: 'gmgn'}).getAttribute('href')).toBe('https://gmgn.ai/robinhood/address/0xwallet');
+    expect(screen.getByRole('link', {name: '@aa_AFeng'}).getAttribute('href')).toBe('https://x.com/aa_AFeng');
+    expect(screen.getByRole('article').querySelector('img')?.getAttribute('src')).toBe('https://gmgn.ai/avatar.jpg');
+    expect(screen.getByRole('link', {name: /Tx/}).getAttribute('href')).toBe('https://etherscan.io/tx/0xabc');
+    expect(screen.queryByRole('button', {name: /Follow/})).toBeNull();
+  });
+  it('keeps source text but does not render unsafe profile links or avatars', () => {
+    const trade = item('buy');
+    Object.assign(trade.smartMoney!, {source: 'fomo', sourceURL: 'javascript:alert(1)', avatarURL: 'javascript:alert(1)'});
+    render(<SquareTradeCard item={trade} now={100000} />);
+    expect(screen.getByText(/fomo/)).toBeTruthy();
+    expect(screen.queryByRole('link', {name: 'fomo'})).toBeNull();
+    expect(screen.getByRole('article').querySelector('img')).toBeNull();
+  });
   it('renders buy with green side marker and missing values as unavailable', () => {
     const buy = item('buy'); buy.content.trade.usd = undefined; buy.content.trade.tokenAmount = undefined; buy.content.trade.marketCapUSDAtTrade = undefined;
     render(<SquareTradeCard item={buy} now={100000} />);

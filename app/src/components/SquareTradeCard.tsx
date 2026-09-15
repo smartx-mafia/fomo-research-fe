@@ -18,12 +18,15 @@ export function SquareTradeCard({item, followControl, now}: {
   const [failedAvatar, setFailedAvatar] = useState<string>();
   const trade = item.content.trade;
   const isSmartMoney = item.actorType === 'smart_money';
-  const actorName = isSmartMoney ? shortAddress(item.actorIdentifier) : actorLabel(item.actor);
+  const profile = isSmartMoney ? item.smartMoney : undefined;
+  const actorName = isSmartMoney ? profile?.displayName || profile?.handle || shortAddress(item.actorIdentifier) : actorLabel(item.actor);
+  const sourceURL = safeWebURL(profile?.sourceURL);
+  const xHandle = profile?.xHandle?.replace(/^@/, '');
   const tokenSymbol = trade.token?.symbol || shortAddress(trade.tokenAddress);
   const tokenHref = `/token/${encodeURIComponent(trade.chain)}/${encodeURIComponent(trade.tokenAddress)}`;
   const occurredSeconds = trade.occurredAt.seconds;
   const sideClass = trade.side === 'buy' ? styles.buy : styles.sell;
-  const actorAvatar = !isSmartMoney ? item.actor.avatarURL : undefined;
+  const actorAvatar = safeWebURL(isSmartMoney ? profile?.avatarURL : item.actor.avatarURL);
 
   return (
     <article className={styles.card} aria-label={`${trade.side} activity by ${actorName}`}>
@@ -34,7 +37,11 @@ export function SquareTradeCard({item, followControl, now}: {
         <header className={styles.header}>
           <div className={styles.identity}>
             <div className={styles.nameRow}><span className={styles.name} title={actorName}>{actorName}</span><span className={`${styles.sideBadge} ${sideClass}`}>{trade.side === 'buy' ? 'Buy' : 'Sell'}</span></div>
-            {isSmartMoney ? <p className={styles.handle}>Smart money · {trade.chain}</p> : item.actor.username ? <p className={styles.handle}>@{item.actor.username}</p> : null}
+            {isSmartMoney ? <p className={styles.handle}>
+              <span title={item.actorIdentifier}>{shortAddress(item.actorIdentifier)}</span> · {trade.chain}
+              {profile?.source ? <> · {sourceURL ? <a href={sourceURL} target="_blank" rel="noreferrer noopener">{profile.source}</a> : profile.source}</> : null}
+              {xHandle ? <> · <a href={`https://x.com/${encodeURIComponent(xHandle)}`} target="_blank" rel="noreferrer noopener">@{xHandle}</a></> : null}
+            </p> : item.actor.username ? <p className={styles.handle}>@{item.actor.username}</p> : null}
           </div>
           <div className={styles.authorActions}>
             <time className={styles.time} dateTime={occurredSeconds > 0 ? new Date(occurredSeconds * 1000).toISOString() : undefined}>{opinionAge(occurredSeconds, now)}</time>
@@ -70,7 +77,7 @@ function txHref(chain: string, hash: string): string {
   if (chain === 'solana') return `https://solscan.io/tx/${encodeURIComponent(hash)}`;
   if (chain === 'base') return `https://basescan.org/tx/${encodeURIComponent(hash)}`;
   if (chain === 'bsc') return `https://bscscan.com/tx/${encodeURIComponent(hash)}`;
-  if (chain === 'ethereum') return `https://etherscan.io/tx/${encodeURIComponent(hash)}`;
+  if (chain === 'eth' || chain === 'ethereum') return `https://etherscan.io/tx/${encodeURIComponent(hash)}`;
   if (chain === 'robinhood') return `https://robinhoodchain.blockscout.com/tx/${encodeURIComponent(hash)}`;
   return '#';
 }
@@ -78,4 +85,14 @@ function txHref(chain: string, hash: string): string {
 function formatMarketCap(value: string): string {
   const number = Number(value);
   return Number.isFinite(number) ? fmtCompact(number) : formatDecimalExact(value, 2);
+}
+
+function safeWebURL(value?: string): string | undefined {
+  if (!value) return undefined;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' || url.protocol === 'http:' ? url.href : undefined;
+  } catch {
+    return undefined;
+  }
 }
