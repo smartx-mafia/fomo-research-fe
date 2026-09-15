@@ -337,6 +337,12 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
   const ensureRemarks = useCallback((items: SquareFeedItem[], refresh = false) =>
     authorRelations.ensure(items.filter((item) => item.actorType !== 'smart_money' && item.actor.identifier).map((item) => item.actor.identifier), refresh), [authorRelations.ensure]);
 
+  const visibleItems = laneStates[activeLane].items;
+  useEffect(() => {
+    // Rehydrate missing relations when cached cards survive a scope reset or Fast Refresh.
+    void ensureRemarks(visibleItems);
+  }, [ensureRemarks, visibleItems]);
+
   const loadFirstPage = useCallback(async (lane: SquareLaneSlug, refresh: boolean, overrideFilters?: FilterSelection) => {
     const bearer = sessionJWTRef.current;
     if (lane === 'friends' && !bearer) return;
