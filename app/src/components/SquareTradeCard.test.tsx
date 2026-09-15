@@ -20,6 +20,12 @@ describe('Square Trade card', () => {
     expect(screen.getByRole('link', {name: /Tx/}).getAttribute('href')).toContain('robinhoodchain.blockscout.com');
     expect(screen.queryByRole('button', {name: /Follow/})).toBeNull();
   });
+  it('labels provider FDV instead of circulating market cap', () => {
+    const trade = item('buy');
+    trade.content.trade.marketCapIsFDV = true;
+    render(<SquareTradeCard item={trade} now={100000} />);
+    expect(screen.getByText('at $8.10M FDV')).toBeTruthy();
+  });
   it('renders an external wallet profile and source without platform follow controls', () => {
     const trade = item('sell');
     Object.assign(trade.smartMoney!, {displayName: '阿峰_Afeng', avatarURL: 'https://gmgn.ai/avatar.jpg',

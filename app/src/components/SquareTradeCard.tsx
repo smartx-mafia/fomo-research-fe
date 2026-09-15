@@ -64,7 +64,7 @@ export function SquareTradeCard({item, followControl, now}: {
           </div>
           <div className={styles.tradeValues}>
             <span className={styles.tradeUsd} title={trade.usd ? 'Trade value (USD)' : 'Trade value unavailable'}>{trade.usd ? `$${formatDecimalExact(trade.usd)}` : '—'}</span>
-            <span className={styles.tradeMarketCap} title={trade.marketCapUSDAtTrade ? 'Circulating market cap at trade time (USD)' : 'Market cap at trade time unavailable'}>{trade.marketCapUSDAtTrade ? `at $${formatMarketCap(trade.marketCapUSDAtTrade)} MC` : 'at — MC'}</span>
+            <span className={styles.tradeMarketCap} title={trade.marketCapUSDAtTrade ? (trade.marketCapIsFDV ? 'Fully diluted valuation at trade time (USD)' : 'Market cap at trade time (USD)') : 'Market cap at trade time unavailable'}>{trade.marketCapUSDAtTrade ? `at $${formatMarketCap(trade.marketCapUSDAtTrade)} ${trade.marketCapIsFDV ? 'FDV' : 'MC'}` : 'at — MC'}</span>
             {trade.txHash ? <a className={styles.tradeLink} href={txHref(trade.txChain || trade.chain, trade.txHash)} target="_blank" rel="noreferrer noopener">Tx <ArrowUpRight size={13} aria-hidden="true" /></a> : null}
           </div>
         </div>

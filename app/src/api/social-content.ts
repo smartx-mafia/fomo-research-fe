@@ -114,6 +114,7 @@ export type TradeCard = {
   executionPriceUSD?: string;
   /** 成交价 × 首次采集时固化的流通量；缺席时不得用当前行情或供应量补算。 */
   marketCapUSDAtTrade?: string;
+  marketCapIsFDV?: boolean;
   occurredAt: ProtoTimestamp;
   txHash?: string;
   positionTargetID?: string;
@@ -408,7 +409,7 @@ function normalizeTrade(value: unknown): TradeCard {
   const token = normalizeTradeToken(row.token, chain, tokenAddress);
   return {side: row.side, chain, tokenAddress, ...(token ? {token} : {}),
     tokenAmount: nonEmptyString(row.token_amount), usd: nonEmptyString(row.usd),
-    executionPriceUSD: nonEmptyString(row.execution_price_usd), marketCapUSDAtTrade: nonEmptyString(row.market_cap_usd_at_trade),
+    executionPriceUSD: nonEmptyString(row.execution_price_usd), marketCapUSDAtTrade: nonEmptyString(row.market_cap_usd_at_trade), marketCapIsFDV: row.market_cap_is_fdv === true,
     occurredAt: normalizeTimestamp(row.occurred_at, 'feed trade.occurred_at'),
     txHash: nonEmptyString(row.tx_hash), positionTargetID: nonEmptyString(row.position_target_id), txChain: nonEmptyString(row.tx_chain)};
 }
