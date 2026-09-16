@@ -10,6 +10,7 @@
 import { num } from "./format";
 import {normalizeTokenOverview, type TokenOverview} from './token-overview';
 import {normalizeChartBars} from './chart-data';
+import {normalizeTokenRisk} from './token-risk';
 import type {
   BoardData,
   BoardName,
@@ -136,6 +137,7 @@ export function normalizeTokenMarket(raw: unknown): TokenMarket {
   const out: TokenMarket = {
     chain: typeof r.chain === "string" ? r.chain : "",
     address: typeof r.address === "string" ? r.address : "",
+    risk: normalizeTokenRisk(r.risk, {flat: r, observedAtMs: r.updated_at}),
   };
   for (const f of TOKEN_STR_FIELDS) {
     if (typeof r[f] === "string" && r[f] !== "") out[f] = r[f] as string;

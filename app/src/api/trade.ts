@@ -1,6 +1,6 @@
 /** Browser-side client for docs/contracts/meme.md. Amounts stay exact decimal strings. */
 import {call} from './envelope';
-import {normalizeTokenInfo, type TokenInfo} from './token-metadata';
+import {normalizeGetToken, type GetTokenReply, type TokenInfo} from './token-metadata';
 
 export type {TokenInfo} from './token-metadata';
 
@@ -154,15 +154,16 @@ export async function listTradeChains(bearer: string, signal?: AbortSignal) {
   return response.data.chains ?? [];
 }
 
-export async function getTokenInfo(chain: string, address: string, signal?: AbortSignal): Promise<TokenInfo> {
-  const response = await call<{info?: unknown}>(
+export async function getToken(chain: string, address: string, bearer?: string, signal?: AbortSignal): Promise<GetTokenReply> {
+  const response = await call<unknown>(
     `/v1/tokens/${encodeURIComponent(chain)}/${encodeURIComponent(address)}`,
-    {signal},
+    {bearer, signal},
   );
-  const info = normalizeTokenInfo(response.data.info);
-  if (!info) {
+  const token = normalizeGetToken(response.data);
+  if (!token) {
     throw new Error('Token metadata is unavailable.');
   }
+  const {info} = token;
   const evmAddress = /^0x[0-9a-f]{40}$/i.test(address);
   const addressMatches = evmAddress
     ? info.address.toLowerCase() === address.toLowerCase()
@@ -170,7 +171,12 @@ export async function getTokenInfo(chain: string, address: string, signal?: Abor
   if (info.chain !== chain || !addressMatches) {
     throw new Error('Token metadata identity does not match the requested token.');
   }
-  return info;
+  return token;
+}
+
+/** Existing trade consumers intentionally use static info only. */
+export async function getTokenInfo(chain: string, address: string, signal?: AbortSignal): Promise<TokenInfo> {
+  return (await getToken(chain, address, undefined, signal)).info;
 }
 
 export async function previewTrade(bearer: string, intent: TradeIntent, signal?: AbortSignal) {

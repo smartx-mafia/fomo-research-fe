@@ -1,3 +1,5 @@
+import {normalizeTokenRisk, type TokenRisk} from './token-risk';
+
 /** Consumer contract for the cache-only /overview endpoint. Never coerce unknown into 0. */
 export type OverviewQuality = {
   state: 0 | 1 | 2;
@@ -32,12 +34,7 @@ export type TokenOverview = {
     top10_percent: number | null;
     quality: OverviewQuality;
   };
-  risk: {
-    result_is_scam: boolean | null;
-    token_is_scam: boolean | null;
-    potential_scam_reasons: string[];
-    quality: OverviewQuality;
-  };
+  risk: TokenRisk;
   contract_status: {
     mint_authority: string | null;
     mintable_valid: boolean | null;
@@ -92,23 +89,6 @@ export function overviewDescription(value: unknown): string | null {
   if (!trimmed) return null;
   const characters = [...trimmed];
   return characters.length > 2_000 ? characters.slice(0, 2_000).join('') : trimmed;
-}
-
-function potentialScamReasons(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  const reasons: string[] = [];
-  const seen = new Set<string>();
-  // Bound inspected input as well as accepted output; malformed prefixes cannot force an unbounded scan.
-  const inspectedItems = Math.min(value.length, 64);
-  for (let index = 0; index < inspectedItems; index += 1) {
-    const item = value[index];
-    const reason = boundedIdentifier(item, 128);
-    if (reason === null || seen.has(reason)) continue;
-    seen.add(reason);
-    reasons.push(reason);
-    if (reasons.length === 32) break;
-  }
-  return reasons;
 }
 
 function quality(value: unknown, source: string): OverviewQuality {
@@ -186,12 +166,7 @@ export function normalizeTokenOverview(raw: unknown, chain: string, address: str
       top10_percent: percentage(intelligence.top10_percent),
       quality: quality(intelligence.quality, 'codex.filterTokens'),
     },
-    risk: {
-      result_is_scam: nullableBoolean(risk.result_is_scam),
-      token_is_scam: nullableBoolean(risk.token_is_scam),
-      potential_scam_reasons: potentialScamReasons(risk.potential_scam_reasons),
-      quality: quality(risk.quality, 'codex.filterTokens'),
-    },
+    risk: normalizeTokenRisk(risk),
     contract_status: {
       mint_authority: boundedIdentifier(contract.mint_authority),
       mintable_valid: nullableBoolean(contract.mintable_valid),

@@ -135,6 +135,19 @@ export function getMarketSocket(): MarketSocket {
 
 export type StreamStatus = "connecting" | "live" | "rejected";
 
+/** Merge normalized backend rows only; membership/risk qualification stays server-owned. */
+export function mergeBoardUpdates(current: TokenMarket[], data: unknown): TokenMarket[] {
+  const next = [...current];
+  const batch = Array.isArray(data) ? data : [data];
+  for (const raw of batch) {
+    const token = normalizeTokenMarket(raw);
+    const index = next.findIndex((item) => item.chain === token.chain && item.address === token.address);
+    if (index >= 0) next[index] = token;
+    else next.push(token);
+  }
+  return next;
+}
+
 /**
  * 订阅一个榜单 topic，维护 snapshot + update/remove 合并后的列表。
  * `initial` 是可选启动快照，只在首次挂载时生效，WS snapshot 到达即被替换。
@@ -209,13 +222,7 @@ export function useBoardStream(board: BoardName, initial?: TokenMarket[]) {
 
         if (f.kind === "update") {
           // 协议 v2：update 的 data 是合批后的 TokenMarket 数组（窗口内同币只发最后一次状态）
-          const batch = Array.isArray(f.data) ? f.data : [f.data];
-          for (const raw of batch) {
-            const tok = normalizeTokenMarket(raw);
-            const i = list.findIndex((t) => t.chain === tok.chain && t.address === tok.address);
-            if (i >= 0) list[i] = tok;
-            else list.push(tok);
-          }
+          list = mergeBoardUpdates(list, f.data);
         } else {
           // remove 同样是数组：漏处理会残留已出榜的币（周期快照 10s 内会冲正，但用户看得见）
           const batch = Array.isArray(f.data) ? f.data : [f.data];

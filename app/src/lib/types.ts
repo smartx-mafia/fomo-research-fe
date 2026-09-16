@@ -1,3 +1,5 @@
+import type {TokenRisk} from './token-risk';
+
 /**
  * SmartX 行情 API 类型定义（smartx-backend docs/api/market.md）。
  *
@@ -30,6 +32,8 @@ export type BoardName = (typeof BOARDS)[number];
 export interface TokenMarket {
   chain: string;
   address: string;
+  /** Canonical normalized risk. Transitional flat backend fields are input-only. */
+  risk: TokenRisk;
   symbol?: string;
   name?: string;
   logo?: string;
@@ -123,8 +127,8 @@ export interface HolderItem {
 /**
  * 全站搜索（GET /v1/search）的结果条目：身份 + 可选行情。
  * market 缺席是诚实的答案（暂无该币行情/穿透配额打满），不要渲染成价格 0。
- * 注意：搜索路径的 market 只给 7 字段子集（logo/price/market_cap/liquidity/
- * volume_24h/price_change_24h/updated_at），别读其它行情字段。
+ * 最新契约的 market 是 TokenMarket 全字段镜像，risk 也只在 market 内出现；
+ * 搜索结果顶层不复制 risk，避免同一事实出现两个权威位置。
  */
 export interface SearchItem {
   chain: string;

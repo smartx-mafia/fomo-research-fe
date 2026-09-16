@@ -9,6 +9,8 @@ import {
   parseUnits,
   phaseOf,
   pollTrade,
+  getToken,
+  getTokenInfo,
   previewTrade,
   TRADE_PHASE_FAILED,
   TRADE_PHASE_PENDING,
@@ -60,6 +62,33 @@ describe('trade request contract', () => {
     await expect(createTrade('jwt', {...BASE_INTENT, amountIn: '1.5'})).rejects.toThrow(/positive integer/);
     await expect(createTrade('jwt', {...BASE_INTENT, slippageBps: 10_001})).rejects.toThrow(/10,000/);
     expect(callMock).not.toHaveBeenCalled();
+  });
+
+  it('accepts GetToken risk beside info while preserving the trade-facing info helper', async () => {
+    const response = {data: {
+      info: {chain: 'base', address: BASE_INTENT.token, decimals: 18},
+      personal: {is_favorited: true, position_amount: '1000000000000000001'},
+      risk: {
+        resultIsScam: false,
+        tokenIsScam: null,
+        potentialScamReasons: [],
+        level: 'NO_FLAG_REPORTED',
+        quality: {state: 'AVAILABLE', freshness: 'FRESH', source: 'codex.filterTokens', definitionVersion: 'token-risk-v2', observedAtMs: '1788922311890'},
+      },
+    }};
+    callMock.mockResolvedValue(response);
+    const authenticated = new AbortController();
+    const anonymous = new AbortController();
+
+    await expect(getToken('base', BASE_INTENT.token, 'jwt', authenticated.signal)).resolves.toMatchObject({
+      personal: {is_favorited: true, position_amount: '1000000000000000001'},
+      risk: {level: 'NO_FLAG_REPORTED'},
+    });
+    await expect(getToken('base', BASE_INTENT.token)).resolves.toMatchObject({risk: {level: 'NO_FLAG_REPORTED'}});
+    await expect(getTokenInfo('base', BASE_INTENT.token, anonymous.signal)).resolves.toMatchObject({decimals: 18});
+    expect(callMock).toHaveBeenNthCalledWith(1, `/v1/tokens/base/${BASE_INTENT.token}`, {bearer: 'jwt', signal: authenticated.signal});
+    expect(callMock).toHaveBeenNthCalledWith(2, `/v1/tokens/base/${BASE_INTENT.token}`, {bearer: undefined, signal: undefined});
+    expect(callMock).toHaveBeenNthCalledWith(3, `/v1/tokens/base/${BASE_INTENT.token}`, {bearer: undefined, signal: anonymous.signal});
   });
 });
 

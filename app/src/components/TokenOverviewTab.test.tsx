@@ -4,6 +4,7 @@ import {renderToStaticMarkup} from 'react-dom/server';
 import {within} from '@testing-library/react';
 import {describe, expect, it} from 'vitest';
 import {normalizeTokenOverview} from '@/lib/token-overview';
+import {normalizeTokenRisk} from '@/lib/token-risk';
 import {TokenOverviewContent} from './TokenOverviewTab';
 
 const now = 1_788_922_311_890;
@@ -66,7 +67,7 @@ describe('Overview presentation', () => {
   });
 
   it('prioritizes an explicit scam warning and translates known reasons', () => {
-    const risky = {...data, risk: {...data.risk, result_is_scam: true, potential_scam_reasons: ['MinimumLiquidity', 'SuspiciousWalletActivity']}};
+    const risky = {...data, risk: {...data.risk, resultIsScam: true, potentialScamReasons: ['MinimumLiquidity', 'SuspiciousWalletActivity'], level: 'SCAM' as const}};
     const html = renderToStaticMarkup(<TokenOverviewContent chain="solana" address="TokenA" data={risky} now={now} />);
     const container = document.createElement('div');
     container.innerHTML = html;
@@ -80,7 +81,7 @@ describe('Overview presentation', () => {
   });
 
   it('renders potential-risk copy with a safe fallback for unknown reasons', () => {
-    const risky = {...data, risk: {...data.risk, result_is_scam: null, token_is_scam: false, potential_scam_reasons: ['LiquidityUnknown', 'FutureUnknownReason']}};
+    const risky = {...data, risk: {...data.risk, resultIsScam: null, tokenIsScam: false, potentialScamReasons: ['LiquidityUnknown', 'FutureUnknownReason'], level: 'POTENTIAL' as const}};
     const html = renderToStaticMarkup(<TokenOverviewContent chain="solana" address="TokenA" data={risky} now={now} />);
     const container = document.createElement('div');
     container.innerHTML = html;
@@ -93,6 +94,26 @@ describe('Overview presentation', () => {
     expect(html).not.toContain('Scam warning');
   });
 
+  it('renders a fixed Potential warning when every supplier reason is rejected', () => {
+    const risk = normalizeTokenRisk({
+      resultIsScam: false,
+      tokenIsScam: false,
+      potentialScamReasons: [`bad\u202Ereason`, `bad\u0000reason`],
+      level: 'POTENTIAL',
+      quality: {
+        state: 'AVAILABLE', freshness: 'FRESH', source: 'codex.filterTokens',
+        definitionVersion: 'token-risk-v2', observedAtMs: String(now),
+      },
+    });
+    expect(risk.potentialScamReasons).toEqual([]);
+    const html = renderToStaticMarkup(<TokenOverviewContent chain="solana" address="TokenA" data={{...data, risk}} now={now} />);
+    const container = document.createElement('div');
+    container.innerHTML = html;
+    const alert = within(container).getByRole('alert');
+    expect(within(alert).getByRole('heading', {name: 'Potential token risk'})).toBeTruthy();
+    expect(alert.textContent).toContain('Codex reported one or more potential risk signals.');
+  });
+
   it('does not turn explicit false with no reasons into a safety certification', () => {
     const html = renderToStaticMarkup(<TokenOverviewContent chain="solana" address="TokenA" data={data} now={now} />);
     expect(html).not.toContain('Scam warning');
@@ -103,7 +124,7 @@ describe('Overview presentation', () => {
   it('labels old snapshots and hides profile, risk, holder and contract values once expired', () => {
     const older = renderToStaticMarkup(<TokenOverviewContent chain="solana" address="TokenA" data={data} now={now + 60_001} />);
     expect(older).toContain('Older snapshot');
-    const risky = {...data, risk: {...data.risk, token_is_scam: true}};
+    const risky = {...data, risk: {...data.risk, tokenIsScam: true, level: 'SCAM' as const}};
     const expired = renderToStaticMarkup(<TokenOverviewContent chain="solana" address="TokenA" data={risky} now={now + 300_000} />);
     expect(expired).not.toContain('$0');
     expect(expired).not.toContain('21.50%');

@@ -1,6 +1,7 @@
 import {afterEach, describe, expect, it, vi} from 'vitest';
 import {fetchTokenOverview, MARKET_API_BASE, MarketApiError} from './market';
 import {normalizeTokenOverview, overviewDescription, overviewLink, overviewPollDelay, overviewStatus} from './token-overview';
+import {tokenRiskStatus} from './token-risk';
 
 const now = 1_788_922_311_890;
 const q = {state: 1, freshness: 1, source: 'codex.filterTokens', definition_version: 'overview-v1', observed_at_ms: now};
@@ -47,7 +48,7 @@ describe('Overview contract and freshness', () => {
     expect(data.holder_summary.top10_percent).toBe(18.6);
     expect(data.profile).toMatchObject({telegram: 'https://t.me/example', description: 'A project description.'});
     expect(data.holder_intelligence).toMatchObject({dev_held_percent: 0, sniper_count: 0, sniper_held_percent: 0, top10_percent: 21.5});
-    expect(data.risk).toMatchObject({result_is_scam: false, token_is_scam: null, potential_scam_reasons: []});
+    expect(data.risk).toMatchObject({resultIsScam: false, tokenIsScam: null, potentialScamReasons: [], level: 'NO_FLAG_REPORTED'});
     expect(data.contract_status).toMatchObject({mint_authority: null, mintable_valid: true, freezable_valid: false, b20_transfer_paused: false, b20_burn_paused: true});
     expect(data.trading_route_display.label).toBeNull();
   });
@@ -85,7 +86,7 @@ describe('Overview contract and freshness', () => {
       contract_status: {...fixture().contract_status, mintable_valid: 1, freezable_valid: 'false', b20_transfer_paused: 0},
     };
     const data = normalizeTokenOverview(raw, 'solana', 'TokenA');
-    expect(data.risk).toMatchObject({result_is_scam: null, token_is_scam: null});
+    expect(data.risk).toMatchObject({resultIsScam: null, tokenIsScam: null});
     expect(data.contract_status).toMatchObject({mintable_valid: null, freezable_valid: null, b20_transfer_paused: null});
   });
 
@@ -101,13 +102,13 @@ describe('Overview contract and freshness', () => {
     const reasons = Array.from({length: 40}, (_, index) => `UnknownReason${index}`);
     const raw = {...fixture(), risk: {...fixture().risk, potential_scam_reasons: ['MinimumLiquidity', 'MinimumLiquidity', null, `bad\u0000reason`, `bad\u202Ereason`, `bad\u2066reason`, `\uFEFFTrimmedReason`, ...reasons]}};
     const data = normalizeTokenOverview(raw, 'solana', 'TokenA');
-    expect(data.risk.potential_scam_reasons).toHaveLength(32);
-    expect(data.risk.potential_scam_reasons.slice(0, 2)).toEqual(['MinimumLiquidity', 'UnknownReason0']);
+    expect(data.risk.potentialScamReasons).toHaveLength(32);
+    expect(data.risk.potentialScamReasons.slice(0, 2)).toEqual(['MinimumLiquidity', 'UnknownReason0']);
   });
 
   it('inspects at most 64 potential-risk input items', () => {
     const raw = {...fixture(), risk: {...fixture().risk, potential_scam_reasons: [...Array(64).fill(null), 'MinimumLiquidity']}};
-    expect(normalizeTokenOverview(raw, 'solana', 'TokenA').risk.potential_scam_reasons).toEqual([]);
+    expect(normalizeTokenOverview(raw, 'solana', 'TokenA').risk.potentialScamReasons).toEqual([]);
   });
 
   it('accepts safe Telegram links and rejects malformed profile and authority text', () => {
@@ -139,8 +140,8 @@ describe('Overview contract and freshness', () => {
     expect(data.profile).toMatchObject({telegram: null, description: null});
     expect(data.holder_intelligence.quality.state).toBe(0);
     expect(data.holder_intelligence).toMatchObject({dev_held_percent: null, sniper_count: null, top10_percent: null});
-    expect(data.risk).toMatchObject({result_is_scam: null, token_is_scam: null, potential_scam_reasons: []});
-    expect(data.risk.quality.state).toBe(0);
+    expect(data.risk).toMatchObject({resultIsScam: null, tokenIsScam: null, potentialScamReasons: [], level: 'UNKNOWN'});
+    expect(data.risk.quality.state).toBe('UNAVAILABLE');
     expect(data.contract_status).toMatchObject({mint_authority: null, mintable_valid: null, b20_transfer_paused: null});
     expect(data.contract_status.quality.state).toBe(0);
   });
@@ -161,12 +162,12 @@ describe('Overview contract and freshness', () => {
     expect(overviewStatus(data.holder_summary.quality, now + 299_999, true)).toBe('fresh');
     expect(overviewStatus(data.holder_intelligence.quality, now + 60_000)).toBe('fresh');
     expect(overviewStatus(data.holder_intelligence.quality, now + 60_001)).toBe('stale');
-    expect(overviewStatus(data.risk.quality, now + 60_001)).toBe('stale');
+    expect(tokenRiskStatus(data.risk, now + 60_001)).toBe('stale');
     expect(overviewStatus(data.contract_status.quality, now + 60_001)).toBe('stale');
     expect(overviewStatus(data.activity.quality, now + 300_000)).toBe('unavailable');
     expect(overviewStatus(data.holder_summary.quality, now + 300_000, true)).toBe('unavailable');
     expect(overviewStatus(data.holder_intelligence.quality, now + 300_000)).toBe('unavailable');
-    expect(overviewStatus(data.risk.quality, now + 300_000)).toBe('unavailable');
+    expect(tokenRiskStatus(data.risk, now + 300_000)).toBe('unavailable');
     expect(overviewStatus(data.contract_status.quality, now + 300_000)).toBe('unavailable');
     expect(overviewStatus(data.activity.quality, now - 1)).toBe('unavailable');
   });

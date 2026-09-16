@@ -6,6 +6,7 @@ import {useTokenOverview} from '@/hooks/useTokenOverview';
 import {DASH, chainLabel, fmtInt, fmtPct, fmtUsd, shortAddr} from '@/lib/format';
 import {MarketApiError} from '@/lib/market';
 import {overviewStatus, type OverviewStatus, type TokenOverview} from '@/lib/token-overview';
+import {tokenRiskStatus} from '@/lib/token-risk';
 
 function SnapshotBadge({status, loading}: {status: OverviewStatus; loading: boolean}) {
   const label = loading ? 'Loading' : status === 'fresh' ? 'Recent snapshot' : status === 'stale' ? 'Older snapshot' : 'Not available';
@@ -36,9 +37,10 @@ function RiskNotice({risk, status, loading}: {risk?: TokenOverview['risk']; stat
   if (status === 'unavailable' || !risk) {
     return <section aria-labelledby="overview-risk"><div role="status" className="flex items-start gap-3 rounded-lg border border-border bg-surface-2 p-4 text-sm text-muted"><CircleAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" /><div><h2 id="overview-risk" className="font-semibold text-foreground">Risk status unavailable</h2><p className="mt-1 text-xs">The current cached Codex snapshot does not provide a usable risk status. This is not a safety assessment.</p></div></div></section>;
   }
-  const explicitScam = risk.result_is_scam === true || risk.token_is_scam === true;
-  const messages = [...new Set(risk.potential_scam_reasons.map((reason) => RISK_REASON_COPY[reason] ?? 'Codex reported an additional potential risk signal.'))];
-  if (!explicitScam && messages.length === 0) return null;
+  const explicitScam = risk.level === 'SCAM';
+  const potential = risk.level === 'POTENTIAL';
+  const messages = [...new Set(risk.potentialScamReasons.map((reason) => RISK_REASON_COPY[reason] ?? 'Codex reported an additional potential risk signal.'))];
+  if (!explicitScam && !potential && messages.length === 0) return null;
   const title = explicitScam ? 'Scam warning' : 'Potential token risk';
   return (
     <section aria-labelledby="overview-risk">
@@ -109,7 +111,7 @@ export function TokenOverviewContent({
   const profileState = overviewStatus(data?.profile.quality, now);
   const activityState = overviewStatus(data?.activity.quality, now);
   const intelligenceState = overviewStatus(data?.holder_intelligence.quality, now);
-  const riskState = overviewStatus(data?.risk.quality, now);
+  const riskState = tokenRiskStatus(data?.risk, now);
   const contractState = overviewStatus(data?.contract_status.quality, now);
   const profile = profileState === 'unavailable' ? undefined : data?.profile;
   const website = profile?.website ?? null;
