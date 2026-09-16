@@ -1,5 +1,5 @@
-import {LeaderboardView} from '@/components/LeaderboardView';
+import {LeaderboardTabs} from '@/components/LeaderboardTabs';
 
 export default function LeaderboardPage() {
-  return <LeaderboardView />;
+  return <LeaderboardTabs />;
 }
