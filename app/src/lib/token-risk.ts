@@ -1,3 +1,4 @@
+import {normalizeRiskAssessment, type RiskAssessment} from './risk-assessment';
 /** Canonical frontend representation shared by every token-data surface. */
 export type TokenRiskLevel = 'UNKNOWN' | 'NO_FLAG_REPORTED' | 'POTENTIAL' | 'SCAM';
 
@@ -11,6 +12,7 @@ export type TokenRiskQuality = {
 };
 
 export type TokenRisk = {
+  assessment?: RiskAssessment;
   resultIsScam: boolean | null;
   tokenIsScam: boolean | null;
   potentialScamReasons: string[];
@@ -171,6 +173,7 @@ function normalizeNestedRisk(raw: Record<string, unknown>): TokenRisk {
   const reasons = potentialScamReasons(field(raw, 'potentialScamReasons', 'potential_scam_reasons'));
   const quality = normalizeQuality(raw);
   return {
+    ...(raw.assessment ? {assessment: normalizeRiskAssessment(raw.assessment)} : {}),
     resultIsScam,
     tokenIsScam,
     potentialScamReasons: reasons,

@@ -30,6 +30,7 @@ import {
   type TokenRef,
 } from '@/api/token-metadata';
 import {clearSite, useSession} from '@/session/storage';
+import type {TokenRisk} from '@/lib/token-risk';
 
 const META_FRESH_MS = 5 * 60_000;
 const META_RETRY_MS = 60_000;
@@ -39,6 +40,8 @@ const EMPTY_BOOLEAN_MAP: Record<string, boolean> = {};
 export type TokenMetadataState = {
   status: 'ready' | 'missing' | 'invalid' | 'error';
   info?: TokenInfo;
+  /** Dynamic risk stays beside static info, including when a later request fails. */
+  risk?: TokenRisk;
   checkedAt: number;
   retryAt: number;
 };
@@ -174,11 +177,11 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
             response.data.results.forEach((result, index) => {
               const key = keys[index];
               if (result.status === TOKEN_META_STATUS_OK && result.info) {
-                updates[key] = {status: 'ready', info: result.info, checkedAt, retryAt: checkedAt + META_FRESH_MS};
+                updates[key] = {status: 'ready', info: result.info, risk: result.risk, checkedAt, retryAt: checkedAt + META_FRESH_MS};
               } else if (result.status === TOKEN_META_STATUS_INVALID) {
-                updates[key] = {status: 'invalid', checkedAt, retryAt: Number.POSITIVE_INFINITY};
+                updates[key] = {status: 'invalid', risk: result.risk, checkedAt, retryAt: Number.POSITIVE_INFINITY};
               } else {
-                updates[key] = {status: 'missing', checkedAt, retryAt: checkedAt + META_RETRY_MS};
+                updates[key] = {status: 'missing', risk: result.risk, checkedAt, retryAt: checkedAt + META_RETRY_MS};
               }
               if (generation === viewerGenerationRef.current) {
                 const mutation = activeMutationRef.current.get(key);
@@ -217,7 +220,7 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
             }
             setMetadataMap((current) => {
               const next = {...current};
-              for (const key of keys) next[key] = {status: 'error', checkedAt, retryAt: checkedAt + META_RETRY_MS};
+              for (const key of keys) next[key] = {status: 'error', risk: current[key]?.risk, checkedAt, retryAt: checkedAt + META_RETRY_MS};
               return next;
             });
           } finally {

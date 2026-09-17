@@ -7,6 +7,11 @@ import Link from 'next/link';
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 
 import {ApiError} from '@/api/envelope';
+import {confirmTokenRisk, isRiskRejection, requiresRiskConfirmation} from '@/api/token-risk';
+import {useTokenRisk} from '@/hooks/useTokenRisk';
+import {useRiskReview} from '@/hooks/useRiskReview';
+import {riskTradeAction, type RiskAssessment} from '@/lib/risk-assessment';
+import {RiskDialog} from '@/components/TokenRisk';
 import {
   CODE_DELEGATION_REQUIRED,
   SIGN_KIND_EVM_7702_AUTHORIZATION,
@@ -44,6 +49,7 @@ import {clearSite, useSession} from '@/session/storage';
 
 type TradeStage =
   | 'idle'
+  | 'reviewing-risk'
   | 'creating'
   | 'preparing'
   | 'delegating'
@@ -92,6 +98,10 @@ function withTimeout<T>(promise: Promise<T>, label: string): Promise<T> {
 
 function safeMessage(error: unknown): string {
   if (error instanceof ApiError) {
+    if (error.code === 430310) return 'Review and confirm the current token risks before buying.';
+    if (error.code === 430312) return 'The token risks changed. Review the updated risks and confirm again.';
+    if (error.code === 430311) return 'Buying is blocked because of this token’s risks. Selling is assessed independently.';
+    if (error.code === 500310) return 'Risk confirmation storage is temporarily unavailable. Try again later.';
     if (error.code === 400000) return 'Your session expired. Sign in again before trading.';
     if (error.code === 430114) return 'Complete invitation access before trading.';
     if (error.code === 100286) return 'This launchpad token cannot be traded until it graduates.';
@@ -133,6 +143,7 @@ function intentFingerprint(intent: TradeIntent) {
 function StagePill({stage}: {stage: TradeStage}) {
   const active = !['idle', 'included', 'confirmed', 'failed', 'uncertain'].includes(stage);
   const label: Record<TradeStage, string> = {
+    'reviewing-risk': 'Reviewing risks',
     idle: 'Ready', creating: 'Creating order', preparing: 'Preparing transaction', delegating: 'Authorizing wallet',
     signing: 'Signing', submitting: 'Submitting', polling: 'Confirming', included: 'Included', confirmed: 'Confirmed',
     failed: 'Failed', uncertain: 'Pending review',
@@ -147,6 +158,14 @@ function StagePill({stage}: {stage: TradeStage}) {
 
 export function TradePanel({chain, address, symbol}: {chain: string; address: string; symbol?: string}) {
   const session = useSession();
+  const tokenRisk = useTokenRisk(chain, address);
+  const liveRiskRef = useRef(tokenRisk.risk);
+  liveRiskRef.current = tokenRisk.risk;
+  const riskReview = useRiskReview(`${session?.jwt ?? ''}\u0000${chain}\u0000${address}`);
+  const [blockedRisk, setBlockedRisk] = useState<RiskAssessment>();
+  const riskFlowRef = useRef<{bearer: string; fingerprint: string; trade: TradeReply; confirmedVersion?: string} | undefined>(undefined);
+  const forceRiskReviewRef = useRef(false);
+  const riskIntentRef = useRef('');
   const {ready: privyReady, authenticated} = usePrivy();
   const {wallets: evmWallets} = useEvmWallets();
   const {wallets: solanaWallets} = useSolanaWallets();
@@ -528,8 +547,6 @@ export function TradePanel({chain, address, symbol}: {chain: string; address: st
   ): Promise<TradeReply> {
     let current = initial;
     let payload = initialPayload;
-    let queueRetries = 0;
-    let reprepareRetries = 0;
     setPendingSubmission(payload);
 
     for (;;) {
@@ -560,24 +577,17 @@ export function TradePanel({chain, address, symbol}: {chain: string; address: st
           setPendingSubmission(undefined);
           return recovered;
         }
+        if (isRiskRejection(submitError) && ['awaiting_signature', 'pending', 'created'].includes(recovered.lifecycle ?? '')) {
+          // A definitive rejection plus a recovered pre-submit state permits a NEW user review.
+          // Never acknowledge risk or reuse the previous signature in this recovery path.
+          submitAttemptedRef.current = false;
+          setPendingSubmission(undefined);
+          throw submitError;
+        }
         if (recovered.lifecycle !== 'awaiting_signature') {
           throw new UncertainTradeError(`Submit failed while lifecycle is ${recovered.lifecycle ?? 'unknown'}.`);
         }
-
-        if (submitError instanceof ApiError && submitError.code === 430296) {
-          if (queueRetries < 1) {
-            queueRetries += 1;
-            continue; // Retry the exact same trade + signature once.
-          }
-          throw new UncertainTradeError('Dispatch remains full. Keep this trade ID and retry the same Submit later.');
-        }
-        if (reprepareRetries >= 1) {
-          throw new UncertainTradeError('Submit still needs a signature after one safe re-prepare attempt.');
-        }
-        reprepareRetries += 1;
-        const next = await prepareAndSign(bearer, current.trade_id, controller);
-        payload = {tradeID: current.trade_id, signature: next.signature, expiresAt: next.prepared.expires_at};
-        setPendingSubmission(payload);
+        throw new UncertainTradeError('Submit returned no final answer. Check this trade ID before explicitly retrying the same Submit.');
       }
     }
   }
@@ -592,6 +602,7 @@ export function TradePanel({chain, address, symbol}: {chain: string; address: st
     const controller = new AbortController();
     operationAbortRef.current?.abort();
     operationAbortRef.current = controller;
+    setStage('reviewing-risk');
     setReviewOpen(false);
     setErrorMessage(undefined);
     setTrade(undefined);
@@ -603,17 +614,79 @@ export function TradePanel({chain, address, symbol}: {chain: string; address: st
     setPosition(undefined);
     let baseline: Position[] | undefined;
     try {
+      const intent = intentResult.intent;
+      const fingerprint = intentFingerprint(intent);
+      const riskIntent = `${bearer}\u0000${fingerprint}`;
+      if (riskIntentRef.current !== riskIntent) forceRiskReviewRef.current = false;
+      riskIntentRef.current = riskIntent;
+      let flow = riskFlowRef.current;
+      if (flow?.bearer !== bearer || flow.fingerprint !== fingerprint) {
+        flow = undefined;
+        riskFlowRef.current = undefined;
+      }
+      let assessment = tokenRisk.risk;
+      let acceptedVersion: string | undefined;
+      if (intent.side === 'buy') {
+        try {
+          assessment = (await tokenRisk.refresh(controller.signal)).risk.assessment;
+        } catch (error) {
+          // Display and honor known risks on refresh failure. A rejected flow must obtain
+          // a fresh response before it can request a new acknowledgement.
+          if (forceRiskReviewRef.current) throw error;
+        }
+        assertCurrentOperation(bearer, controller);
+        const action = riskTradeAction(assessment, 'buy');
+        if (action === 'block') {
+          setBlockedRisk(assessment);
+          throw new ApiError('business', 430311, 'Buying is blocked.');
+        }
+        if (action === 'confirm') {
+          if (!assessment?.confirmationVersion || !assessment.items.length) throw new Error('The current risk details are unavailable. Refresh before confirming this purchase.');
+          if (forceRiskReviewRef.current || flow?.confirmedVersion !== assessment.confirmationVersion) {
+            if (!await riskReview.review(assessment)) { setStage('idle'); return; }
+            assertCurrentOperation(bearer, controller);
+            if (riskTradeAction(liveRiskRef.current, 'buy') === 'block') {
+              setBlockedRisk(liveRiskRef.current);
+              throw new ApiError('business', 430311, 'Buying is blocked.');
+            }
+            acceptedVersion = assessment.confirmationVersion;
+          }
+        } else if (forceRiskReviewRef.current) {
+          // Do not invent an acknowledgement from a stale/unknown response after a rejection.
+          if (!assessment || assessment.mode === 'enforce' && assessment.buyAction === 'unavailable') {
+            throw new Error('Fresh risk details are unavailable. Refresh before continuing this purchase.');
+          }
+          forceRiskReviewRef.current = false;
+        }
+      }
       baseline = await listPositions(bearer, controller.signal).catch(() => undefined);
       assertCurrentOperation(bearer, controller);
+      if (intent.side === 'buy' && riskTradeAction(liveRiskRef.current, 'buy') === 'block') {
+        setBlockedRisk(liveRiskRef.current);
+        throw new ApiError('business', 430311, 'Buying is blocked.');
+      }
       setStage('creating');
-      let current = await createTrade(bearer, intentResult.intent, controller.signal);
+      let current = flow?.trade ?? await createTrade(bearer, intent, controller.signal,
+        riskTradeAction(assessment, intent.side) === 'confirm' ? {prepare: false} : undefined);
       assertCurrentOperation(bearer, controller);
+      flow = flow ?? {bearer, fingerprint, trade: current};
+      riskFlowRef.current = flow;
       setTrade(current);
+      if (acceptedVersion) {
+        const confirmed = await confirmTokenRisk(chain, address, bearer, `meme:${current.trade_id}`, acceptedVersion, controller.signal);
+        assertCurrentOperation(bearer, controller);
+        const decision = confirmed.risk.assessment;
+        if (riskTradeAction(decision, 'buy') === 'block') throw new ApiError('business', 430311, 'Buying is blocked.');
+        if (!decision || decision.confirmationVersion !== acceptedVersion) throw new ApiError('business', 430312, 'The risk confirmation changed.');
+        flow.confirmedVersion = acceptedVersion;
+        forceRiskReviewRef.current = false;
+      }
       const signed = await prepareAndSign(bearer, current.trade_id, controller);
       const payload = {tradeID: current.trade_id, signature: signed.signature, expiresAt: signed.prepared.expires_at};
       current = await submitWithRecovery(bearer, current, payload, controller);
       setTrade(current);
       if (current.lifecycle === 'failed') {
+        riskFlowRef.current = undefined;
         setStage('failed');
         setErrorMessage('The trade reached a failed terminal state. Review its transaction hash before retrying.');
         return;
@@ -623,6 +696,7 @@ export function TradePanel({chain, address, symbol}: {chain: string; address: st
         signal: controller.signal,
         onTick: setTrade,
       });
+      assertCurrentOperation(bearer, controller);
       setTrade(result.trade);
       if (result.stop !== 'settled') {
         setStage('uncertain');
@@ -631,15 +705,24 @@ export function TradePanel({chain, address, symbol}: {chain: string; address: st
       }
       const phase = phaseOf(result.trade);
       if (phase === TRADE_PHASE_FAILED) {
+        riskFlowRef.current = undefined;
         setStage('failed');
         setErrorMessage('The trade reached a failed terminal state. Review its transaction hash before retrying.');
         return;
       }
       if (phase === TRADE_PHASE_SUCCESS) {
+        riskFlowRef.current = undefined;
         setStage(result.trade.lifecycle === 'confirmed' ? 'confirmed' : 'included');
         if (enabledChain) void refreshPosition(bearer, baseline, enabledChain, controller.signal);
       }
     } catch (error) {
+      if (!submitAttemptedRef.current && isRiskRejection(error)) {
+        if (requiresRiskConfirmation(error)) {
+          forceRiskReviewRef.current = true;
+          if (riskFlowRef.current) riskFlowRef.current.confirmedVersion = undefined;
+        }
+        await tokenRisk.refresh(controller.signal).catch(() => undefined);
+      }
       if (submitAttemptedRef.current || error instanceof UncertainTradeError) {
         setStage('uncertain');
         setErrorMessage(`${error instanceof Error ? error.message : 'Trade status is unknown.'} Do not place this order again.`);
@@ -678,6 +761,7 @@ export function TradePanel({chain, address, symbol}: {chain: string; address: st
       if (['signed', 'submitted', 'included', 'confirmed', 'failed'].includes(current.lifecycle ?? '')) {
         setPendingSubmission(undefined);
       } else if (current.lifecycle === 'awaiting_signature') {
+        submitAttemptedRef.current = false;
         let payload = pendingSubmission;
         const expiresAt = payload.expiresAt ? Date.parse(payload.expiresAt) : Number.NaN;
         if (!Number.isFinite(expiresAt) || expiresAt - Date.now() < 5_000) {
@@ -692,6 +776,7 @@ export function TradePanel({chain, address, symbol}: {chain: string; address: st
       }
 
       if (current.lifecycle === 'failed') {
+        riskFlowRef.current = undefined;
         setStage('failed');
         setErrorMessage('The trade reached a failed terminal state.');
         return;
@@ -704,12 +789,24 @@ export function TradePanel({chain, address, symbol}: {chain: string; address: st
         setStage('uncertain');
         setErrorMessage('The trade is still pending. Do not place it again.');
       } else if (phaseOf(result.trade) === TRADE_PHASE_FAILED) {
+        riskFlowRef.current = undefined;
+        setPendingSubmission(undefined);
         setStage('failed');
       } else {
+        riskFlowRef.current = undefined;
+        setPendingSubmission(undefined);
         setStage(result.trade.lifecycle === 'confirmed' ? 'confirmed' : 'included');
         if (enabledChain) void refreshPosition(bearer, undefined, enabledChain, controller.signal);
       }
     } catch (error) {
+      if (!submitAttemptedRef.current && isRiskRejection(error)) {
+        forceRiskReviewRef.current = requiresRiskConfirmation(error);
+        if (riskFlowRef.current) riskFlowRef.current.confirmedVersion = undefined;
+        await tokenRisk.refresh(controller.signal).catch(() => undefined);
+        setStage('failed');
+        setErrorMessage(safeMessage(error));
+        return;
+      }
       setStage('uncertain');
       setErrorMessage(`${error instanceof Error ? error.message : 'Trade status is unknown.'} Do not place this order again.`);
     } finally {
@@ -718,6 +815,7 @@ export function TradePanel({chain, address, symbol}: {chain: string; address: st
   }
 
   async function openReview() {
+    if (riskTradeAction(tokenRisk.risk, side) === 'block') {setBlockedRisk(tokenRisk.risk); return;}
     if (!intentResult.intent || !session?.jwt || reviewLockRef.current || hasUnresolvedSubmission) return;
     reviewLockRef.current = true;
     const bearer = session.jwt;
@@ -728,7 +826,7 @@ export function TradePanel({chain, address, symbol}: {chain: string; address: st
       if (sessionJWTRef.current !== bearer) return;
       setReviewOpen(true);
     } catch (error) {
-      if (sessionJWTRef.current === bearer && !(error instanceof ApiError && (error.code === 100286 || error.code === 100295))) {
+      if (sessionJWTRef.current === bearer && !(error instanceof DOMException && error.name === 'AbortError') && !(error instanceof ApiError && (error.code === 100286 || error.code === 100295))) {
         // Preview outages do not gate trading; the confirmation explicitly shows it as unavailable.
         setReviewOpen(true);
       }
@@ -762,8 +860,12 @@ export function TradePanel({chain, address, symbol}: {chain: string; address: st
         setStage('uncertain');
         setErrorMessage('Still pending. Do not place another order.');
       } else if (phaseOf(result.trade) === TRADE_PHASE_FAILED) {
+        riskFlowRef.current = undefined;
+        setPendingSubmission(undefined);
         setStage('failed');
       } else {
+        riskFlowRef.current = undefined;
+        setPendingSubmission(undefined);
         setStage(result.trade.lifecycle === 'confirmed' ? 'confirmed' : 'included');
         if (enabledChain) void refreshPosition(bearer, undefined, enabledChain, controller.signal);
       }
@@ -784,6 +886,9 @@ export function TradePanel({chain, address, symbol}: {chain: string; address: st
   const canReview = !!session?.jwt && privyReady && authenticated && !!enabledChain && walletsReady && !!intentResult.intent && !previewBlocked && !busy && !unresolved && !hasUnresolvedSubmission;
   const inputUnit = side === 'buy' ? 'USDC' : (symbol ?? activeTokenInfo?.symbol ?? 'token');
   const outputDecimals = side === 'buy' ? activeTokenInfo?.decimals : 6;
+  const buyBlocked = riskTradeAction(tokenRisk.risk, side) === 'block';
+  const reviewBlocked = riskTradeAction(tokenRisk.risk, 'buy') === 'block';
+  const reviewRisk = reviewBlocked ? tokenRisk.risk : riskReview.risk;
 
   return (
     <section className="rounded-lg border border-border bg-surface p-4">
@@ -830,9 +935,9 @@ export function TradePanel({chain, address, symbol}: {chain: string; address: st
           {unresolvedForeignSession ? <p className="text-xs text-accent">An unresolved trade belongs to the previous session. Switch back to that session to recover it.</p> : null}
           {intentResult.error && amount ? <p className="text-xs text-down">{intentResult.error}</p> : null}
 
-          <button type="button" onClick={() => void openReview()} disabled={!canReview || reviewing || (requiresSolanaWallet && !SOLANA_RPC_URL)}
-            className="w-full rounded-md bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50">
-            {reviewing ? 'Refreshing preview…' : `Review ${side}`}
+          <button type="button" onClick={() => void openReview()} aria-disabled={buyBlocked || undefined} disabled={!buyBlocked && (!canReview || reviewing || (requiresSolanaWallet && !SOLANA_RPC_URL))}
+            className={`w-full rounded-md px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50 ${buyBlocked ? 'bg-red-900/60 text-red-200' : 'bg-accent hover:brightness-110'}`}>
+            {buyBlocked ? 'Buy unavailable · Why?' : reviewing ? 'Refreshing preview…' : `Review ${side}`}
           </button>
         </div>
 
@@ -862,7 +967,7 @@ export function TradePanel({chain, address, symbol}: {chain: string; address: st
           <p className="mt-2 text-xs text-muted">After Submit, do not place the order again while its final status is unknown.</p>
           <div className="mt-3 flex gap-2">
             <button type="button" onClick={() => setReviewOpen(false)} className="rounded-md border border-border px-3 py-2 text-sm text-muted">Cancel</button>
-            <button type="button" disabled={busy || hasUnresolvedSubmission} onClick={() => void executeTrade()} className="rounded-md bg-accent px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">Confirm & sign</button>
+            <button type="button" disabled={busy || hasUnresolvedSubmission || buyBlocked} onClick={() => void executeTrade()} className="rounded-md bg-accent px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">Confirm & sign</button>
           </div>
         </div>
       ) : null}
@@ -903,6 +1008,8 @@ export function TradePanel({chain, address, symbol}: {chain: string; address: st
         </div>
       ) : null}
       {errorMessage ? <p className={`mt-3 text-sm ${stage === 'uncertain' ? 'text-accent' : 'text-down'}`}>{errorMessage}</p> : null}
+      <RiskDialog risk={reviewRisk} open={!!riskReview.risk} blocked={reviewBlocked} refreshFailed={!!tokenRisk.error} onClose={() => riskReview.finish(false)} onConfirm={reviewBlocked ? undefined : () => riskReview.finish(true)} />
+      <RiskDialog risk={blockedRisk} open={!!blockedRisk} refreshFailed={!!tokenRisk.error} onClose={() => setBlockedRisk(undefined)} blocked />
     </section>
   );
 }

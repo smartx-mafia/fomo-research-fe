@@ -186,9 +186,9 @@ export async function previewTrade(bearer: string, intent: TradeIntent, signal?:
   return response.data;
 }
 
-export async function createTrade(bearer: string, intent: TradeIntent, signal?: AbortSignal) {
+export async function createTrade(bearer: string, intent: TradeIntent, signal?: AbortSignal, options?: {prepare?: boolean}) {
   const response = await call<TradeReply>('/v1/meme/trades', {
-    method: 'POST', bearer, body: requestBody(intent), signal,
+    method: 'POST', bearer, body: {...requestBody(intent), ...(options?.prepare !== undefined ? {prepare: options.prepare} : {})}, signal,
   });
   return response.data;
 }

@@ -27,6 +27,7 @@ vi.mock('@/session/storage', () => ({useSession: () => mocks.session, clearSite:
 
 import {FavoritesProvider, StarButton, useFavorites} from './FavoritesProvider';
 import {tokenKey, type TokenRef} from '@/api/token-metadata';
+import {normalizeTokenRisk} from '@/lib/token-risk';
 
 function result(token: TokenRef, favorite = false) {
   return {chain: token.chain, address: token.address, status: 1, source: 2,
@@ -40,6 +41,7 @@ function Probe({token, withToggle = false}: {token: TokenRef; withToggle?: boole
   const key = tokenKey(token.chain, token.address)!;
   return <div>
     <span data-testid={`meta-${token.address}`}>{metadataMap[key]?.status ?? 'none'}</span>
+    <span data-testid={`risk-${token.address}`}>{JSON.stringify(metadataMap[key]?.risk)}</span>
     <span data-testid={`fav-${token.address}`}>{String(statusMap[key] === true)}</span>
     <span data-testid={`badge-fav-${token.address}`}>{String(badgeFavoriteMap[key] === true)}</span>
     <span data-testid={`personal-ready-${token.address}`}>{String(personalReadyMap[key] === true)}</span>
@@ -72,6 +74,25 @@ function LegacyStatusProbe({token}: {token: TokenRef}) {
 }
 
 describe('FavoritesProvider metadata hydration', () => {
+  it('stores the whole canonical risk beside info and retains it on a later batch failure', async () => {
+    const token = {chain: 'bsc', address: '0xa'};
+    const risk = normalizeTokenRisk({token_is_scam: null, assessment: {
+      mode: 'enforce', grade: 4, buy_action: 'confirm', checks_complete: false,
+      confirmation_version: 'hash:123', policy_version: 'policy', decision_version: 'decision',
+      goplus_status: 'stale', recommendation_allowed: false, keyword_search_allowed: true, square_distribution_allowed: false,
+      items: [{code: 'goplus_buy_tax', grade: 4, display_source: 'goplus', params: {rate: '3.88'}, evidence: [{source: 'goplus', field: 'buy_tax', value: '0.0388', observed_at_ms: '1789000000000'}]}],
+      checks: [{code: 'test', state: 'unknown', value: ''}],
+    }});
+    mocks.batch.mockResolvedValueOnce({data: {results: [{...result(token), risk}]}});
+    const view = render(<FavoritesProvider><Probe token={token} /></FavoritesProvider>);
+    await waitFor(() => expect(screen.getByTestId('meta-0xa').textContent).toBe('ready'));
+    expect(JSON.parse(screen.getByTestId('risk-0xa').textContent!)).toEqual(risk);
+    mocks.batch.mockRejectedValueOnce(new Error('offline'));
+    mocks.session = {jwt: 'new-viewer'};
+    view.rerender(<FavoritesProvider><Probe token={token} /></FavoritesProvider>);
+    await waitFor(() => expect(screen.getByTestId('meta-0xa').textContent).toBe('error'));
+    expect(JSON.parse(screen.getByTestId('risk-0xa').textContent!)).toEqual(risk);
+  });
   beforeEach(() => {
     mocks.session = undefined;
     mocks.batch.mockReset();

@@ -6,6 +6,7 @@ import type { TokenMarket } from "@/lib/types";
 import { useTokenLive } from "@/lib/ws";
 import TokenHeader from "@/components/TokenHeader";
 import StatGrid from "@/components/StatGrid";
+import {TokenRiskBanner} from '@/components/TokenRisk';
 
 /**
  * 带时间戳的报价广播：图表独立画实时报价线，不用跨池报价改写主池 OHLCV。
@@ -42,6 +43,7 @@ export default function TokenLive({
   return (
     <LivePriceContext.Provider value={quote}>
       <TokenHeader data={market} chain={chain} address={address} live={live} />
+      <TokenRiskBanner chain={chain} address={address} />
       {children}
       <StatGrid data={market} />
     </LivePriceContext.Provider>
