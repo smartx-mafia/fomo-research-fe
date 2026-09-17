@@ -73,8 +73,8 @@ const LOCAL: HarnessEnv = {
   privyAppId: process.env.NEXT_PUBLIC_HARNESS_PRIVY_APP_ID ?? '',
   apiPrefix: '',
   originLabel:
-    process.env.NEXT_PUBLIC_HARNESS_BUSINESS_LABEL || '(未配 VITE_BUSINESS_ORIGIN_LABEL，由 dev server 代理转发)',
-  missing: process.env.NEXT_PUBLIC_HARNESS_PRIVY_APP_ID ? null : 'VITE_PRIVY_APP_ID',
+    process.env.NEXT_PUBLIC_HARNESS_BUSINESS_LABEL || '(未配 NEXT_PUBLIC_HARNESS_BUSINESS_LABEL，由 dev server 代理转发)',
+  missing: process.env.NEXT_PUBLIC_HARNESS_PRIVY_APP_ID ? null : 'NEXT_PUBLIC_HARNESS_PRIVY_APP_ID',
 };
 
 const TEST: HarnessEnv = {
@@ -86,8 +86,8 @@ const TEST: HarnessEnv = {
   apiPrefix: '/test-env',
   originLabel:
     process.env.NEXT_PUBLIC_HARNESS_TEST_BUSINESS_LABEL ||
-    '(未配 VITE_TEST_BUSINESS_ORIGIN_LABEL，由 dev server 按 TEST_BUSINESS_ORIGIN 代理转发)',
-  missing: process.env.NEXT_PUBLIC_HARNESS_TEST_PRIVY_APP_ID ? null : 'VITE_TEST_PRIVY_APP_ID',
+    '(未配 NEXT_PUBLIC_HARNESS_TEST_BUSINESS_LABEL，由 dev server 按 TEST_BUSINESS_ORIGIN 代理转发)',
+  missing: process.env.NEXT_PUBLIC_HARNESS_TEST_PRIVY_APP_ID ? null : 'NEXT_PUBLIC_HARNESS_TEST_PRIVY_APP_ID',
 };
 
 /** 全部环境。**第 0 个是默认档**（存量键认不出时退回它）。 */

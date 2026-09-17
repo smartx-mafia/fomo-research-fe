@@ -39,7 +39,7 @@ describe('keyQuorumMissing', () => {
 
   it('没配时把变量名原样写出来 —— 「点不亮」必须能照着做', () => {
     const why = keyQuorumMissing('');
-    expect(why).toContain('VITE_PRIVY_KEY_QUORUM_ID');
+    expect(why).toContain('NEXT_PUBLIC_HARNESS_KEY_QUORUM_ID');
   });
 });
 

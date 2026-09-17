@@ -1,0 +1,755 @@
+// Fast Swap v2 的交易卡：链 + 方向 / 资产 / 金额 → 展示报价 → 一键执行 → 在途恢复。
+//
+// 页面形态按对齐会话定的来：只有一键（Q13 B），不做分步按钮；在途列表每行一个
+// 「恢复」（Q13a）；EXPIRED 自动 refresh 至多一次，「取消」只在已建未签时出现（Q13b）；
+// 「高级」里是五个一次性故障注入开关（Q14）。所有协议逻辑在 flow.ts，这里只接线。
+
+'use client';
+
+import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
+import {useSign7702Authorization, useSignTypedData, type ConnectedWallet} from '@privy-io/react-auth';
+import {useSignTransaction, type ConnectedStandardSolanaWallet} from '@privy-io/react-auth/solana';
+
+import {formatUnits, USDC_MINT} from '../balance';
+import {CHAINS, caipOf, chainOfCaip, type Chain} from '../chains';
+import {isSolanaAddress} from '../transfer';
+import {Badge, Btn, Copy, Field, Info, Note, Tabs} from '../ui';
+import {SwapApiError, createSwapClient, type HttpTiming} from './client';
+import {NO_FAULTS, SwapRun, type Faults, type RunState, type Signer} from './flow';
+import {createSwapStore, withSwapLock, type SwapRecord} from './store';
+import {acceptedMinOut} from './verify';
+import {
+  ExecutionStatus,
+  FeePolicy,
+  Outcome,
+  Side,
+  accountingLabel,
+  accountingTone,
+  chainLegLabel,
+  chainLegTone,
+  executionLabel,
+  outcomeLabel,
+  executionTone,
+  outcomeTone,
+  preparationLabel,
+  preparationTone,
+  relayLabel,
+  relayTone,
+  sideLabel,
+  type QuoteReply,
+  type QuoteRequest,
+  type SwapRoute,
+  type SwapSnapshot,
+} from './wire';
+
+const SOLANA = caipOf('solana');
+const QUOTE_DEBOUNCE_MS = 400;
+/** 服务端 quote.max_slippage_bps 本机配置是 300；超限拒单不截断。 */
+const DEFAULT_SLIPPAGE_BPS = '300';
+
+export type SellPrefill = {originChain: string; originAsset: string; amountRaw: string; nonce: number};
+
+export type SwapPanelProps = {
+  token: string;
+  /** 「环境 + 用户键」，存储分桶与签名锁都用它。 */
+  account: string;
+  /** 身份链是否就绪（readiness()），以及没就绪时那句话。 */
+  gateReady: boolean;
+  gateBlocker: string | null;
+  solWallet: ConnectedStandardSolanaWallet | undefined;
+  evmWallet: ConnectedWallet | undefined;
+  /** 按地址取 Privy 钱包 id（`user.linkedAccounts[].id`）。 */
+  walletIdOf: (address: string | undefined) => string | null;
+  say: (text: string, bad?: boolean) => void;
+  /** 一笔到终态后调（刷新持仓 / 余额，只作旁证）。 */
+  onTerminal: () => void;
+  prefill: SellPrefill | null;
+};
+
+/**
+ * 本页的链选项**从 `chains.ts` 派生**，不在这里另立一张表：两张表会各自演化，
+ * 而漏改这一张的症状是"那条链在页面上根本选不到，代码里样样都在"。
+ *
+ * 五条链与后端 `fastswap/domain/chains.go` 的 chainRefs 一一对应。某条链此刻
+ * 开没开是 capabilities 说了算（本机 `signer.allow_chain_ids` 只放行了 Solana
+ * 与 BSC，其余三条会带着 `unavailable_reason` 回来，按钮点不亮并写出原因）。
+ */
+const CHAIN_OPTS = CHAINS.map((k) => ({k, wire: caipOf(k)}));
+type ChainKey = Chain;
+type Dir = 'buy' | 'sell';
+
+/**
+ * 链 + 方向 → 线上的 origin / destination / side。页面像 v1 一样选「标的在哪条链」与方向，
+ * 由这里映射成 capabilities 里的路线（后端 `quote/routes.go`：Solana 起点开 buy / swap，
+ * EVM 起点开 sell —— 目的链不限，所以「拿 Solana USDC 买 BSC 上的币」是一条跨链买入）：
+ *
+ *   solana 买入 → origin solana，destination solana，side=buy
+ *   bsc    买入 → origin solana，destination eip155:56，side=buy（跨链；签的仍是 Solana 交易）
+ *   solana 卖出 → origin solana，destination solana，side=swap（Solana 起点填 side=sell 会 430611）
+ *   bsc    卖出 → origin eip155:56，destination solana，side=sell（Calibur 批次）
+ *
+ * 现金资产恒是 Solana USDC（Q15），所以买入的出资侧与卖出的收款侧都在 Solana。
+ */
+function shapeOf(chain: ChainKey, dir: Dir): {origin: string; destination: string; side: number} {
+  const wire = caipOf(chain);
+  // 买入恒从 Solana USDC 出：同链时 destination 也是 Solana，跨链时是标的那条链。
+  if (dir === 'buy') return {origin: SOLANA, destination: wire, side: Side.BUY};
+  return chain === 'solana'
+    ? {origin: SOLANA, destination: SOLANA, side: Side.SWAP}
+    : {origin: wire, destination: SOLANA, side: Side.SELL};
+}
+
+/**
+ * 代币地址与所选链对不对得上。**这一条挡的是真事**：2026-09-18 把 BSC 的
+ * `0x3efb…` 填进「solana 买入」，请求原样发出去，Relay 回 400
+ * `Invalid input currency`，前端只看到 430611「结算方拒绝且没给码」——
+ * 那句话指不回"地址与链不匹配"。
+ */
+function addressFitsChain(chain: ChainKey, addr: string): boolean {
+  const a = addr.trim();
+  return chain === 'solana' ? isSolanaAddress(a) : /^0x[0-9a-fA-F]{40}$/.test(a);
+}
+
+/** 契约 §5 的终态：完成 / 已取消 / 过期未执行 / 失败未扣款 / 已退款。9「需人工核实」**不是**终态。 */
+const TERMINAL_OUTCOMES: readonly number[] = [
+  Outcome.COMPLETED,
+  Outcome.CANCELLED,
+  Outcome.EXPIRED_UNEXECUTED,
+  Outcome.FAILED_NO_DEBIT,
+  Outcome.REFUNDED,
+];
+
+/** 链名短写：`solana:mainnet` / `eip155:56` 在一行里太长，且一眼看不出是哪条。 */
+function chainShort(wire: string): string {
+  return chainOfCaip(wire) ?? wire;
+}
+
+/**
+ * 在途一行要显示的四样：标的在哪条链、方向、代币、金额。
+ *
+ * 标的那一侧按 side 取：买入时标的是 destination，卖出（含 side=swap）时是 origin ——
+ * 另一侧恒是 Solana USDC（Q15），显示它等于每行都写一遍同一个 mint。
+ */
+function rowBrief(intent: {origin_chain: string; destination_chain: string; origin_asset: string; destination_asset: string; amount_in_raw: string; side: number}) {
+  const buy = intent.side === Side.BUY;
+  return {
+    chain: chainShort(buy ? intent.destination_chain : intent.origin_chain),
+    dir: buy ? '买入' : '卖出',
+    token: buy ? intent.destination_asset : intent.origin_asset,
+    amountRaw: intent.amount_in_raw,
+  };
+}
+
+const uuid = () => crypto.randomUUID();
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+const errText = (e: unknown) =>
+  e instanceof SwapApiError
+    ? `${e.code} ${e.reason ?? ''} ${e.message}` +
+      (e.meta.recovery_action ? ` · recovery=${e.meta.recovery_action}` : '') +
+      (e.meta.settlement_code ? ` · settlement_code=${e.meta.settlement_code}` : '') +
+      (e.meta.market_cause ? ` · market_cause=${e.meta.market_cause}` : '') +
+      (e.meta.sellable_raw ? ` · 可卖 ${e.meta.sellable_raw}（账本 ${e.meta.ledger_shares_raw}，在途 ${e.meta.reserved_raw}）` : '')
+    : e instanceof Error
+      ? e.message
+      : String(e);
+
+function fmt(raw: string | null | undefined, decimals: number | undefined): string {
+  if (raw == null) return '—（未知）';
+  try {
+    return decimals == null ? raw : `${formatUnits(BigInt(raw), decimals)}（raw ${raw}）`;
+  } catch {
+    return raw;
+  }
+}
+
+const ms = (v: number | undefined) => (v == null ? '—' : `${Math.round(v)} ms`);
+
+export function SwapPanel(p: SwapPanelProps) {
+  const {signTransaction} = useSignTransaction();
+  const {signTypedData} = useSignTypedData();
+  const {signAuthorization} = useSign7702Authorization();
+
+  const store = useMemo(() => createSwapStore(p.account), [p.account]);
+  const runRef = useRef<SwapRun | null>(null);
+  const client = useMemo(
+    () => createSwapClient({token: p.token, onTiming: (t: HttpTiming) => runRef.current?.onHttpTiming(t)}),
+    [p.token],
+  );
+
+  // ── 能力 ──────────────────────────────────────────────────────────
+  const [routes, setRoutes] = useState<SwapRoute[] | null>(null);
+  const [routesErr, setRoutesErr] = useState<string | null>(null);
+  const loadRoutes = useCallback(async () => {
+    if (!p.token) return;
+    try {
+      const c = await client.capabilities();
+      setRoutes(c.routes);
+      setRoutesErr(null);
+    } catch (e) {
+      setRoutesErr(errText(e));
+    }
+  }, [client, p.token]);
+  useEffect(() => void loadRoutes(), [loadRoutes]);
+
+  // ── 表单 ──────────────────────────────────────────────────────────
+  const [chain, setChain] = useState<ChainKey>('solana');
+  const [dir, setDir] = useState<Dir>('buy');
+  const shape = shapeOf(chain, dir);
+  // capabilities 只用来判断这一形状开没开，不再拿来让人挑。
+  const route = (routes ?? []).find(
+    (r) => r.origin_chain === shape.origin && r.destination_chain === shape.destination && r.side === shape.side,
+  );
+  const [tokenAddr, setTokenAddr] = useState('');
+  const [amount, setAmount] = useState('');
+  const [slippage, setSlippage] = useState(DEFAULT_SLIPPAGE_BPS);
+
+  useEffect(() => {
+    if (!p.prefill) return;
+    const c = chainOfCaip(p.prefill.originChain);
+    if (!c) {
+      p.say(`填充卖出：${p.prefill.originChain} 不是本域的链（chains.ts 里没有）`, true);
+      return;
+    }
+    setChain(c);
+    setDir('sell');
+    setTokenAddr(p.prefill.originAsset);
+    setAmount(p.prefill.amountRaw);
+    p.say(`已填入卖出：${c}，${p.prefill.amountRaw}（最小单位）—— 只填了表单，还没有执行`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.prefill?.nonce]);
+
+  // **两个钱包各按自己那条链挑，不是「出资看链、收款恒 Solana」。**
+  //
+  // 服务端在报价之前先查「这个钱包在不在那条链上」，对不上回 400602（2026-09-18 的
+  // 48cf3e09：目的链已经是 eip155:56，收款钱包 id 还填着 Solana 那个）。跨链买入的
+  // 收款侧在标的链上，所以它要填 EVM 钱包 id；卖出时两者正好对调。
+  //
+  // 四条 EVM 链（bsc / base / ethereum / robinhood）**共用同一个 Privy 钱包 id 与地址**，
+  // 所以这里按「是不是 Solana」挑就够，不能反过来拿 id 去区分链。
+  const walletFor = (wire: string) => (wire === SOLANA ? p.solWallet : p.evmWallet);
+  const srcWallet = walletFor(shape.origin);
+  const dstWallet = walletFor(shape.destination);
+  const srcWalletID = p.walletIdOf(srcWallet?.address);
+  const dstWalletID = p.walletIdOf(dstWallet?.address);
+
+  const quoteReq: QuoteRequest | null = useMemo(() => {
+    if (!route || !addressFitsChain(chain, tokenAddr) || !/^\d+$/.test(amount.trim()) || !/^\d+$/.test(slippage.trim()))
+      return null;
+    if (!srcWalletID || !dstWalletID) return null;
+    const buy = route.side === Side.BUY;
+    // EVM 地址发出去之前先转小写：服务端在建单入口就归一（EIP-55 的大小写是
+    // 校验和不是身份），不归一的话本地留底与快照逐字节不同。签前第 1 条已经
+    // 按链宽严有别地比过，这里只是让两边从一开始就是同一个串。
+    const token = chain === 'solana' ? tokenAddr.trim() : tokenAddr.trim().toLowerCase();
+    return {
+      origin_chain: route.origin_chain,
+      destination_chain: route.destination_chain,
+      origin_asset: buy ? USDC_MINT : token,
+      destination_asset: buy ? token : USDC_MINT,
+      amount_in_raw: amount.trim(),
+      slippage_bps: Number(slippage.trim()),
+      side: route.side,
+      source_wallet_id: srcWalletID,
+      destination_wallet_id: dstWalletID,
+      fee_policy: FeePolicy.PLATFORM_SPONSORED,
+    };
+  }, [route, chain, tokenAddr, amount, slippage, srcWalletID, dstWalletID]);
+  const quoteKey = quoteReq ? JSON.stringify(quoteReq) : '';
+
+  // ── 展示报价（防抖；只看不签）──────────────────────────────────────
+  const [quote, setQuote] = useState<{key: string; reply: QuoteReply; ms: number} | null>(null);
+  const [quoteErr, setQuoteErr] = useState<string | null>(null);
+  const [quoting, setQuoting] = useState(false);
+  useEffect(() => {
+    if (!quoteReq) return;
+    let live = true;
+    const t = setTimeout(async () => {
+      setQuoting(true);
+      const t0 = performance.now();
+      try {
+        const reply = await client.quote(quoteReq);
+        if (live) {
+          setQuote({key: quoteKey, reply, ms: performance.now() - t0});
+          setQuoteErr(null);
+        }
+      } catch (e) {
+        if (live) setQuoteErr(errText(e));
+      } finally {
+        if (live) setQuoting(false);
+      }
+    }, QUOTE_DEBOUNCE_MS);
+    return () => {
+      live = false;
+      clearTimeout(t);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quoteKey, client]);
+  const freshQuote = quote && quote.key === quoteKey ? quote : null;
+
+  // ── 故障注入（一次性）──────────────────────────────────────────────
+  const [faults, setFaults] = useState<Faults>(NO_FAULTS);
+  const faultsRef = useRef<Faults>(NO_FAULTS);
+  faultsRef.current = faults;
+  const takeFault = useCallback((k: keyof Faults) => {
+    const v = faultsRef.current[k];
+    if (v) {
+      faultsRef.current = {...faultsRef.current, [k]: false};
+      setFaults(faultsRef.current);
+    }
+    return v;
+  }, []);
+
+  // ── 运行 ──────────────────────────────────────────────────────────
+  const [run, setRun] = useState<RunState | null>(null);
+  // revision 的预计 / 底价 / 实际到手 / 源链 tx **写进「过程」日志，不占交易卡的版面**：
+  // 它们是这一笔跑过的痕迹（出了事要回看），而交易卡要回答的是"现在怎么样、下一步点什么"。
+  // 值变了才说一次 —— 轮询每两秒回来一次，不去重的话同一句会刷屏。
+  const saidDigest = useRef('');
+
+  const [running, setRunning] = useState(false);
+
+  // 签名默认**静默**（2026-09-18 起，按用户要求）：沿用 main.tsx 全局的 showWalletUIs=false。
+  //
+  // **静默签名，没有开关**（Privy 的 uiOptions 一律不传）。
+  // 从前是逐次弹确认框，实测一笔（c5922c3e）弹窗里 Approve 灰了很久，签完用了 53 秒，
+  // 而可签窗口只有约 39 秒 —— 上报时链上有效期已过，服务端验签后没有广播（expired_unsent）。
+  // 静默不等于不核对：签前七条 + 解码核对、签后逐字节核对照跑，任一不过就不签 / 不上报。
+  const signer: Signer | null = useMemo(() => {
+    return {
+      solana: async (tx) => {
+        if (!p.solWallet) throw new Error('浏览器里没有 Solana embedded 钱包');
+        const out = await signTransaction({
+          transaction: tx,
+          wallet: p.solWallet,
+          chain: 'solana:mainnet',
+        });
+        return out.signedTransaction;
+      },
+      typedData: async (typed, address) => {
+        // **把"请谁签"写进日志。** 签完恢复出陌生地址时，这一行是区分
+        // 「我们要错了人」与「Privy 没按 address 挑钱包」的唯一证据 ——
+        // 两者症状一模一样（ecrecover 出一个谁也不认识的地址）。
+        const evmHere = p.evmWallet?.address ?? '（无）';
+        p.say(`请 Privy 用 ${address} 签 calibur_batch（浏览器里的 EVM 钱包：${evmHere}）`);
+        const out = await signTypedData(typed as Parameters<typeof signTypedData>[0], {address});
+        return out.signature;
+      },
+      authorization7702: async (input, address) => {
+        const out = await signAuthorization(
+          {contractAddress: input.contractAddress as `0x${string}`, chainId: input.chainId, nonce: input.nonce},
+          {address},
+        );
+        return {r: out.r, s: out.s, yParity: out.yParity};
+      },
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p.solWallet, signTransaction, signTypedData, signAuthorization]);
+
+  const depsFor = useCallback(
+    (walletAddress: string) => ({
+      client,
+      store,
+      signer: signer!,
+      account: p.account,
+      withLock: <T,>(name: string, fn: () => Promise<T>) => withSwapLock(name, fn),
+      takeFault,
+      now: () => performance.now(),
+      wall: () => new Date().toISOString(),
+      sleep,
+      visible: () => document.visibilityState === 'visible',
+      uuid,
+      onUpdate: (s: RunState) => setRun(s),
+      telemetry: async (events: Parameters<typeof client.telemetry>[0]) => {
+        const r = await client.telemetry(events, uuid());
+        if (r.rejected_count > 0) p.say(`埋点：${r.accepted_count} 条收下，${r.rejected_count} 条被拒`, true);
+      },
+      walletAddress,
+    }),
+    [client, store, signer, p.account, takeFault, p],
+  );
+
+  const finish = useCallback(
+    (s: RunState) => {
+      runRef.current = null;
+      setRunning(false);
+      if (s.stage === 'done') {
+        p.say(`Swap ${s.swapID} 到终态：${outcomeLabel(s.snapshot?.settlement.outcome)}`);
+        p.onTerminal();
+      } else if (s.stage === 'stopped') {
+        p.say(`Swap 停下：${s.stopReason}`, true);
+      }
+      void loadActive();
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [p],
+  );
+
+  const doRun = async () => {
+    if (!quoteReq || !srcWallet || !freshQuote) return;
+    setRunning(true);
+    // 第 7 条的底线：报价底价再让一个滑点带（对齐 2026-09-18，理由见 acceptedMinOut）
+    const floor = acceptedMinOut(freshQuote.reply.min_out_raw, quoteReq.slippage_bps);
+    const r = SwapRun.start(depsFor(srcWallet.address), quoteReq, floor);
+    runRef.current = r;
+    p.say(`⚡ 执行 ${quoteReq.origin_chain}→${quoteReq.destination_chain} ${sideLabel(quoteReq.side)}，amount_in_raw=${quoteReq.amount_in_raw}`);
+    finish(await r.run());
+  };
+
+  // ── 在途 ──────────────────────────────────────────────────────────
+  const [active, setActive] = useState<SwapSnapshot[] | null>(null);
+  const [activeErr, setActiveErr] = useState<string | null>(null);
+  const [localRecs, setLocalRecs] = useState<SwapRecord[]>([]);
+  const loadActive = useCallback(async () => {
+    setLocalRecs(store.list());
+    if (!p.token) return;
+    try {
+      const out: SwapSnapshot[] = [];
+      let cursor = '';
+      for (let i = 0; i < 5; i++) {
+        const r = await client.active(cursor, 20);
+        out.push(...r.items);
+        if (!r.next_cursor) break;
+        cursor = r.next_cursor;
+      }
+      setActive(out);
+      setActiveErr(null);
+    } catch (e) {
+      setActiveErr(errText(e));
+    }
+  }, [client, store, p.token]);
+  useEffect(() => void loadActive(), [loadActive]);
+
+  const walletForChain = (chain: string) => (chain === SOLANA ? p.solWallet : p.evmWallet);
+
+  const resumeSwap = async (swapID: string, mode: 'resume' | 'follow' | 'cancel', snap?: SwapSnapshot) => {
+    const rec =
+      store.bySwap(swapID) ??
+      ({
+        client_intent_id: snap?.intent.client_intent_id ?? swapID,
+        intent: snap?.intent,
+        create_key: '',
+        accepted_min_out_raw: null,
+        swap_id: swapID,
+        artifact: null,
+        execution_key: null,
+        reported: false,
+        updated_at: '',
+      } as SwapRecord);
+    const w = walletForChain(rec.intent?.origin_chain ?? SOLANA);
+    setRunning(true);
+    const r = new SwapRun(depsFor(w?.address ?? ''), rec);
+    runRef.current = r;
+    p.say(`${mode === 'cancel' ? '取消' : mode === 'follow' ? '跟进' : '恢复'} swap ${swapID}`);
+    finish(await (mode === 'cancel' ? r.cancel() : mode === 'follow' ? r.follow() : r.resume()));
+  };
+
+  // ── 渲染 ──────────────────────────────────────────────────────────
+  const snap = run?.snapshot ?? null;
+  const assets = snap?.revision.assets;
+  useEffect(() => {
+    if (!snap) return;
+    const d = snap.revision.assets.destination.decimals;
+    const line =
+      `${run?.swapID ?? ''} revision 预计 ${fmt(snap.revision.expected_out_raw, d)} · 底价 ${fmt(snap.revision.min_out_raw, d)}` +
+      ` · 实际到手 ${fmt(snap.settlement.amount_out_actual_raw, d)}` +
+      (snap.settlement.outcome === Outcome.COMPLETED ? '' : '（只有「完成」时才算数）') +
+      (snap.settlement.refund_fee_delta_raw != null ? ` · 退款差额 ${snap.settlement.refund_fee_delta_raw}` : '') +
+      (snap.execution.origin_tx_hash ? ` · 源链 tx ${snap.execution.origin_tx_hash}` : '') +
+      (snap.execution.failure_cause
+        ? ` · 预检被拒：${snap.execution.failure_cause}（建议 ${snap.execution.recovery_action}，需建新意图）`
+        : '');
+    if (line === saidDigest.current) return;
+    saidDigest.current = line;
+    p.say(line, !!snap.execution.failure_cause);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snap]);
+  const blocked = !p.gateReady
+    ? p.gateBlocker
+    : !routes
+      ? '还没拿到 capabilities'
+      : !route
+        ? `capabilities 里没有 ${chain} ${dir === 'buy' ? '买入' : '卖出'}`
+        : !route.enabled
+          ? `${chain} ${dir === 'buy' ? '买入' : '卖出'}未开通：${route.unavailable_reason ?? '未说明'}`
+          : tokenAddr.trim() !== '' && !addressFitsChain(chain, tokenAddr)
+            ? `这个地址不像 ${chain} 上的代币（${chain === 'solana' ? 'base58 解出来要是 32 字节' : '0x + 40 位十六进制'}）—— 是不是链选错了`
+      : !srcWallet || !dstWallet
+        ? `浏览器里没有${!srcWallet ? (shape.origin === SOLANA ? ' Solana' : ' EVM') : shape.destination === SOLANA ? ' Solana' : ' EVM'} embedded 钱包`
+        : !srcWalletID || !dstWalletID
+          ? '拿不到 Privy 钱包 id（linkedAccounts[].id 为空）—— v2 只认钱包 id'
+          : !quoteReq
+            ? '填代币地址与金额（整数最小单位）'
+            : !freshQuote
+              ? quoting
+                ? '报价中…'
+                : '等一份与当前输入对应的展示报价'
+              : null;
+
+  const tl = run?.timeline;
+  const lastHttp = tl?.execution_http?.at(-1);
+  const localRecord = run ? store.byIntent(run.clientIntentID) : undefined;
+  const canCancelRun =
+    !running && !!run?.swapID && run.stage === 'stopped' && !localRecord?.artifact &&
+    snap?.execution.status === ExecutionStatus.NOT_REPORTED;
+
+  // **只列未完成的。** /active 本身可能把已终态的也带回来（取消 / 过期那几种），
+  // 而本地记录里那些「不在 /active」的行多半正是已经走完的 —— 只有一种要留：
+  // 本地签了还没上报，它是唯一必须被人看见并「恢复」的状态。
+  const activeRows = useMemo(() => {
+    const byID = new Map<string, SwapSnapshot | null>();
+    for (const s of active ?? []) if (!TERMINAL_OUTCOMES.includes(s.settlement.outcome)) byID.set(s.swap_id, s);
+    for (const r of localRecs) {
+      if (!r.swap_id || byID.has(r.swap_id)) continue;
+      if (r.artifact && !r.reported) byID.set(r.swap_id, null);
+    }
+    return [...byID.entries()];
+  }, [active, localRecs]);
+
+  return (
+    <div className="form">
+      {routesErr && <Note tone="err">capabilities 失败：{routesErr}</Note>}
+      {!store.durable() && <Note tone="warn">localStorage 不可用 —— 签名产物只在内存里，刷新页面就丢。</Note>}
+
+      <div className="f2">
+        <div className="f">
+          <label>方向</label>
+          <Tabs
+            grow
+            value={dir}
+            onChange={setDir}
+            label="买入还是卖出"
+            items={[
+              {k: 'buy', label: '买入 BUY'},
+              {k: 'sell', label: '卖出 SELL'},
+            ]}
+          />
+        </div>
+        <div className="f">
+          <label htmlFor="fs-chain">
+            标的在哪条链<span className="u">{route ? `side=${sideLabel(route.side)}` : '—'}</span>
+          </label>
+          <select id="fs-chain" className="inp" value={chain} onChange={(e) => setChain(e.target.value as ChainKey)}>
+            {CHAIN_OPTS.map((c) => (
+              <option key={c.k} value={c.k}>
+                {c.k}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div className="f3">
+        <Field
+          label={dir === 'buy' ? '买入的代币' : '卖出的代币'}
+          unit={chain === 'solana' ? 'Solana mint' : 'EVM 合约地址（0x…）'}
+          value={tokenAddr}
+          onChange={setTokenAddr}
+        />
+        <Field
+          label="amount_in_raw"
+          unit={dir === 'buy' ? 'USDC 最小单位（1 USDC = 1000000）' : '代币最小单位'}
+          value={amount}
+          onChange={setAmount}
+        />
+        <Field label="slippage_bps" unit="服务端上限 300，超限拒单" value={slippage} onChange={setSlippage} />
+      </div>
+      <p className="hint tight">
+        出资（{chainShort(shape.origin)}）<code className="code">{srcWallet?.address ?? '（无）'}</code> · id{' '}
+        <code className="code">{srcWalletID ?? '（无）'}</code>
+        {' '}→ 收款（{chainShort(shape.destination)}）<code className="code">{dstWallet?.address ?? '（无）'}</code> · id{' '}
+        <code className="code">{dstWalletID ?? '（无）'}</code>
+      </p>
+
+      {/* 展示报价 + 执行：同一行，报价在左、按钮在右 */}
+      <div className="row tight" style={{flexWrap: 'wrap', alignItems: 'center', gap: 8}}>
+        <Badge kind={freshQuote ? 'ok' : quoteErr ? 'err' : 'off'}>
+          {freshQuote ? `报价 ${ms(freshQuote.ms)}` : quoting ? '报价中' : quoteErr ? '报价失败' : '无报价'}
+        </Badge>
+        <span className="hint tight" style={{flex: 1, minWidth: 0}}>
+          {freshQuote && (
+            <>
+              预计到手 {fmt(freshQuote.reply.expected_out_raw, freshQuote.reply.assets.destination.decimals)} · 最少
+              {freshQuote.reply.estimate ? '（约）' : ''} {fmt(freshQuote.reply.min_out_raw, freshQuote.reply.assets.destination.decimals)}
+            </>
+          )}
+        </span>
+        <Btn variant="primary" danger={dir !== 'buy'} busy={running} disabled={running || !!blocked} onClick={doRun}>
+          确认并执行
+        </Btn>
+      </div>
+      {quoteErr && !freshQuote && <p className="hint tight">{quoteErr}</p>}
+      {freshQuote && freshQuote.reply.fees.length > 0 && (
+        <p className="hint tight">
+          费用：
+          {freshQuote.reply.fees.map((f, i) => (
+            <span key={i}>
+              {i > 0 ? '；' : ''}kind={f.kind} payer={f.payer} {f.amount_raw}@{f.asset.slice(0, 6)}…
+            </span>
+          ))}
+          {' '}—— 展示报价只供确认，不进任何签名材料。
+        </p>
+      )}
+
+      {blocked && <p className="hint tight">还不能执行：{blocked}</p>}
+
+      <Info label="高级 · 故障注入（一次性，用过即复位）">
+        {(
+          [
+            ['dropCreateResponse', '丢弃建单回包，随后同键重发（应落回同一笔）'],
+            ['stopAfterSign', '签完落盘后不上报 —— 刷新页面，到在途列表「恢复」'],
+            ['dropExecutionResponse', '丢弃上报回包，随后同键重发'],
+            ['waitUntilExpired', '拿到可签版本后不签，等它过期 → 自动 refresh'],
+            ['doubleFire', '同时发起两次签名 + 上报（验签名锁）'],
+          ] as [keyof Faults, string][]
+        ).map(([k, label]) => (
+          <label key={k} className="row tight" style={{gap: 8}}>
+            <input
+              type="checkbox"
+              checked={faults[k]}
+              onChange={(e) => {
+                faultsRef.current = {...faultsRef.current, [k]: e.target.checked};
+                setFaults(faultsRef.current);
+              }}
+            />
+            <span className="hint tight">{label}</span>
+          </label>
+        ))}
+      </Info>
+
+      {/* 这一笔 */}
+      {run && (
+        <div>
+          <div className="row tight">
+            <Badge kind={run.stage === 'done' ? 'ok' : run.stage === 'stopped' ? 'err' : 'live'}>{run.stage}</Badge>
+            {run.swapID && (
+              <>
+                <code className="code">{run.swapID}</code>
+                <Copy text={run.swapID} />
+              </>
+            )}
+            {canCancelRun && (
+              <Btn size="sm" onClick={() => void resumeSwap(run.swapID!, 'cancel')}>
+                取消这笔（已建未签）
+              </Btn>
+            )}
+          </div>
+          {run.stopReason && <Note tone="err">{run.stopReason}</Note>}
+          {snap && (
+            <div className="row tight">
+              {/* 颜色一律由 wire.ts 的 *Tone 决定：灰=还没发生，黄=进行中，绿=这一档走完，红=出事。 */}
+              <Badge kind={preparationTone(snap.preparation.status)}>
+                准备 · {preparationLabel(snap.preparation.status)}
+              </Badge>
+              <Badge kind={executionTone(snap.execution.status)}>执行 · {executionLabel(snap.execution.status)}</Badge>
+              <Badge kind={chainLegTone(snap.settlement.source)}>源链 · {chainLegLabel(snap.settlement.source)}</Badge>
+              {/* Relay 排在目的链前面：钱先被 Relay 成交，目的链上的到账是它的结果。
+                  照时间顺序摆，一行看下来就是这一笔走过的路。 */}
+              <Badge kind={relayTone(snap.settlement.relay)}>Relay · {relayLabel(snap.settlement.relay)}</Badge>
+              <Badge kind={chainLegTone(snap.settlement.destination)}>
+                目的链 · {chainLegLabel(snap.settlement.destination)}
+              </Badge>
+              <Badge kind={accountingTone(snap.settlement.accounting)}>
+                账务 · {accountingLabel(snap.settlement.accounting)}
+              </Badge>
+              <Badge kind={outcomeTone(snap.settlement.outcome)}>结局 · {outcomeLabel(snap.settlement.outcome)}</Badge>
+            </div>
+          )}
+          {run.checks.length > 0 && (
+            <Info label={`签名核对 · ${run.checks.filter((c) => c.ok).length}/${run.checks.length} 通过`}>
+              {run.checks.map((c) => (
+                <p key={c.id} className="hint tight">
+                  <Badge kind={c.ok ? 'ok' : 'err'}>{c.id}</Badge> {c.detail}
+                </p>
+              ))}
+            </Info>
+          )}
+
+          <Info label="时间线（fastswap-app.md §9）">
+            <p className="hint tight">quote_ms {ms(freshQuote?.ms)} · create_ms {ms(tl?.create_ms)} · privy_sign_ms {ms(tl?.privy_sign_ms)} · serialize_ms {ms(tl?.serialize_ms)}</p>
+            {tl?.execution_http?.map((h, i) => (
+              <p key={i} className="hint tight">
+                execution_http #{i + 1}：响应头 +{ms(h.headers == null ? undefined : h.headers - h.start)} · 响应体 +
+                {ms(h.body == null ? undefined : h.body - h.start)} · 解析完成 +{ms(h.parsed == null ? undefined : h.parsed - h.start)}
+              </p>
+            ))}
+            {!lastHttp && <p className="hint tight">还没有上报尝试</p>}
+            <p className="hint tight">
+              destination_observed_at {tl?.destination_observed_at ?? '—'} · source_confirmed_at {tl?.source_confirmed_at ?? '—'} ·
+              accounting_posted_at {tl?.accounting_posted_at ?? '—'}（本机首次观察到的墙钟）
+            </p>
+          </Info>
+
+          <Info label={`过程 · ${run.notes.length} 条`}>
+            {run.notes.map((n, i) => (
+              <p key={i} className="hint tight" style={n.bad ? {color: 'var(--err, #f87171)'} : undefined}>
+                {n.at.slice(11, 23)} {n.text}
+              </p>
+            ))}
+          </Info>
+          {snap && (
+            <Info label="快照全文">
+              {/* 复制按钮在上面不在下面：报障时要贴的就是这一整坨，
+                  而它有几百行 —— 按钮放末尾等于每次都要先滚到底。 */}
+              <div className="row tight">
+                <Copy text={JSON.stringify(snap, null, 2)} label="复制快照 JSON" />
+              </div>
+              <pre className="block">{JSON.stringify(snap, null, 2)}</pre>
+            </Info>
+          )}
+        </div>
+      )}
+
+      {/* 在途 */}
+      <div className="row tight" style={{justifyContent: 'space-between'}}>
+        <b>在途 Swap</b>
+        <Btn size="sm" disabled={!p.token} onClick={() => void loadActive()}>
+          刷新
+        </Btn>
+      </div>
+      {activeErr && <p className="hint tight">/active 失败：{activeErr}</p>}
+      {activeRows.length === 0 && <p className="hint tight">没有在途的 swap。</p>}
+      {activeRows.map(([id, s]) => {
+        const rec = localRecs.find((r) => r.swap_id === id);
+        const signedLocally = !!rec?.artifact;
+        const notReported = !s || s.execution.status === ExecutionStatus.NOT_REPORTED;
+        const brief = s ? rowBrief(s.intent) : rec ? rowBrief(rec.intent) : null;
+        return (
+          <div key={id} className="row tight">
+            <code className="code">{id.slice(0, 8)}</code>
+            {brief && (
+              <span className="hint tight">
+                {brief.chain} · {brief.dir} · <code className="code">{brief.token.slice(0, 6)}…{brief.token.slice(-4)}</code> ·{' '}
+                {s ? fmt(brief.amountRaw, s.revision.assets.origin.decimals) : `${brief.amountRaw}（raw）`}
+              </span>
+            )}
+            {s ? (
+              <>
+                <Badge kind="off">{preparationLabel(s.preparation.status)}</Badge>
+                <Badge kind="off">{executionLabel(s.execution.status)}</Badge>
+                <Badge kind="live">{outcomeLabel(s.settlement.outcome)}</Badge>
+              </>
+            ) : (
+              <Badge kind="off">不在 /active（可能已终态）</Badge>
+            )}
+            {signedLocally && <Badge kind={rec!.reported ? 'off' : 'err'}>{rec!.reported ? '本地产物·已上报' : '本地产物·未上报'}</Badge>}
+            {rec ? (
+              <Btn size="sm" disabled={running} onClick={() => void resumeSwap(id, 'resume', s ?? undefined)}>
+                恢复
+              </Btn>
+            ) : (
+              <Btn size="sm" disabled={running} onClick={() => void resumeSwap(id, 'follow', s ?? undefined)} title="本地没有这笔的记录，只跟进不签">
+                跟进
+              </Btn>
+            )}
+            {!signedLocally && notReported && s && (
+              <Btn size="sm" disabled={running} onClick={() => void resumeSwap(id, 'cancel', s)}>
+                取消
+              </Btn>
+            )}
+          </div>
+        );
+      })}
+
+    </div>
+  );
+}

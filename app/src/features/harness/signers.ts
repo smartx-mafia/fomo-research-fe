@@ -50,7 +50,7 @@ export const KEY_QUORUM_ID: string = process.env.NEXT_PUBLIC_HARNESS_KEY_QUORUM_
 export function keyQuorumMissing(id: string = KEY_QUORUM_ID): string | null {
   return id
     ? null
-    : '缺 VITE_PRIVY_KEY_QUORUM_ID —— 在 Privy 控制台 Authorization keys 里注册一个 key quorum，把它的 id 写进 .env.local 并重启 dev server';
+    : '缺 NEXT_PUBLIC_HARNESS_KEY_QUORUM_ID —— 在 Privy 控制台 Authorization keys 里注册一个 key quorum，把它的 id 写进 .env.local 并重启 dev server';
 }
 
 /**

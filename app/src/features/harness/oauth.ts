@@ -100,8 +100,8 @@ export function oauthBlockedReason(
   const localGate = provider === 'google' ? ENABLE_GOOGLE : ENABLE_APPLE;
   const dash = avail.dashboard?.[provider] === true;
   if (!dash && !localGate) {
-    return `两道闸都没开：Privy 控制台的 ${provider}_oauth=false，本地 VITE_ENABLE_${provider.toUpperCase()} 也不是 true`;
+    return `两道闸都没开：Privy 控制台的 ${provider}_oauth=false，本地 NEXT_PUBLIC_ENABLE_${provider.toUpperCase()} 也不是 true`;
   }
   if (!dash) return `Privy 控制台没开 ${provider}_oauth（不是本页的 bug）`;
-  return `控制台开着，但本地硬闸没开 —— 在 .env.local 里置 VITE_ENABLE_${provider.toUpperCase()}=true 并重启 dev server`;
+  return `控制台开着，但本地硬闸没开 —— 在 .env.local 里置 NEXT_PUBLIC_ENABLE_${provider.toUpperCase()}=true 并重启 dev server`;
 }

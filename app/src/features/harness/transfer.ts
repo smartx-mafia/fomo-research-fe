@@ -208,7 +208,7 @@ export type MintInfo = {
 };
 
 async function rpc<T>(method: string, params: unknown[], signal?: AbortSignal): Promise<T> {
-  if (!RPC_URL) throw new Error('没有配 VITE_SOLANA_RPC_URL');
+  if (!RPC_URL) throw new Error('没有配 NEXT_PUBLIC_SOLANA_RPC_URL');
   const res = await fetch(RPC_URL, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -335,7 +335,7 @@ export async function buildSplTransfer(p: {
   /** 从链上读到的 decimals，见 fetchMintInfo。 */
   decimals: number;
 }): Promise<Uint8Array> {
-  if (!RPC_URL) throw new Error('没有配 VITE_SOLANA_RPC_URL');
+  if (!RPC_URL) throw new Error('没有配 NEXT_PUBLIC_SOLANA_RPC_URL');
   const owner = address(p.owner);
   const dest = address(p.dest);
   const mint = address(p.mint);

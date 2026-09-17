@@ -1,22 +1,20 @@
 'use client';
 
+import {App} from './App';
+
 /**
- * harness 的空壳容器。
+ * harness 的挂载点。
  *
- * 本票只交付边界：一个被 `next/dynamic({ ssr: false })` 挂载的、纯客户端的容器。
- * 真正的 harness App（Privy Provider、fail-loud 配置检查、错误边界、各能力面板）
- * 由后续票填进来，填的时候只改这个文件树，不再动 route group 结构。
+ * 源仓库 `src/main.tsx` 里 `root.render(<PrivyProvider><Boundary><App/></Boundary></PrivyProvider>)`
+ * 这一段，迁移后一分为二：Provider / fail-loud / 错误边界在
+ * `src/app/(harness)/layout.tsx`，剩下的「把 App 挂起来」就是这个文件。
+ *
+ * 它单独存在是因为 `next/dynamic({ ssr: false })` 需要一个**默认导出**的
+ * 模块作为动态边界（`App` 是具名导出），而那条边界必须在这里而不是更外层：
+ * harness 全程依赖 `window` / `localStorage` / Privy 浏览器 SDK。
+ *
+ * CSS 的作用域根 `.harness-root` 在 layout 那一层（见那边的注释）。
  */
 export default function HarnessShell() {
-  return (
-    <div
-      data-testid="harness-shell"
-      className="flex min-h-[60vh] w-full flex-col items-center justify-center gap-2 p-8 text-center"
-    >
-      <h1 className="font-mono text-sm font-semibold tracking-tight">harness shell</h1>
-      <p className="text-xs text-muted">
-        Client-only container. Capabilities are wired up in a later migration step.
-      </p>
-    </div>
-  );
+  return <App />;
 }

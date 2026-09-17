@@ -10,7 +10,7 @@
 //
 // # 用的是 Privy 那同一个端点
 //
-// VITE_SOLANA_RPC_URL 已经是必填（main.tsx 缺了就不渲染），那个端点本来就
+// NEXT_PUBLIC_SOLANA_RPC_URL 已经是必填（(harness)/layout.tsx 缺了就不渲染），那个端点本来就
 // 被浏览器直接打（Privy 的签名路径在用），所以这里既不需要新配一个值，
 // 也不需要代理绕 CORS。
 
@@ -82,7 +82,7 @@ export async function fetchTokenBalance(
   mint: string,
   signal?: AbortSignal,
 ): Promise<UsdcBalance> {
-  if (!RPC_URL) throw new Error('没有配 VITE_SOLANA_RPC_URL');
+  if (!RPC_URL) throw new Error('没有配 NEXT_PUBLIC_SOLANA_RPC_URL');
   const res = await fetch(RPC_URL, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},

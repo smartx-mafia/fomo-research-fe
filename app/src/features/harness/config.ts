@@ -7,7 +7,7 @@
  * 这里保留原来的名字，只是把值改成"当前环境的那一份"，好让消费方不必知道
  * 环境这回事。
  *
- * `main.tsx` 里另有两个必填项（Privy app id / `VITE_SOLANA_RPC_URL`）的
+ * `(harness)/layout.tsx` 里另有两个必填项（Privy app id / `NEXT_PUBLIC_SOLANA_RPC_URL`）的
  * fail-loud 检查，那两个缺了页面直接不挂载 —— 见那边的注释。
  */
 import {CURRENT_ENV} from './envs.browser';
@@ -21,7 +21,7 @@ import {CURRENT_ENV} from './envs.browser';
  * 没有这条记录的人会去怀疑 JWT 验签，方向整个反掉。
  *
  * 它与代理真正打到的那个地址（`BUSINESS_ORIGIN` / `TEST_BUSINESS_ORIGIN`，
- * **都没有 VITE_ 前缀**，只给 vite.config.ts 用）是两回事：那些是真的目标，
+ * **都没有 NEXT_PUBLIC_ 前缀**，只给 dev 代理用）是两回事：那些是真的目标，
  * 这个只是给人看的标签。两边应当一致，但**没有任何机制保证** ——
  * 不一致时页面上写的会是假的，所以缺配置时宁可诚实地说"不知道"。
  */
