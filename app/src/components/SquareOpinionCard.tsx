@@ -6,6 +6,7 @@ import {useState} from 'react';
 import type {SquareOpinionItem} from '@/api/social-content';
 import {opinionAge, opinionCycleReturn} from '@/lib/opinion-card-display';
 import {decimalSign, formatDecimalExact} from '@/lib/exact-decimal';
+import {TokenAvatar} from '@/components/TokenAvatar';
 import styles from './SquareOpinionCard.module.css';
 
 export function SquareOpinionCard({item, remark, followControl, likePending, onToggleLike, now}: {
@@ -17,7 +18,6 @@ export function SquareOpinionCard({item, remark, followControl, likePending, onT
   now: number;
 }) {
   const [failedAvatar, setFailedAvatar] = useState<string>();
-  const [failedTokenLogo, setFailedTokenLogo] = useState<string>();
   const {actor, content} = item;
   const version = content.opinion.latestVersion;
   const name = actor.nickname || actor.username || `${actor.identifier.slice(0, 10)}…`;
@@ -27,7 +27,6 @@ export function SquareOpinionCard({item, remark, followControl, likePending, onT
   const closed = BigInt(position.shares_raw) === BigInt(0);
   const pnlAmount = closed ? position.realized_pnl_usd : position.unrealized_pnl_usd;
   const pnlSign = decimalSign(pnlAmount);
-  const logo = content.token?.logo && /^https?:\/\//i.test(content.token.logo) ? content.token.logo : undefined;
   const href = `/token/${encodeURIComponent(position.asset.chain)}/${encodeURIComponent(position.asset.token_address)}`;
   const xLinks = version.items.filter((entry) => entry.kind === 'x_link');
   const published = new Date(item.sortTime.seconds * 1000);
@@ -68,10 +67,8 @@ export function SquareOpinionCard({item, remark, followControl, likePending, onT
         <p className={styles.body}>{version.body}</p>
 
         <div className={styles.position} aria-label="Position summary">
-          <span className={styles.tokenAvatar} aria-hidden="true">
-            {logo && failedTokenLogo !== logo ? <Image src={logo} alt="" width={32} height={32} unoptimized
-              onError={() => setFailedTokenLogo(logo)} /> : symbol?.slice(0, 1).toUpperCase() || '—'}
-          </span>
+          <TokenAvatar chain={position.asset.chain} address={position.asset.token_address} size={32}
+            fallbackLogo={content.token?.logo} fallbackSymbol={symbol} fallbackName={content.token?.name} />
           <div className={styles.tokenInfo}>
             <div className={styles.positionLabel}>{closed ? 'Closed' : 'Open'}<span className={styles.dot} aria-hidden="true" /></div>
             <p className={styles.symbol} title={`${symbol ?? 'Token'} · ${position.asset.chain}:${position.asset.token_address}`}>

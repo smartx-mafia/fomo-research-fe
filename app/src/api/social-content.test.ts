@@ -7,6 +7,8 @@ import {
   SQUARE_LANES,
   deleteOpinion,
   getSquareFeedUpdates,
+  listTokenFollowHolders,
+  listTokenOpinions,
   listSquareFeedPage,
   type SquareRefreshAnchor,
 } from './social-content';
@@ -127,6 +129,50 @@ describe('social content square feed contract', () => {
     if (!item || item.type !== 2) throw new Error('expected trade item');
     expect(item.content.trade.executionPriceUSD).toBe('0.56553974602259984068');
     expect(item.content.trade.marketCapUSDAtTrade).toBe('402723546.2776984');
+  });
+});
+
+describe('social content token opinions contract', () => {
+  beforeEach(() => callMock.mockReset());
+
+  it('uses the token identity in the path and preserves the opaque cursor', async () => {
+    callMock.mockResolvedValue({data: {items: [], next_cursor: 'cursor+/='}});
+    await expect(listTokenOpinions('solana', 'mint/a', {cursor: 'cursor-1', limit: 50, bearer: 'jwt'})).resolves.toEqual({
+      items: [],
+      nextCursor: 'cursor+/=',
+    });
+    expect(callMock).toHaveBeenCalledWith(
+      '/v1/tokens/solana/mint%2Fa/opinions?cursor=cursor-1&limit=50',
+      expect.objectContaining({bearer: 'jwt', signal: undefined}),
+    );
+  });
+});
+
+describe('social content followed holders contract', () => {
+  beforeEach(() => callMock.mockReset());
+
+  it('keeps base-unit shares and empty financial strings unavailable', async () => {
+    callMock.mockResolvedValue({data: {
+      total: 1,
+      next_cursor: 'next-1',
+      token: {chain: 'bsc', address: '0xabc', decimals: 18, symbol: 'ABC'},
+      items: [{user: {identifier: 'u1', nickname: 'Alice'}, shares: '347000000000000000000', cost_usd: '', pnl_percent: '16.6977', remark: '老王'}],
+    }});
+    await expect(listTokenFollowHolders('jwt', 'bsc', '0xabc', {limit: 20})).resolves.toEqual({
+      total: 1,
+      nextCursor: 'next-1',
+      token: {chain: 'bsc', address: '0xabc', decimals: 18, symbol: 'ABC'},
+      items: [{user: {identifier: 'u1', nickname: 'Alice'}, shares: '347000000000000000000', costUSD: undefined, pnlPercent: '16.6977', remark: '老王'}],
+    });
+    expect(callMock).toHaveBeenCalledWith(
+      '/v1/social/token-follow-holders?chain=bsc&address=0xabc&limit=20',
+      expect.objectContaining({bearer: 'jwt', signal: undefined}),
+    );
+
+    callMock.mockResolvedValue({data: {token: {chain: '', address: '', decimals: 0}, items: []}});
+    const empty = await listTokenFollowHolders('jwt', 'bsc', 'missing');
+    expect(empty).toEqual({items: [], total: 0});
+    expect(empty).not.toHaveProperty('token');
   });
 });
 

@@ -1,5 +1,6 @@
 /** Browser-side client for docs/contracts/meme.md. Amounts stay exact decimal strings. */
 import {call} from './envelope';
+import {normalizeTokenInfo, type TokenInfo as CanonicalTokenInfo} from './token-metadata';
 
 export type TradeSide = 'buy' | 'sell';
 
@@ -9,13 +10,7 @@ export type MemeChain = {
   kind: 'evm' | 'svm' | string;
 };
 
-export type TokenInfo = {
-  chain: string;
-  address: string;
-  symbol?: string;
-  name?: string;
-  decimals: number;
-};
+export type TokenInfo = CanonicalTokenInfo;
 
 export type TradeIntent = {
   chain: string;
@@ -62,6 +57,8 @@ export type TradeReply = {
   channel?: string;
   duplicate?: boolean;
   amount_in_actual?: string;
+  amount_out_observed?: string;
+  amount_out_quoted?: string;
   fee_execution?: string;
   fee_platform?: string;
   fee_app?: string;
@@ -71,6 +68,7 @@ export type TradeReply = {
   error_code?: string;
   lifecycle?: string;
   deadline_at?: string;
+  settlement_status?: string;
   sellable_after_graduation?: boolean;
 };
 
@@ -79,6 +77,8 @@ export type PrepareTradeReply = {
   sign_kind: number;
   sign_data: string;
   expires_at?: string;
+  /** Identifies the exact prepared payload. Return it unchanged on Submit. */
+  prepare_id: string;
   wallet_address: string;
   fee_bps?: number;
   fee_scheme?: string;
@@ -91,41 +91,13 @@ export type PrepareDelegationReply = {
   wallet_address: string;
 };
 
-export type Position = {
-  asset_chain_id: number;
-  asset_kind: string;
-  asset: string;
-  quote_chain_id: number;
-  quote_asset_kind: string;
-  quote_asset: string;
-  shares: string;
-  cost_basis: string;
-  total_buy_shares?: string;
-  total_buy_quote?: string;
-  total_sell_shares?: string;
-  total_sell_quote?: string;
-  total_realized_pnl?: string;
-  current_realized_pnl?: string;
-  current_buy_shares?: string;
-  current_sell_shares?: string;
-  current_buy_quote?: string;
-  current_sell_quote?: string;
-  current_cycle_opened_at?: string;
-  current_cycle_opened_entry_id?: number;
-  cycle_count?: number;
-  cycles_ready?: boolean;
-  holding_avg_cost_usd?: string;
-  asset_decimals?: number;
-  quote_decimals?: number;
-  updated_at: string;
-};
-
 export const SIGN_KIND_SOLANA_TRANSACTION = 1;
 export const SIGN_KIND_EVM_USER_OPERATION = 2;
 export const SIGN_KIND_EVM_7702_AUTHORIZATION = 3;
 export const SIGN_KIND_EVM_PERMIT_DIGEST = 4;
 export const SIGN_KIND_EVM_CALIBUR_BATCH = 5;
-export const CODE_DELEGATION_REQUIRED = 100283;
+export const CODE_DELEGATION_REQUIRED = 430283;
+export const CODE_PREPARED_SUPERSEDED = 4302103;
 
 export const TRADE_PHASE_UNSPECIFIED = 0;
 export const TRADE_PHASE_PENDING = 1;
@@ -137,8 +109,8 @@ function validateIntent(intent: TradeIntent) {
   if (!/^\d+$/.test(intent.amountIn) || BigInt(intent.amountIn) <= BigInt(0)) {
     throw new Error('Trade amount must be a positive integer in smallest units.');
   }
-  if (!Number.isInteger(intent.slippageBps) || intent.slippageBps < 0 || intent.slippageBps > 10_000) {
-    throw new Error('Slippage must be between 0 and 10,000 bps.');
+  if (!Number.isInteger(intent.slippageBps) || intent.slippageBps < 1 || intent.slippageBps > 10_000) {
+    throw new Error('Slippage must be between 1 and 10,000 bps.');
   }
 }
 
@@ -160,14 +132,14 @@ export async function listTradeChains(bearer: string, signal?: AbortSignal) {
 }
 
 export async function getTokenInfo(chain: string, address: string, signal?: AbortSignal): Promise<TokenInfo> {
-  const response = await call<{info?: TokenInfo}>(
+  const response = await call<{info?: unknown}>(
     `/v1/tokens/${encodeURIComponent(chain)}/${encodeURIComponent(address)}`,
     {signal},
   );
-  if (!response.data.info || !Number.isInteger(response.data.info.decimals) || response.data.info.decimals < 0) {
+  const info = normalizeTokenInfo(response.data.info);
+  if (!info) {
     throw new Error('Token metadata is unavailable.');
   }
-  const info = response.data.info;
   const evmAddress = /^0x[0-9a-f]{40}$/i.test(address);
   const addressMatches = evmAddress
     ? info.address.toLowerCase() === address.toLowerCase()
@@ -196,12 +168,21 @@ export async function prepareTrade(bearer: string, tradeID: string, signal?: Abo
   const response = await call<PrepareTradeReply>(`/v1/meme/trades/${encodeURIComponent(tradeID)}/prepare`, {
     method: 'POST', bearer, signal,
   });
+  if (typeof response.data.prepare_id !== 'string' || response.data.prepare_id.trim() === '') {
+    throw new Error('Prepare response is missing its required prepare_id. No signature was requested.');
+  }
   return response.data;
 }
 
-export async function submitTrade(bearer: string, tradeID: string, signature: string, signal?: AbortSignal) {
+export async function submitTrade(
+  bearer: string,
+  tradeID: string,
+  signature: string,
+  prepareID: string,
+  signal?: AbortSignal,
+) {
   const response = await call<TradeReply>(`/v1/meme/trades/${encodeURIComponent(tradeID)}/submit`, {
-    method: 'POST', bearer, body: {signature}, signal,
+    method: 'POST', bearer, body: {signature, prepare_id: prepareID}, signal,
   });
   return response.data;
 }
@@ -229,11 +210,6 @@ export async function submitDelegation(
     method: 'POST', bearer, body: {chain, nonce, signature}, signal,
   });
   return response.data;
-}
-
-export async function listPositions(bearer: string, signal?: AbortSignal) {
-  const response = await call<{positions?: Position[]}>('/v1/meme/positions', {bearer, signal});
-  return response.data.positions ?? [];
 }
 
 export function phaseOf(trade: Pick<TradeReply, 'status'>): number {
@@ -268,7 +244,7 @@ export async function pollTrade(
   } = {},
 ): Promise<{trade: TradeReply; stop: PollStop; rounds: number}> {
   const startedAt = Date.now();
-  const interval = options.intervalMs ?? 1_500;
+  const interval = options.intervalMs ?? 300;
   const budget = options.budgetMs ?? 90_000;
   for (let rounds = 1; ; rounds += 1) {
     options.signal?.throwIfAborted();
@@ -276,7 +252,9 @@ export async function pollTrade(
     options.onTick?.(trade, rounds);
     const phase = phaseOf(trade);
     if (phase === TRADE_PHASE_UNSPECIFIED) throw new Error(`Unknown trade status: ${String(trade.status)}`);
-    if (phase !== TRADE_PHASE_PENDING) return {trade, stop: 'settled', rounds};
+    // Cross-chain refund/failure can briefly expose SUCCESS while deadline_at is
+    // still present. The backend clears deadline_at only once the summary is final.
+    if (phase !== TRADE_PHASE_PENDING && !trade.deadline_at) return {trade, stop: 'settled', rounds};
     const deadline = trade.deadline_at ? Date.parse(trade.deadline_at) : Number.NaN;
     if (Number.isFinite(deadline) && Date.now() >= deadline) return {trade, stop: 'deadline', rounds};
     if (Date.now() - startedAt >= budget) return {trade, stop: 'budget', rounds};

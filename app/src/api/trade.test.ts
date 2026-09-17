@@ -9,7 +9,9 @@ import {
   parseUnits,
   phaseOf,
   pollTrade,
+  prepareTrade,
   previewTrade,
+  submitTrade,
   TRADE_PHASE_FAILED,
   TRADE_PHASE_PENDING,
   TRADE_PHASE_SUCCESS,
@@ -20,13 +22,13 @@ const BASE_INTENT = {
   side: 'buy' as const,
   token: '0x1111111111111111111111111111111111111111',
   amountIn: '1000000',
-  slippageBps: 0,
+  slippageBps: 1,
 };
 
 describe('trade request contract', () => {
   beforeEach(() => callMock.mockReset());
 
-  it('sends exact smallest-unit strings, preserves slippage 0, and funds non-Solana buys from Solana', async () => {
+  it('sends exact smallest-unit strings and funds non-Solana buys from Solana', async () => {
     callMock.mockResolvedValue({data: {trade_id: 't-1'}});
     await previewTrade('jwt', BASE_INTENT);
     expect(callMock).toHaveBeenCalledWith('/v1/meme/trades/preview', {
@@ -38,7 +40,7 @@ describe('trade request contract', () => {
         side: 'buy',
         token: BASE_INTENT.token,
         amount_in: '1000000',
-        slippage_bps: 0,
+        slippage_bps: 1,
       },
       signal: undefined,
     });
@@ -58,8 +60,31 @@ describe('trade request contract', () => {
 
   it('rejects fractional smallest-unit strings and out-of-range slippage before calling the API', async () => {
     await expect(createTrade('jwt', {...BASE_INTENT, amountIn: '1.5'})).rejects.toThrow(/positive integer/);
+    await expect(createTrade('jwt', {...BASE_INTENT, slippageBps: 0})).rejects.toThrow(/1 and 10,000/);
     await expect(createTrade('jwt', {...BASE_INTENT, slippageBps: 10_001})).rejects.toThrow(/10,000/);
     expect(callMock).not.toHaveBeenCalled();
+  });
+
+  it('returns the exact prepare_id with the signature on Submit', async () => {
+    callMock.mockResolvedValue({data: {trade_id: 't-1'}});
+    await submitTrade('jwt', 't-1', 'c2ln', 'prepare-1');
+    expect(callMock).toHaveBeenCalledWith('/v1/meme/trades/t-1/submit', {
+      method: 'POST',
+      bearer: 'jwt',
+      body: {signature: 'c2ln', prepare_id: 'prepare-1'},
+      signal: undefined,
+    });
+  });
+
+  it('rejects a Prepare response without its stale-payload fence before signing', async () => {
+    callMock.mockResolvedValue({data: {
+      trade: {trade_id: 't-1', side: 'buy', token: BASE_INTENT.token},
+      sign_kind: 4,
+      sign_data: 'AA==',
+      wallet_address: '0x1111111111111111111111111111111111111111',
+      expires_at: '2099-01-01T00:00:00Z',
+    }});
+    await expect(prepareTrade('jwt', 't-1')).rejects.toThrow(/required prepare_id/);
   });
 });
 
@@ -98,6 +123,18 @@ describe('trade polling', () => {
     expect(result.stop).toBe('settled');
     expect(result.rounds).toBe(2);
     expect(ticks).toEqual(['PENDING', 'SUCCESS']);
+  });
+
+  it('does not settle the transient cross-chain refund window', async () => {
+    callMock
+      .mockResolvedValueOnce({data: {
+        trade_id: 't-1', status: 'SUCCESS', lifecycle: 'confirmed',
+        deadline_at: new Date(Date.now() + 60_000).toISOString(), settlement_status: 'refund',
+      }})
+      .mockResolvedValueOnce({data: {trade_id: 't-1', status: 'FAILED', lifecycle: 'failed'}});
+    await expect(pollTrade('jwt', 't-1', {intervalMs: 0})).resolves.toMatchObject({
+      stop: 'settled', rounds: 2, trade: {status: 'FAILED'},
+    });
   });
 
   it('stops at a passed backend deadline and rejects unknown status values', async () => {

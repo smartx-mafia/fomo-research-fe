@@ -10,9 +10,12 @@
 import { num } from "./format";
 import {normalizeTokenOverview, type TokenOverview} from './token-overview';
 import {normalizeChartBars} from './chart-data';
+import {normalizeTokenInfo} from '@/api/token-metadata';
+import type {TokenTradeBoardItem, TokenTradeBoardPage} from '@/api/token-trade-boards';
 import type {
   BoardData,
   BoardName,
+  HolderPage,
   HolderItem,
   OhlcvBar,
   OhlcvPeriod,
@@ -174,13 +177,77 @@ function normalizeTrade(raw: unknown): TradeItem {
   };
 }
 
+function normalizeOnChainTrade(raw: unknown): TokenTradeBoardItem | undefined {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  const side = r.type === 'buy' || r.type === 'sell' ? r.type : undefined;
+  if (!side) return undefined;
+  const date = num(r.date);
+  return {
+    side,
+    occurredAt: date === undefined ? 0 : Math.floor(date / 1000),
+    tokenAmount: typeof r.base_token_amount === 'string' && r.base_token_amount !== '' ? r.base_token_amount : undefined,
+    usd: num(r.base_token_amount_usd),
+    executionPriceUSD: num(r.price_usd),
+    marketCapUSDEstimated: typeof r.market_cap_usd_estimated === 'string' && r.market_cap_usd_estimated !== '' ? r.market_cap_usd_estimated : undefined,
+    txHash: typeof r.tx_hash === 'string' && r.tx_hash !== '' ? r.tx_hash : undefined,
+    sender: typeof r.sender === 'string' && r.sender !== '' ? r.sender : undefined,
+  };
+}
+
+function nonEmptyString(value: unknown): string | undefined {
+  return typeof value === "string" && value !== "" ? value : undefined;
+}
+
+function normalizeHolderIdentity(raw: unknown) {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  return {
+    identifier: typeof r.identifier === "string" ? r.identifier : undefined,
+    username: nonEmptyString(r.username),
+    nickname: nonEmptyString(r.nickname),
+    avatar_url: nonEmptyString(r.avatar_url),
+  };
+}
+
+function normalizePlatformHolding(raw: unknown) {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  return {
+    status: num(r.status),
+    shares: typeof r.shares === "string" ? r.shares : undefined,
+    amount: typeof r.amount === "string" ? r.amount : undefined,
+    asset_decimals: r.asset_decimals === null ? null : num(r.asset_decimals),
+    quote_decimals: r.quote_decimals === null ? null : num(r.quote_decimals),
+    cost_basis: typeof r.cost_basis === "string" ? r.cost_basis : undefined,
+    cost_usd: typeof r.cost_usd === "string" ? r.cost_usd : undefined,
+    avg_cost_usd: typeof r.avg_cost_usd === "string" ? r.avg_cost_usd : undefined,
+    total_realized_pnl_usd: typeof r.total_realized_pnl_usd === "string" ? r.total_realized_pnl_usd : undefined,
+    cycles_ready: typeof r.cycles_ready === "boolean" ? r.cycles_ready : undefined,
+    current_realized_pnl_usd: typeof r.current_realized_pnl_usd === "string" ? r.current_realized_pnl_usd : undefined,
+    current_buy_quote_usd: typeof r.current_buy_quote_usd === "string" ? r.current_buy_quote_usd : undefined,
+    market_value_usd: typeof r.market_value_usd === "string" ? r.market_value_usd : undefined,
+    unrealized_pnl_usd: typeof r.unrealized_pnl_usd === "string" ? r.unrealized_pnl_usd : undefined,
+    pnl_percent: typeof r.pnl_percent === "string" ? r.pnl_percent : undefined,
+    quote_at: num(r.quote_at),
+  };
+}
+
 function normalizeHolder(raw: unknown): HolderItem {
   const r = (raw ?? {}) as Record<string, unknown>;
+  const identity = r.identity && typeof r.identity === "object" ? normalizeHolderIdentity(r.identity) : undefined;
+  const platformHolding = r.platform_holding && typeof r.platform_holding === "object" ? normalizePlatformHolding(r.platform_holding) : undefined;
+  const viewer = r.viewer && typeof r.viewer === "object" ? {
+    following: typeof (r.viewer as Record<string, unknown>).following === "boolean" ? (r.viewer as Record<string, unknown>).following as boolean : undefined,
+    remark: typeof (r.viewer as Record<string, unknown>).remark === "string" ? (r.viewer as Record<string, unknown>).remark as string : undefined,
+  } : undefined;
   return {
     wallet_address: typeof r.wallet_address === "string" ? r.wallet_address : undefined,
     token_amount: typeof r.token_amount === "string" ? r.token_amount : undefined,
     token_amount_usd: num(r.token_amount_usd),
     percentage_of_total_supply: num(r.percentage_of_total_supply),
+    first_held_time: num(r.first_held_time),
+    address_type: num(r.address_type),
+    identity,
+    platform_holding: platformHolding,
+    viewer,
     realized_pnl_usd: num(r.realized_pnl_usd),
     unrealized_pnl_usd: num(r.unrealized_pnl_usd),
     total_pnl_usd: num(r.total_pnl_usd),
@@ -189,6 +256,15 @@ function normalizeHolder(raw: unknown): HolderItem {
     sells: num(r.sells),
     labels: Array.isArray(r.labels) ? (r.labels as string[]) : undefined,
     platform_name: typeof r.platform_name === "string" ? r.platform_name : undefined,
+  };
+}
+
+function normalizeHolderPage(raw: unknown): HolderPage {
+  const r = (raw ?? {}) as Record<string, unknown>;
+  return {
+    items: Array.isArray(r.items) ? r.items.map(normalizeHolder) : [],
+    holders_count: num(r.holders_count),
+    top10_percent: num(r.top10_percent),
   };
 }
 
@@ -248,37 +324,84 @@ export async function fetchOhlcv(
 export async function fetchTrades(
   chain: string,
   address: string,
-  opts: { limit?: number; offset?: number } = {}
+  opts: { limit?: number } = {}
 ): Promise<TradeItem[]> {
   // 2026-09 起 limit 上限 200（超出服务端静默截断）；服务端缓存 30s，轮询间隔应 ≥ 30s
-  const { limit: rawLimit = 20, offset = 0 } = opts;
+  const { limit: rawLimit = 20 } = opts;
   const limit = Math.min(200, Math.max(1, rawLimit));
   const data = await marketFetch<{ items?: unknown[] }>(
     `/v1/tokens/${chain}/${address}/trades`,
-    { limit, offset },
+    { limit },
     { revalidate: 30 }
   );
   return Array.isArray(data?.items) ? data.items.map(normalizeTrade) : [];
 }
 
+/** On-chain trade board. It uses the legacy market payload but exposes the new board semantics. */
+export async function fetchOnChainTradeBoard(
+  chain: string,
+  address: string,
+  limit = 50,
+): Promise<TokenTradeBoardPage> {
+  const boundedLimit = Math.min(200, Math.max(1, limit));
+  const data = await marketFetch<unknown>(
+    `/v1/tokens/${encodeURIComponent(chain)}/${encodeURIComponent(address)}/trades`,
+    {limit: boundedLimit},
+    {revalidate: 30},
+  );
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Missing on-chain trade board response.');
+  const row = data as Record<string, unknown>;
+  if (row.items !== undefined && !Array.isArray(row.items)) throw new Error('Invalid on-chain trade board items.');
+  return {
+    token: normalizeTokenInfo(row.token),
+    items: Array.isArray(row.items)
+      ? row.items.map(normalizeOnChainTrade).filter((item): item is TokenTradeBoardItem => item !== undefined)
+      : [],
+    coverage: [],
+  };
+}
+
 /**
  * 持仓者列表（2026-09 口径）：
- * - label 过滤已暂停（只接受空串，非空值回 100307）——调用方不要再传 label；
- * - 500097 = 上游档位未开通，调用方必须走"功能暂不可用"分支，不要重试、不要渲染成空列表；
- * - 服务端缓存 300s、上游 6 小时刷新一次——不要轮询；
- * - 只含经 DEX 建仓的钱包，与 holders_count 本来就对不上，不要做一致性校验；
- * - PnL / buys / sells 均为近 1 年窗口，不是全期。
+ * - 当前名单按链上余额倒序，空投/转入持有人也可能出现；
+ * - 500097 = 上游/存储暂不可用，调用方显示可重试的不可用态，不要渲染成空列表；
+ * - 服务端缓存 300s、有效深度为前 100 名，不要轮询；
+ * - PnL / avg buy / buys / sells / labels 仍在 wire 上但当前无数据，前端不得展示；
+ * - address_type=0 表示未知，不能当作普通钱包。
  */
 export async function fetchHolders(
   chain: string,
   address: string,
   opts: { limit?: number; offset?: number } = {}
 ): Promise<HolderItem[]> {
+  return (await fetchHolderPage(chain, address, opts)).items;
+}
+
+export async function fetchHolderPage(
+  chain: string,
+  address: string,
+  opts: { limit?: number; offset?: number } = {}
+): Promise<HolderPage> {
   const { limit = 20, offset = 0 } = opts;
-  const data = await marketFetch<{ items?: unknown[] }>(
+  const data = await marketFetch<unknown>(
     `/v1/tokens/${chain}/${address}/holders`,
     { limit, offset },
     { revalidate: 300 }
   );
-  return Array.isArray(data?.items) ? data.items.map(normalizeHolder) : [];
+  return normalizeHolderPage(data);
+}
+
+/** The trader dataset has real PnL fields; unlike /holders, token_amount=0 is valid. */
+export async function fetchTopTraders(
+  chain: string,
+  address: string,
+  opts: { limit?: number; offset?: number } = {}
+): Promise<HolderPage> {
+  const { limit = 20, offset = 0 } = opts;
+  const data = await marketFetch<unknown>(
+    `/v1/tokens/${chain}/${address}/top-traders`,
+    { limit, offset },
+    { revalidate: 300 }
+  );
+  return normalizeHolderPage(data);
 }

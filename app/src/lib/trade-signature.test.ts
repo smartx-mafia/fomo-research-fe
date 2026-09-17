@@ -1,7 +1,7 @@
 import {PublicKey, TransactionInstruction, TransactionMessage, VersionedTransaction} from '@solana/web3.js';
 import {describe, expect, it} from 'vitest';
 
-import {extractSolanaSignature, fromBase64, signEvmDigest, toBase64} from './trade-signature';
+import {assertSolanaRequiredSigner, extractSolanaSignature, fromBase64, signEvmDigest, toBase64} from './trade-signature';
 
 const SPONSOR = new PublicKey('SysvarC1ock11111111111111111111111111111111');
 const USER = new PublicKey('EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v');
@@ -30,8 +30,23 @@ function signedWire() {
 }
 
 describe('extractSolanaSignature', () => {
+  it('checks the selected wallet is a required signer before Privy is called', () => {
+    const prepared = sponsoredTransaction().serialize();
+    expect(() => assertSolanaRequiredSigner(prepared, USER.toBase58())).not.toThrow();
+    expect(() => assertSolanaRequiredSigner(prepared, OTHER.toBase58())).toThrow(/not a required signer/);
+  });
+
   it('extracts the server-selected user slot rather than the empty sponsor slot', () => {
     expect([...extractSolanaSignature(signedWire(), USER.toBase58())]).toEqual([...USER_SIGNATURE]);
+  });
+
+  it('rejects a wallet response that changed the prepared transaction message', () => {
+    const prepared = sponsoredTransaction().serialize();
+    const changed = sponsoredTransaction();
+    changed.message.recentBlockhash = OTHER.toBase58();
+    const userSlot = changed.message.staticAccountKeys.findIndex((key) => key.equals(USER));
+    changed.signatures[userSlot] = USER_SIGNATURE;
+    expect(() => extractSolanaSignature(changed.serialize(), USER.toBase58(), prepared)).toThrow(/differs from Prepare/);
   });
 
   it('rejects an all-zero signature slot', () => {

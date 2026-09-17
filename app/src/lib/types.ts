@@ -103,12 +103,51 @@ export interface TradeItem {
   platform_name?: string;
 }
 
-/** /v1/tokens/{chain}/{address}/holders 的 data.items[]（§2.3）。token_amount 同上是精确字符串 */
+export interface HolderIdentity {
+  /** Empty means the address is not mapped to a public SmartX user. */
+  identifier?: string;
+  username?: string;
+  nickname?: string;
+  avatar_url?: string;
+}
+
+export interface PlatformHolding {
+  /** 0 = not queried, 1 = has position, 2 = queried and no position, 3 = unavailable. */
+  status?: number;
+  shares?: string;
+  amount?: string;
+  asset_decimals?: number | null;
+  quote_decimals?: number | null;
+  cost_basis?: string;
+  cost_usd?: string;
+  avg_cost_usd?: string;
+  total_realized_pnl_usd?: string;
+  cycles_ready?: boolean;
+  current_realized_pnl_usd?: string;
+  current_buy_quote_usd?: string;
+  market_value_usd?: string;
+  unrealized_pnl_usd?: string;
+  pnl_percent?: string;
+  quote_at?: number;
+}
+
+export interface ViewerRelation {
+  following?: boolean;
+  remark?: string;
+}
+
+/** /v1/tokens/{chain}/{address}/holders and /top-traders row shape. */
 export interface HolderItem {
   wallet_address?: string;
   token_amount?: string;
   token_amount_usd?: number;
   percentage_of_total_supply?: number;
+  first_held_time?: number;
+  /** 0 = unknown, 1 = wallet, 2 = liquidity pool, 3 = burn address. */
+  address_type?: number;
+  identity?: HolderIdentity;
+  platform_holding?: PlatformHolding;
+  viewer?: ViewerRelation;
   realized_pnl_usd?: number;
   unrealized_pnl_usd?: number;
   total_pnl_usd?: number;
@@ -118,6 +157,14 @@ export interface HolderItem {
   labels?: string[];
   /** 2026-09 起恒为空串（无数据源），展示层显示 "—" */
   platform_name?: string;
+}
+
+export interface HolderPage {
+  items: HolderItem[];
+  /** Only meaningful for the on-chain holder source. */
+  holders_count?: number;
+  /** Percentage value, e.g. 25 means 25%. */
+  top10_percent?: number;
 }
 
 /**

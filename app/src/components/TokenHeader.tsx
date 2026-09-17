@@ -6,6 +6,7 @@ import { fmtPrice, shortAddr, chainLabel } from "@/lib/format";
 import { PctBadge } from "@/components/ui";
 import { Flash } from "@/components/Flash";
 import { StarButton, useFavorites } from "@/components/FavoritesProvider";
+import {TokenAvatar} from '@/components/TokenAvatar';
 import { useSession } from "@/session/storage";
 import { useEffect } from "react";
 
@@ -38,12 +39,8 @@ export default function TokenHeader({
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex items-center gap-3">
-        {data.logo ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img src={data.logo} alt={data.symbol ?? "token"} className="h-11 w-11 rounded-full bg-surface-2 object-cover" />
-        ) : (
-          <div className="h-11 w-11 rounded-full bg-surface-2" />
-        )}
+        <TokenAvatar chain={chain} address={address} size={44} fallbackLogo={data.logo}
+          fallbackSymbol={data.symbol} fallbackName={data.name} />
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2">
             <span className="text-base font-semibold text-foreground">{data.name ?? data.symbol ?? "Unknown"}</span>

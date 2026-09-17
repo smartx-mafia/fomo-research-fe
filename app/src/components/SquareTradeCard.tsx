@@ -7,6 +7,7 @@ import type {SquareTradeItem, UserActor} from '@/api/social-content';
 import {formatDecimalExact} from '@/lib/exact-decimal';
 import {fmtCompact} from '@/lib/format';
 import {opinionAge} from '@/lib/opinion-card-display';
+import {TokenAvatar} from '@/components/TokenAvatar';
 import styles from './SquareOpinionCard.module.css';
 
 export function SquareTradeCard({item, followControl, now}: {
@@ -15,12 +16,10 @@ export function SquareTradeCard({item, followControl, now}: {
   now: number;
 }) {
   const [failedAvatar, setFailedAvatar] = useState<string>();
-  const [failedTokenLogo, setFailedTokenLogo] = useState<string>();
   const trade = item.content.trade;
   const isSmartMoney = item.actorType === 'smart_money';
-  const actorName = isSmartMoney ? shortAddress(trade.chain === 'solana' ? item.actorIdentifier : item.actorIdentifier) : actorLabel(item.actor);
+  const actorName = isSmartMoney ? shortAddress(item.actorIdentifier) : actorLabel(item.actor);
   const tokenSymbol = trade.token?.symbol || shortAddress(trade.tokenAddress);
-  const logo = trade.token?.logo && /^https?:\/\//i.test(trade.token.logo) ? trade.token.logo : undefined;
   const tokenHref = `/token/${encodeURIComponent(trade.chain)}/${encodeURIComponent(trade.tokenAddress)}`;
   const occurredSeconds = trade.occurredAt.seconds;
   const sideClass = trade.side === 'buy' ? styles.buy : styles.sell;
@@ -47,9 +46,8 @@ export function SquareTradeCard({item, followControl, now}: {
         </header>
 
         <div className={styles.tradePosition}>
-          <span className={styles.tokenAvatar} aria-hidden="true">
-            {logo && failedTokenLogo !== logo ? <Image src={logo} alt="" width={40} height={40} unoptimized onError={() => setFailedTokenLogo(logo)} /> : tokenSymbol.slice(0, 1).toUpperCase() || '—'}
-          </span>
+          <TokenAvatar chain={trade.chain} address={trade.tokenAddress} size={32}
+            fallbackLogo={trade.token?.logo} fallbackSymbol={tokenSymbol} fallbackName={trade.token?.name} />
           <div className={styles.tokenInfo}>
             <div className={styles.positionLabel}>{trade.chain} · {trade.side === 'buy' ? 'Bought' : 'Sold'}</div>
             <p className={styles.symbol}><a href={tokenHref}>{tokenSymbol}</a></p>

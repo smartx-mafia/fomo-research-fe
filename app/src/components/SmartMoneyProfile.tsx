@@ -9,6 +9,16 @@ import {
   type SmartMoneyTrades,
 } from "@/api/smartmoney";
 import { chainLabel, fmtCompact, shortAddr } from "@/lib/format";
+import {TokenAvatarView, useTokenDisplay} from '@/components/TokenAvatar';
+
+function TokenIdentity({chain, address, symbol, name}: {chain: string; address: string; symbol?: string; name?: string}) {
+  const {info, isFavorited, personalReady} = useTokenDisplay(chain, address);
+  return <div className="flex min-w-0 items-center gap-2.5">
+    <TokenAvatarView info={info} isFavorited={isFavorited} personalReady={personalReady} size={32}
+      fallbackSymbol={symbol} fallbackName={name} />
+    <div className="min-w-0"><div className="truncate text-sm font-medium text-foreground">{info?.symbol ?? symbol ?? info?.name ?? name ?? shortAddr(address, 6, 4)}</div><div className="truncate text-xs text-muted">{info?.name ?? name ?? address}</div></div>
+  </div>;
+}
 
 export function SmartMoneyProfile({ chain, address }: { chain: string; address: string }) {
   const [holdings, setHoldings] = useState<SmartMoneyHoldings | null>(null);
@@ -61,10 +71,7 @@ export function SmartMoneyProfile({ chain, address }: { chain: string; address: 
         ) : (
           holdings.open?.map((item, index) => (
             <div key={`${item.token_address ?? "unknown"}:${index}`} className="flex items-center justify-between gap-3 border-b border-border/50 px-4 py-3 last:border-0">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium text-foreground">{item.symbol ?? item.name ?? shortAddr(item.token_address ?? "", 6, 4)}</div>
-                <div className="truncate text-xs text-muted">{item.is_honeypot ? "Risk flagged · " : ""}{item.name ?? item.token_address ?? "Unknown token"}</div>
-              </div>
+              <div className="min-w-0"><TokenIdentity chain={chain} address={item.token_address ?? ''} symbol={item.symbol} name={item.name} />{item.is_honeypot ? <div className="mt-1 text-xs text-down">Risk flagged</div> : null}</div>
               <div className="shrink-0 text-right text-xs text-muted">
                 <div className="text-sm text-foreground">{formatMoney(item.usd_value)}</div>
                 <div>PnL {formatMoney(item.total_profit)}</div>
@@ -85,10 +92,7 @@ export function SmartMoneyProfile({ chain, address }: { chain: string; address: 
         ) : (
           holdings.closed?.map((item, index) => (
             <div key={`${item.token_address ?? "unknown"}:${index}`} className="flex items-center justify-between gap-3 border-b border-border/50 px-4 py-3 last:border-0">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium text-foreground">{item.symbol ?? item.name ?? shortAddr(item.token_address ?? "", 6, 4)}</div>
-                <div className="truncate text-xs text-muted">{item.name ?? item.token_address ?? "Unknown token"}</div>
-              </div>
+              <TokenIdentity chain={chain} address={item.token_address ?? ''} symbol={item.symbol} name={item.name} />
               <div className="shrink-0 text-right text-xs text-muted">
                 <div className="text-sm text-foreground">Realized {formatMoney(item.realized_profit)}</div>
                 <div>{formatTime(item.end_holding_at)}</div>
@@ -111,10 +115,7 @@ export function SmartMoneyProfile({ chain, address }: { chain: string; address: 
         ) : (
           trades.list?.map((trade: SmartMoneyTrade, index: number) => (
             <div key={`${trade.tx_hash ?? "unknown"}:${index}`} className="flex items-center justify-between gap-3 border-b border-border/50 px-4 py-3 last:border-0">
-              <div className="min-w-0">
-                <div className="truncate text-sm font-medium capitalize text-foreground">{trade.event_type ?? "Unknown event"}</div>
-                <div className="truncate text-xs text-muted">{trade.token_symbol ?? shortAddr(trade.token_address ?? "", 6, 4)}</div>
-              </div>
+              <div className="min-w-0"><div className="mb-1 truncate text-xs font-medium capitalize text-muted">{trade.event_type ?? "Unknown event"}</div><TokenIdentity chain={chain} address={trade.token_address ?? ''} symbol={trade.token_symbol} /></div>
               <div className="shrink-0 text-right text-xs text-muted">
                 <div className="text-sm text-foreground">{formatMoney(trade.cost_usd)}</div>
                 <div>{formatTime(trade.occurred_at)}</div>

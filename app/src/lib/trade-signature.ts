@@ -21,13 +21,46 @@ function toHex(value: Uint8Array): `0x${string}` {
   return `0x${[...value].map((byte) => byte.toString(16).padStart(2, '0')).join('')}`;
 }
 
-export function extractSolanaSignature(signed: Uint8Array, walletAddress: string): Uint8Array {
+export function assertSolanaRequiredSigner(prepared: Uint8Array, walletAddress: string): void {
+  let transaction: VersionedTransaction;
+  try {
+    transaction = VersionedTransaction.deserialize(prepared);
+  } catch (error) {
+    throw new Error(`Prepared Solana transaction could not be decoded: ${String(error)}`);
+  }
+  const index = transaction.message.staticAccountKeys.findIndex((key) => key.toBase58() === walletAddress);
+  if (index < 0 || index >= transaction.message.header.numRequiredSignatures) {
+    throw new Error(`Server-selected wallet ${walletAddress} is not a required signer in this transaction.`);
+  }
+}
+
+export function extractSolanaSignature(
+  signed: Uint8Array,
+  walletAddress: string,
+  prepared?: Uint8Array,
+): Uint8Array {
   if (signed.length === 64) throw new Error('Wallet returned a bare signature instead of the signed transaction.');
   let transaction: VersionedTransaction;
   try {
     transaction = VersionedTransaction.deserialize(signed);
   } catch (error) {
     throw new Error(`Signed Solana transaction could not be decoded: ${String(error)}`);
+  }
+  if (prepared) {
+    let expected: VersionedTransaction;
+    try {
+      expected = VersionedTransaction.deserialize(prepared);
+    } catch (error) {
+      throw new Error(`Prepared Solana transaction could not be decoded: ${String(error)}`);
+    }
+    const expectedMessage = expected.message.serialize();
+    const signedMessage = transaction.message.serialize();
+    if (
+      expectedMessage.length !== signedMessage.length ||
+      expectedMessage.some((byte, index) => byte !== signedMessage[index])
+    ) {
+      throw new Error('Wallet returned a signed Solana transaction whose message differs from Prepare.');
+    }
   }
   const index = transaction.message.staticAccountKeys.findIndex((key) => key.toBase58() === walletAddress);
   if (index < 0) throw new Error(`Server-selected wallet ${walletAddress} is not a signer in this transaction.`);
@@ -41,10 +74,14 @@ export function extractSolanaSignature(signed: Uint8Array, walletAddress: string
 export async function signEvmDigest(
   wallet: {getEthereumProvider: () => Promise<{request: (request: {method: string; params?: unknown[]}) => Promise<unknown>}>},
   digest: Uint8Array,
+  assertActive: () => void = () => undefined,
 ): Promise<Uint8Array> {
   if (digest.length !== 32) throw new Error(`EVM digest must be 32 bytes, received ${digest.length}.`);
+  assertActive();
   const provider = await wallet.getEthereumProvider();
+  assertActive();
   const result = await provider.request({method: 'secp256k1_sign', params: [toHex(digest)]});
+  assertActive();
   if (typeof result !== 'string') throw new Error('Wallet returned a non-hex EVM signature.');
   const signature = fromHex(result);
   if (signature.length === 64) {
