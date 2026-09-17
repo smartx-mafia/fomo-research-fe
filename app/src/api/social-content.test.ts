@@ -7,7 +7,9 @@ import {
   SQUARE_LANES,
   deleteOpinion,
   getSquareFeedUpdates,
+  likePinnedAnnouncement,
   listSquareFeedPage,
+  unlikePinnedAnnouncement,
   type SquareRefreshAnchor,
 } from './social-content';
 
@@ -57,6 +59,40 @@ describe('social content square feed contract', () => {
   it('keeps the refresh anchor absent when the page omits it', async () => {
     callMock.mockResolvedValue({data: {}});
     await expect(listSquareFeedPage(SQUARE_LANES.FOR_YOU)).resolves.toEqual({items: []});
+  });
+
+  it('parses pinned rich text independently of an empty recommendation page', async () => {
+    callMock.mockResolvedValue({data: {items: [], pinned_announcements: [{
+      id: 'recap-1', pin_slot: 1, author_id: 'smartx', author_name: 'Smart X',
+      author_avatar_url: 'https://example.com/avatar.png', author_verified: true,
+      title: 'Market recap', published_at: {seconds: 1787}, like_count: 12,
+      viewer_like: true, body: [{children: [
+        {type: 'text', text: 'Watch ', marks: ['bold']},
+        {type: 'ticker', text: '$AI', chain: 'bsc', address: '0xabc'},
+        {type: 'link', text: 'details', url: 'https://example.com/recap'},
+      ]}],
+    }]}});
+    const page = await listSquareFeedPage(SQUARE_LANES.FOR_YOU);
+    expect(page.items).toEqual([]);
+    expect(page.pinnedAnnouncements).toEqual([{
+      id: 'recap-1', pinSlot: 1, authorID: 'smartx', authorName: 'Smart X',
+      authorAvatarURL: 'https://example.com/avatar.png', authorVerified: true,
+      title: 'Market recap', publishedAt: {seconds: 1787, nanos: 0},
+      likeCount: 12, viewerLike: true, body: [{children: [
+        {type: 'text', text: 'Watch ', marks: ['bold']},
+        {type: 'ticker', text: '$AI', chain: 'bsc', address: '0xabc'},
+        {type: 'link', text: 'details', url: 'https://example.com/recap'},
+      ]}],
+    }]);
+  });
+
+  it('uses dedicated id-based pinned like and unlike routes', async () => {
+    callMock.mockResolvedValue({data: {like_count: 2, liked: true, changed: true}});
+    await expect(likePinnedAnnouncement('jwt', 'recap/1')).resolves.toEqual({likeCount: 2, liked: true, changed: true});
+    expect(callMock).toHaveBeenCalledWith('/v1/social/pinned-announcements/recap%2F1/like', expect.objectContaining({method: 'POST', bearer: 'jwt'}));
+    callMock.mockResolvedValue({data: {like_count: 1, liked: false}});
+    await expect(unlikePinnedAnnouncement('jwt', 'recap/1')).resolves.toEqual({likeCount: 1, liked: false, changed: false});
+    expect(callMock).toHaveBeenCalledWith('/v1/social/pinned-announcements/recap%2F1/unlike', expect.objectContaining({method: 'POST', bearer: 'jwt'}));
   });
 
   it('parses the 2026-09-07 wire format: flattened oneof, explicit zero scalars, and zero-expansion folding', async () => {

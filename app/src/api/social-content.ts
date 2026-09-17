@@ -143,9 +143,30 @@ export type SquareOpinionItem = SquareFeedItemBase & {type: 1; content: OpinionF
 export type SquareTradeItem = SquareFeedItemBase & {type: 2; content: TradeFeedContent};
 export type SquareFeedItem = SquareOpinionItem | SquareTradeItem;
 
+export type PinnedAnnouncementRun =
+  | {type: 'text'; text: string; marks: ('bold' | 'italic')[]}
+  | {type: 'ticker'; text: string; chain: string; address: string}
+  | {type: 'link'; text: string; url: string};
+
+export type PinnedAnnouncement = {
+  id: string;
+  pinSlot: number;
+  authorID: string;
+  authorName: string;
+  authorAvatarURL: string;
+  authorVerified: boolean;
+  title: string;
+  body: {children: PinnedAnnouncementRun[]}[];
+  publishedAt: ProtoTimestamp;
+  likeCount: number;
+  viewerLike: boolean;
+};
+
 export type SquareFeedData = {
   /** The encoder returns data={} for an empty page. */
   items: SquareFeedItem[];
+  /** Cursor-less FOR_YOU first page only; independent of recommendation items. */
+  pinnedAnnouncements?: PinnedAnnouncement[];
   /** Missing or empty means pagination is exhausted. */
   nextCursor?: SquarePageCursor;
   /** FOR_YOU only. */
@@ -454,11 +475,64 @@ function normalizeFeedItem(value: unknown): SquareFeedItem | undefined {
   };
 }
 
+function normalizePinnedRun(value: unknown): PinnedAnnouncementRun {
+  const row = record(value);
+  const text = nonEmptyString(row?.text);
+  if (!row || !text) throw new SocialContentShapeError('pinned announcement run is invalid');
+  if (row.type === 'text') {
+    const marks = row.marks ?? [];
+    if (!Array.isArray(marks) || marks.some((mark) => mark !== 'bold' && mark !== 'italic')) {
+      throw new SocialContentShapeError('pinned announcement text marks are invalid');
+    }
+    return {type: 'text', text, marks};
+  }
+  if (row.type === 'ticker') {
+    const chain = nonEmptyString(row.chain);
+    const address = nonEmptyString(row.address);
+    if (!chain || !address) throw new SocialContentShapeError('pinned announcement ticker identity is missing');
+    return {type: 'ticker', text, chain, address};
+  }
+  if (row.type === 'link') {
+    const url = nonEmptyString(row.url);
+    if (!url || !/^https:\/\/[^\s]+$/i.test(url)) throw new SocialContentShapeError('pinned announcement link is invalid');
+    return {type: 'link', text, url};
+  }
+  throw new SocialContentShapeError('pinned announcement run type is unknown');
+}
+
+function normalizePinnedAnnouncement(value: unknown): PinnedAnnouncement {
+  const row = record(value);
+  const id = nonEmptyString(row?.id);
+  const authorID = nonEmptyString(row?.author_id);
+  const authorName = nonEmptyString(row?.author_name);
+  const authorAvatarURL = nonEmptyString(row?.author_avatar_url) ?? '';
+  const title = nonEmptyString(row?.title);
+  const pinSlot = safeInteger(row?.pin_slot);
+  if (!row || !id || !authorID || !authorName || !title || !pinSlot || pinSlot < 1 || pinSlot > 5 || !Array.isArray(row.body)) {
+    throw new SocialContentShapeError('pinned announcement is invalid');
+  }
+  if (authorAvatarURL && !/^https:\/\/[^\s]+$/i.test(authorAvatarURL)) {
+    throw new SocialContentShapeError('pinned announcement author avatar URL is invalid');
+  }
+  const body = row.body.map((value) => {
+    const paragraph = record(value);
+    if (!paragraph || !Array.isArray(paragraph.children)) throw new SocialContentShapeError('pinned announcement paragraph is invalid');
+    return {children: paragraph.children.map(normalizePinnedRun)};
+  });
+  return {id, pinSlot, authorID, authorName, authorAvatarURL,
+    authorVerified: omittedBoolean(row, 'author_verified'), title, body,
+    publishedAt: normalizeTimestamp(row.published_at, 'pinned announcement.published_at'),
+    likeCount: omittedInteger(row, 'like_count'), viewerLike: omittedBoolean(row, 'viewer_like')};
+}
+
 function normalizeFeedData(value: unknown): SquareFeedData {
   const row = record(value);
   if (!row) throw new SocialContentShapeError('feed data is not an object');
   if (row.items !== undefined && !Array.isArray(row.items)) {
     throw new SocialContentShapeError('feed data.items is not an array');
+  }
+  if (row.pinned_announcements !== undefined && !Array.isArray(row.pinned_announcements)) {
+    throw new SocialContentShapeError('feed data.pinned_announcements is not an array');
   }
   const nextCursor = nonEmptyString(row.next_cursor) as SquarePageCursor | undefined;
   const batchID = nonEmptyString(row.batch_id);
@@ -471,6 +545,7 @@ function normalizeFeedData(value: unknown): SquareFeedData {
     items: (row.items ?? [])
       .map(normalizeFeedItem)
       .filter((item): item is SquareFeedItem => item !== undefined),
+    ...(row.pinned_announcements !== undefined ? {pinnedAnnouncements: row.pinned_announcements.map(normalizePinnedAnnouncement)} : {}),
     ...(nextCursor ? {nextCursor} : {}),
     ...(batchID ? {batchID} : {}),
     ...(asOf ? {asOf} : {}),
@@ -534,6 +609,11 @@ function opinionPath(opinionID: string): string {
 
 function versionPath(versionID: string, action: 'like' | 'unlike'): string {
   return `/v1/social/opinions/versions/${encodeURIComponent(socialID(versionID))}/${action}`;
+}
+
+function pinnedAnnouncementPath(id: string, action: 'like' | 'unlike'): string {
+  if (!id) throw new SocialContentShapeError('pinned announcement id is missing');
+  return `/v1/social/pinned-announcements/${encodeURIComponent(id)}/${action}`;
 }
 
 export async function listSquareFeedPage(
@@ -654,6 +734,16 @@ export async function unlikeOpinionVersion(bearer: string, versionID: string): P
     method: 'POST',
     bearer,
   });
+  return normalizeLikeResult(response.data);
+}
+
+export async function likePinnedAnnouncement(bearer: string, id: string): Promise<LikeMutationResult> {
+  const response = await socialCall(pinnedAnnouncementPath(id, 'like'), {method: 'POST', bearer});
+  return normalizeLikeResult(response.data);
+}
+
+export async function unlikePinnedAnnouncement(bearer: string, id: string): Promise<LikeMutationResult> {
+  const response = await socialCall(pinnedAnnouncementPath(id, 'unlike'), {method: 'POST', bearer});
   return normalizeLikeResult(response.data);
 }
 

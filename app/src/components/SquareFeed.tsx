@@ -11,16 +11,20 @@ import {
 import {Fragment, useCallback, useEffect, useRef, useState} from 'react';
 
 import {SquareOpinionCard} from './SquareOpinionCard';
+import {SquarePinnedAnnouncement} from './SquarePinnedAnnouncement';
 import {SquareTradeCard} from './SquareTradeCard';
 
 import {ApiError} from '@/api/envelope';
 import {
   SQUARE_LANES,
   getSquareFeedUpdates,
+  likePinnedAnnouncement,
   likeOpinionVersion,
   listSquareFeedPage,
   unlikeOpinionVersion,
+  unlikePinnedAnnouncement,
   type LikeMutationResult,
+  type PinnedAnnouncement,
   type ProtoTimestamp,
   type SquareFeedItem,
   type SquareFilter,
@@ -43,6 +47,7 @@ type LaneRequestError = {
 
 type LaneState = {
   items: SquareFeedItem[];
+  pinnedAnnouncements: PinnedAnnouncement[];
   nextCursor?: SquarePageCursor;
   batchID?: string;
   asOf?: ProtoTimestamp;
@@ -109,6 +114,7 @@ const LANE_META: Record<SquareLaneSlug, {label: string; description: string; api
 function emptyLaneState(): LaneState {
   return {
     items: [],
+    pinnedAnnouncements: [],
     hydrated: false,
     loadingInitial: false,
     refreshing: false,
@@ -394,6 +400,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
       // One state commit keeps a For You batch, its metadata, and cards atomic.
       replaceLane(lane, () => ({
         items: data.items,
+        pinnedAnnouncements: lane === 'for-you' ? data.pinnedAnnouncements ?? [] : [],
         nextCursor: data.nextCursor,
         batchID: data.batchID,
         asOf: data.asOf,
@@ -528,6 +535,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
         items: state.items.map((item) => item.content.kind === 'opinion' ? withUpdatedVersion(
           item, item.content.opinion.latestVersion.versionID, false, item.content.opinion.latestVersion.likeCount,
         ) : item),
+        pinnedAnnouncements: state.pinnedAnnouncements.map((announcement) => ({...announcement, viewerLike: false})),
         hydrated: false,
         loadingInitial: false,
         refreshing: false,
@@ -762,6 +770,59 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
     }
   };
 
+  const togglePinnedLike = async (announcement: PinnedAnnouncement) => {
+    const bearer = sessionJWTRef.current;
+    if (!bearer) {
+      setNotice({kind: 'sign-in', message: 'Liking a pinned announcement requires a SmartX session.'});
+      return;
+    }
+    const pendingKey = `pinned:${announcement.id}`;
+    if (pendingLikes[pendingKey]) return;
+    const previous = {liked: announcement.viewerLike, count: announcement.likeCount};
+    const optimisticLiked = !previous.liked;
+    const updatePinned = (liked: boolean, count: number) => replaceLane('for-you', (current) => ({
+      ...current,
+      pinnedAnnouncements: current.pinnedAnnouncements.map((candidate) => candidate.id === announcement.id
+        ? {...candidate, viewerLike: liked, likeCount: Math.max(0, count)} : candidate),
+    }));
+
+    likeMutationEpochRef.current += 1;
+    activeLikeMutationsRef.current += 1;
+    setPendingLikes((pending) => ({...pending, [pendingKey]: true}));
+    setNotice(undefined);
+    updatePinned(optimisticLiked, previous.count + (optimisticLiked ? 1 : -1));
+    try {
+      const result = await (optimisticLiked
+        ? likePinnedAnnouncement(bearer, announcement.id)
+        : unlikePinnedAnnouncement(bearer, announcement.id));
+      if (!mountedRef.current || sessionJWTRef.current !== bearer) return;
+      updatePinned(result.liked, result.likeCount);
+    } catch (error) {
+      if (!mountedRef.current || sessionJWTRef.current !== bearer) return;
+      updatePinned(previous.liked, previous.count);
+      if (error instanceof ApiError && error.code === 400000) clearSite();
+      setNotice(requestError(error));
+    } finally {
+      if (!mountedRef.current || sessionJWTRef.current !== bearer) return;
+      likeMutationEpochRef.current += 1;
+      activeLikeMutationsRef.current = Math.max(0, activeLikeMutationsRef.current - 1);
+      setPendingLikes((pending) => {
+        const next = {...pending};
+        delete next[pendingKey];
+        return next;
+      });
+      if (activeLikeMutationsRef.current === 0) {
+        const staleReads = staleReadsAfterLikeRef.current;
+        staleReadsAfterLikeRef.current = {};
+        for (const lane of LANE_ORDER) {
+          const kind = staleReads[lane];
+          if (kind === 'first') void loadFirstPage(lane, true);
+          else if (kind === 'more') void loadMore(lane);
+        }
+      }
+    }
+  };
+
   const state = laneStates[activeLane];
   const isFriendsLocked = activeLane === 'friends' && !session;
   const toggleFollow = (identifier: string) => {
@@ -897,6 +958,14 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
 
       {notice ? <div className="mb-3"><InlineNotice notice={notice} onDismiss={() => setNotice(undefined)} /></div> : null}
 
+      {activeLane === 'for-you' && state.pinnedAnnouncements.length > 0 ? (
+        <div className="mb-3 bg-black">
+          {state.pinnedAnnouncements.map((announcement) => <SquarePinnedAnnouncement key={announcement.id}
+            announcement={announcement} likePending={!!pendingLikes[`pinned:${announcement.id}`]}
+            onToggleLike={(candidate) => void togglePinnedLike(candidate)} />)}
+        </div>
+      ) : null}
+
       {isFriendsLocked ? (
         <div className="flex min-h-64 flex-col items-center justify-center gap-4 rounded-xl border border-border bg-surface px-6 text-center">
           <div className="flex h-11 w-11 items-center justify-center rounded-full bg-surface-2">
@@ -914,7 +983,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
         <FeedSkeleton />
       ) : state.error && state.items.length === 0 ? (
         <StateMessage error={state.error} onRetry={() => void loadFirstPage(activeLane, false)} />
-      ) : state.hydrated && state.items.length === 0 ? (
+      ) : state.hydrated && state.items.length === 0 && state.pinnedAnnouncements.length === 0 ? (
         <div className="flex min-h-64 flex-col items-center justify-center gap-3 rounded-xl border border-border bg-surface px-6 text-center">
           <div className="flex h-11 w-11 items-center justify-center rounded-full bg-surface-2">
             <UserRound className="h-5 w-5 text-muted" aria-hidden="true" />
