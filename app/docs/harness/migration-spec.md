@@ -272,6 +272,18 @@ harness 所有后端调用走相对路径 + `API_PREFIX`（`''` 或 `'/test-env'
 
 **与 `output: "export"` 的冲突及处置**：Route Handler 与静态导出不兼容，`next build` 会失败。处置为在 `next.config.ts` 中按 `NODE_ENV` 分支——开发期正常注册，生产构建期将 `api/harness/**` 排除出编译范围。**该分支是本方案最容易在他人手里损坏的部位**，须在 `docs/harness/migration-notes.md` 中显著标注。
 
+> **【实施修正 · 2026-09-18】本节说「一把锁」，实际需要两把，缺一不可。**
+>
+> 1. `pageExtensions: isDev ? [... , "dev.ts"] : [...]` —— 让 `route.dev.ts` 只在开发期被认作 Route Handler；
+> 2. `output: isDev ? undefined : "export"` —— **开发期必须让 `output` 回到默认值**。
+>
+> 第二把锁在规格撰写时未被预见。实测（2026-09-18）：`output: "export"` 一旦在开发期也生效，
+> Route Handler 在 `next dev` 里**也被硬拦**，每一发请求回 HTTP 500 并在终端打
+> `export const dynamic = "force-static"/export const revalidate not configured ... with "output: export"`。
+> 那条报错**读起来像少写了一个 export**，照它去加 `dynamic` 只会换来另一条互斥的报错。
+> 代价：开发期静态导出约束不再被强制，**提交前 / CI 必须跑 `next build`**。
+> 详见 `migration-notes.md` §1.1、§8.2。
+
 **后果（已确认接受）**：harness 在 Cloudflare Pages 的线上地址**打不开**，只能 `pnpm dev` 本机使用。
 
 ### 5.5 双环境切换
@@ -440,6 +452,36 @@ package.json · app/.env.example
 
 工作量按 0.5 天为最小粒度估算。**这些是估算，不是承诺**；R2/R10 若触发会外溢。
 
+> **【实施修正 · 2026-09-18 之一：Phase 划分的顺序编译不过】**
+>
+> 本节把「移植 `App.tsx`」放在 Phase 0（0.5），把「移植 `fastswap/`」放在 Phase 1（1.1/1.2）。
+> **在「原样搬」（N1 / 决策 23）的前提下这个顺序编译不过** —— `App.tsx` 静态 `import` 了
+> `fastswap/SwapPanel.tsx`，UI 先落地就会引到一个还不存在的模块。
+>
+> **实际执行顺序**（与本节不同，以实际为准）：
+>
+> | 实际 ticket | 内容 |
+> |---|---|
+> | 01–03 | 工具链基线 / provider 边界（route group）/ dev-only 代理。**不含任何 harness 业务代码** |
+> | 04 | 身份域 15 个**纯逻辑**模块 + 11 个测试文件（166 用例）。**不产出任何界面** |
+> | 05 | 交易域 8 个**纯逻辑**模块 + 6 个测试文件 + 1 个跨语言 golden 夹具。**不产出任何界面** |
+> | 10 | 3 个 CLI 脚本改 `tsx` + `privySign.ts` 物理隔离到 `scripts/harness/` |
+> | 06 | `ui.tsx` / `App.tsx` / `SwapPanel.tsx` / `errors.tsx` 一次性落地，UI 点亮 |
+>
+> 一句话：**纯逻辑模块全部先落地、测试先绿，UI 最后一次性点亮。**
+>
+> **【实施修正 · 之二：测试规模的数字全部偏小】**
+>
+> | 项 | 本文档写的 | 实际 |
+> |---|---|---|
+> | 源仓库测试文件数（§1.1） | 18 | **19** —— 原始清单漏了 `fastswap/wire.test.ts` |
+> | 迁入后 harness 测试文件数 | 17 | 17 ✅（19 − `privySign.test.ts` − `xcallback.test.ts`） |
+> | 迁入后用例数（§2.1 G2、§5.7、下方 Phase 0 验收的「~235」） | ~235 | **274** |
+> | `privySign.test.ts` | 未单列 | **21** |
+> | **harness 合计** | — | **295，全绿** |
+>
+> 下面 Phase 0 验收里的「~235 用例」以及 §2.1 G2、§5.7 的同一数字，均按此修正。
+
 ### Phase 0 — Spike（7 天）
 
 | # | 任务 | 人天 |
@@ -558,6 +600,16 @@ harness 是单用户本机调试工具，**无服务端监控**。可观测性�
 - `docs/harness/privy-examples-survey.md`（§5.2 实测：Vite 与 Next starter 在钱包动作层仅差 4 行）
 - `app/docs/privy-login/*.md`（宿主既有的 7 份 Privy 契约文档）
 - 归档源仓库：`~/workspace/smartx/meme/web-embedded-harness`（分支 `feat/fastswap-v2`；规格撰写时 HEAD 为 `7021d94`，迁移执行期间用户又提交了 `91e9915`、`15670e5` 两个 commit，票 05/06 须以最新 HEAD 为准）
+
+> **【实施修正 · 2026-09-18】本条已核对，无需再调整。**
+>
+> 迁移结束时复核：源仓库 HEAD 仍为 **`15670e5`**（`fix(harness): EVM 资产地址按大小写不敏感比；徽章按时间顺序排`），
+> 其后再无新提交。票 05/06 实际就是从 `15670e5` 搬的 —— 那两个 commit 恰好改了 `verify.ts` 与 `verify.test.ts`。
+> `docs/harness/` 下四份归档文档（README / CONTEXT / ADR / privy-examples-survey）亦取自该 HEAD，
+> 与源仓库**逐字节相同**（各自只在顶部加了一段归档声明）。
+>
+> 另：§7.3「在源仓库 README 顶部加 ARCHIVED 声明并单独提交」**本次未执行** ——
+> 源仓库在本次迁移中全程只读，未做任何 git 写操作。该动作留给用户决定。
 
 ### 10.4 Review 前自查
 
