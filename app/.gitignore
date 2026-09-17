@@ -17,6 +17,10 @@
 /.next/
 /out/
 
+# harness CLI 脚本的产物（scripts/harness/universe.ts 的默认 HARNESS_OUT）。
+# 刻意不叫 out/ —— 那是 next build 的静态导出目录，每次构建都会被整个重写。
+/.harness-out/
+
 # production
 /build
 

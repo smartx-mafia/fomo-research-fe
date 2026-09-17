@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "vitest run"
+    "test": "vitest run",
+    "harness:probe": "tsx scripts/harness/probe.ts",
+    "harness:universe": "tsx scripts/harness/universe.ts",
+    "harness:privy-sign": "tsx scripts/harness/privy-sign.ts"
   },
   "dependencies": {
     "@crossmint/client-sdk-react-ui": "4.5.1",
