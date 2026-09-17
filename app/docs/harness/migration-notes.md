@@ -19,6 +19,17 @@
 
 ## 0. 部署硬要求（最高优先级）
 
+> **【实施修正 · 2026-09-18，code review 之后】**
+> 上面这条「必须显式设置」**已不再是硬要求**：`next.config.ts` 的 `env` 段现在
+> 把 `NEXT_PUBLIC_ENABLE_HARNESS` 规整成确定的字面量 `'true'` / `'false'`，
+> 于是变量未设置时打包器也能折叠那个三元，**留空现在等于关闭**。
+> 实测：变量完全未设置做 clean build，`out/` 里搜「实跑台」「花真钱」
+> 「确认并执行」「签前核对」「服务端代签授权」「harness.fastswap」
+> 「LockBusyError」全部 0 命中；开关 `=true` 时它们回来。
+> **但删掉 `next.config.ts` 里那段 `env` 就会退回到原来的危险默认**，
+> 所以本节保留，作为那段配置存在理由的记录。
+
+
 > ### Cloudflare Pages 的构建环境**必须显式设置** `NEXT_PUBLIC_ENABLE_HARNESS=false`。
 > ### **留空不等于关闭。**
 

@@ -26,6 +26,29 @@ const nextConfig: NextConfig = {
   //
   // 生产构建 NODE_ENV=production，这里仍然是 "export"，线上产物不受影响。
   output: isDev ? undefined : "export",
+
+  // ==========================================================================
+  // ⚠ 别删这一段，它是 /dev/harness 不被打进产品产物的**唯一**保证。
+  //
+  // 背景：HarnessShellClient.tsx 用
+  //     process.env.NEXT_PUBLIC_ENABLE_HARNESS === 'true' ? dynamic(...) : () => null
+  // 把 harness 整支藏在构建期开关后面。但 Next 只内联**环境里存在**的
+  // NEXT_PUBLIC_* —— 变量完全未设置时，那个表达式原样留到运行期，打包器
+  // 无从判死，134KB 的 harness UI（App/ui/SwapPanel）照样被打成 chunk 并从
+  // out/dev/harness.html 的 react-loadable-manifest 引用，等于把一个主网签名
+  // 调试台以可下载的静态文件形式放在产品域名上。page.tsx 里的 notFound()
+  // 只挡渲染，不挡分发。
+  //
+  // 这里把它规整成确定的字面量 'true' / 'false'，于是无论部署环境配没配，
+  // 打包器都能折叠那个三元。实测：加这段之前，变量未设置时 out/ 里能搜到
+  // 「实跑台」「花真钱」「确认并执行」；加之后 0 命中。
+  //
+  // 也就是说：**留空现在等于关闭**。删掉这段就不再是了。
+  // ==========================================================================
+  env: {
+    NEXT_PUBLIC_ENABLE_HARNESS:
+      process.env.NEXT_PUBLIC_ENABLE_HARNESS === "true" ? "true" : "false",
+  },
   images: {
     // 静态导出没有 Next 图片优化服务，直接输出原始 <img>
     unoptimized: true,
