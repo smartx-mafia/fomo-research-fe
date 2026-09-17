@@ -557,7 +557,7 @@ harness 是单用户本机调试工具，**无服务端监控**。可观测性�
 - `docs/harness/adr/0001-harness-v2-only-reference-impl.md`
 - `docs/harness/privy-examples-survey.md`（§5.2 实测：Vite 与 Next starter 在钱包动作层仅差 4 行）
 - `app/docs/privy-login/*.md`（宿主既有的 7 份 Privy 契约文档）
-- 归档源仓库：`~/workspace/smartx/meme/web-embedded-harness`（分支 `feat/fastswap-v2`，HEAD `7021d94`）
+- 归档源仓库：`~/workspace/smartx/meme/web-embedded-harness`（分支 `feat/fastswap-v2`；规格撰写时 HEAD 为 `7021d94`，迁移执行期间用户又提交了 `91e9915`、`15670e5` 两个 commit，票 05/06 须以最新 HEAD 为准）
 
 ### 10.4 Review 前自查
 
