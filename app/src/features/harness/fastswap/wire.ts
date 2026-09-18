@@ -88,6 +88,37 @@ export const outcomeTone = toner({
   9: 'err',
 });
 
+/**
+ * 在途列表用的**一个**状态：沿 准备 → 执行 → 源链 → Relay → 目的链 → 账务 这条路径，
+ * 返回第一个还没走完的那一段 —— 即「现在卡在哪」。已终态就直接给结局。
+ *
+ * 列表里一行摆七个徽章，真正要看的只有这一个；全量状态在交易卡与快照里。
+ * 当前这一段若是「还没发生」的灰，改成黄：它是正在等的那一步，不是无关的一步。
+ */
+export function swapStep(s: {
+  preparation: {status: number};
+  execution: {status: number};
+  settlement: {source: number; relay: number; destination: number; accounting: number; outcome: number};
+}): {text: string; tone: Tone} {
+  const st = s.settlement;
+  const waiting = (t: Tone): Tone => (t === 'off' ? 'run' : t);
+  if (st.outcome !== Outcome.PENDING) return {text: `结局 · ${outcomeLabel(st.outcome)}`, tone: outcomeTone(st.outcome)};
+  if (s.execution.status === ExecutionStatus.NOT_REPORTED) {
+    // 可签在交易卡上是绿（这一档走完了），在列表里它的意思是「等人签」
+    if (s.preparation.status === PreparationStatus.READY) return {text: '待签名', tone: 'run'};
+    return {text: `准备 · ${preparationLabel(s.preparation.status)}`, tone: waiting(preparationTone(s.preparation.status))};
+  }
+  if (s.execution.status !== ExecutionStatus.ACCEPTED)
+    return {text: `执行 · ${executionLabel(s.execution.status)}`, tone: waiting(executionTone(s.execution.status))};
+  if (st.source !== ChainLegStatus.CONFIRMED) return {text: `源链 · ${chainLegLabel(st.source)}`, tone: waiting(chainLegTone(st.source))};
+  if (st.relay !== RelayStatus.FILLED) return {text: `Relay · ${relayLabel(st.relay)}`, tone: waiting(relayTone(st.relay))};
+  if (st.destination !== ChainLegStatus.CONFIRMED)
+    return {text: `目的链 · ${chainLegLabel(st.destination)}`, tone: waiting(chainLegTone(st.destination))};
+  if (st.accounting !== AccountingStatus.POSTED)
+    return {text: `账务 · ${accountingLabel(st.accounting)}`, tone: waiting(accountingTone(st.accounting))};
+  return {text: `结局 · ${outcomeLabel(st.outcome)}`, tone: outcomeTone(st.outcome)};
+}
+
 export type CreateIntent = {
   client_intent_id: string;
   origin_chain: string;

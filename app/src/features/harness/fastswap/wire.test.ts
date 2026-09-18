@@ -1,6 +1,7 @@
 import {describe, expect, it} from 'vitest';
 
 import {
+  swapStep,
   AccountingStatus,
   ChainLegStatus,
   ExecutionStatus,
@@ -72,5 +73,36 @@ describe('徽章颜色', () => {
   it('只有「完成」一个结局是绿的', () => {
     const green = Object.values(Outcome).filter((v) => outcomeTone(v) === 'ok');
     expect(green).toEqual([Outcome.COMPLETED]);
+  });
+});
+
+describe('swapStep（在途列表只显示卡住的那一段）', () => {
+  const base = {
+    preparation: {status: 2},
+    execution: {status: 3},
+    settlement: {source: 3, relay: 1, destination: 1, accounting: 1, outcome: 1},
+  };
+  const at = (patch: {preparation?: number; execution?: number; settlement?: Partial<typeof base.settlement>}) =>
+    swapStep({
+      preparation: {status: patch.preparation ?? base.preparation.status},
+      execution: {status: patch.execution ?? base.execution.status},
+      settlement: {...base.settlement, ...patch.settlement},
+    });
+
+  it('源链已确认、Relay 处理中 → 只报 Relay', () => {
+    expect(at({})).toEqual({text: 'Relay · 处理中', tone: 'run'});
+  });
+  it('未上报：可签显示「待签名」，其它显示准备状态', () => {
+    expect(at({execution: 1})).toEqual({text: '待签名', tone: 'run'});
+    expect(at({execution: 1, preparation: 4})).toEqual({text: '准备 · 已过期', tone: 'err'});
+  });
+  it('执行没被接受就停在执行；灰的当前段改成黄', () => {
+    expect(at({execution: 4})).toEqual({text: '执行 · 结果未知', tone: 'run'});
+    expect(at({settlement: {source: 1}})).toEqual({text: '源链 · 未见', tone: 'run'});
+  });
+  it('往后逐段推进；终态直接给结局', () => {
+    expect(at({settlement: {relay: 2}})).toEqual({text: '目的链 · 未见', tone: 'run'});
+    expect(at({settlement: {relay: 2, destination: 3}})).toEqual({text: '账务 · 待入账', tone: 'run'});
+    expect(at({settlement: {outcome: 8}})).toEqual({text: '结局 · 已退款', tone: 'err'});
   });
 });

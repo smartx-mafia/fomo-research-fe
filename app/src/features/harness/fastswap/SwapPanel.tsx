@@ -37,6 +37,7 @@ import {
   relayLabel,
   relayTone,
   sideLabel,
+  swapStep,
   type QuoteReply,
   type QuoteRequest,
   type SwapRoute,
@@ -781,24 +782,25 @@ export function SwapPanel(p: SwapPanelProps) {
               </span>
             )}
             {s ? (
-              <>
-                {/* 与交易卡同一套标签与配色（wire.ts 的 *Tone）：灰=还没发生，黄=进行中，绿=走完，红=出事。
-                    链上三段只在上报之后才有意义 —— 之前恒为「未开始」，摆出来只占地方。 */}
-                <Badge kind={preparationTone(s.preparation.status)}>准备 · {preparationLabel(s.preparation.status)}</Badge>
-                <Badge kind={executionTone(s.execution.status)}>执行 · {executionLabel(s.execution.status)}</Badge>
-                {s.execution.status !== ExecutionStatus.NOT_REPORTED && (
-                  <>
-                    <Badge kind={chainLegTone(s.settlement.source)}>源链 · {chainLegLabel(s.settlement.source)}</Badge>
-                    <Badge kind={relayTone(s.settlement.relay)}>Relay · {relayLabel(s.settlement.relay)}</Badge>
-                    <Badge kind={chainLegTone(s.settlement.destination)}>目的链 · {chainLegLabel(s.settlement.destination)}</Badge>
-                  </>
-                )}
-                <Badge kind={outcomeTone(s.settlement.outcome)}>结局 · {outcomeLabel(s.settlement.outcome)}</Badge>
-              </>
+              // 一行只给一个状态：现在卡在哪一段（swapStep）。全量状态悬停可见，也在交易卡里
+              (() => {
+                const step = swapStep(s);
+                const all =
+                  `准备 ${preparationLabel(s.preparation.status)} · 执行 ${executionLabel(s.execution.status)} · ` +
+                  `源链 ${chainLegLabel(s.settlement.source)} · Relay ${relayLabel(s.settlement.relay)} · ` +
+                  `目的链 ${chainLegLabel(s.settlement.destination)} · 账务 ${accountingLabel(s.settlement.accounting)} · ` +
+                  `结局 ${outcomeLabel(s.settlement.outcome)}`;
+                return (
+                  <span title={all}>
+                    <Badge kind={step.tone}>{step.text}</Badge>
+                  </span>
+                );
+              })()
             ) : (
               <Badge kind="off">不在 /active（可能已终态）</Badge>
             )}
-            {signedLocally && <Badge kind={rec!.reported ? 'off' : 'err'}>{rec!.reported ? '本地产物·已上报' : '本地产物·未上报'}</Badge>}
+            {/* 已上报的不再提：那只是本地还留着一份，没有要做的事。未上报的才要人去「恢复」 */}
+            {signedLocally && !rec!.reported && <Badge kind="err">已签未上报</Badge>}
             {rec ? (
               <Btn size="sm" disabled={running} onClick={() => void resumeSwap(id, 'resume', s ?? undefined)}>
                 恢复
