@@ -682,13 +682,32 @@ export function App() {
    *
    * 它自己吞掉异常：持仓读不到只是这一格旧了，不能把一笔已完成的 swap 标成失败。
    */
-  const refreshPositions = async (why: string) => {
+  // 轮询用的两把守卫（2026-09-18 加，为了支持 1 秒一拍的自动拉取）：
+  //
+  //   posBusyRef —— 上一拍还没回来就跳过这一拍。不跳的话慢响应会堆积，
+  //                 一个 300ms 的后端配 1s 的节拍还好，一旦后端变慢
+  //                 （持仓这条路要过 business→trade→token_data 三跳）
+  //                 请求会无限叠上去。
+  //   posGenRef  —— 迟到的响应不许覆盖新的。没有它，第 N 拍的旧数据可能
+  //                 落在第 N+1 拍的新数据之后，表格会往回跳；而这一格
+  //                 正是「填充卖出数据」的来源，跳回去等于拿旧份额填卖单。
+  //
+  // quiet：轮询不写过程日志。1 秒一行会把右栏冲掉，而那条日志是排查时
+  // 唯一的时间线。手动「拉取」与 swap 到终态仍然照写。
+  const posBusyRef = useRef(false);
+  const posGenRef = useRef(0);
+  const refreshPositions = async (why: string, quiet = false) => {
+    if (posBusyRef.current) return;
+    posBusyRef.current = true;
+    const gen = ++posGenRef.current;
     try {
       const ps = await listPositions(token);
+      if (gen !== posGenRef.current) return;
       setPositions(ps);
       const held = ps.filter((p) => p.shares_raw !== '0').length;
-      say(`持仓已更新（${why}）：${ps.length} 行，其中还有量的 ${held} 行`);
+      if (!quiet) say(`持仓已更新（${why}）：${ps.length} 行，其中还有量的 ${held} 行`);
     } catch (e) {
+      if (gen !== posGenRef.current) return;
       // 尾句跟着码表的 retryable 走：430114（准入门禁）这种重试没有用的码，直接说该做的事。
       const info = e instanceof ApiError && e.kind === 'business' ? codeInfo(e.code) : undefined;
       const tail = !info
@@ -697,6 +716,8 @@ export function App() {
           ? `${info.text} —— ${info.advice}`
           : `**这个码重试没有用**：${info.text} —— ${info.advice}`;
       say(`持仓重查失败（${why}）：${e instanceof Error ? e.message : String(e)} —— **交易本身不受影响**，${tail}`, true);
+    } finally {
+      posBusyRef.current = false;
     }
   };
 
@@ -704,6 +725,33 @@ export function App() {
     guard('查持仓', async () => {
       await refreshPositions('手动拉取');
     });
+
+  // 持仓每秒自动拉一次（2026-09-18 按需求加）。
+  //
+  // 几条不是随手写的：
+  //   · 没 token 不轮询 —— 匿名打 /v1/portfolio 一律 400000，
+  //     1 秒一条错误日志会把过程日志冲成噪音。
+  //   · quiet=true —— 见 refreshPositions 上面那段。
+  //   · 页面不可见时停 —— 后台标签页照打是白烧后端配额，而这条路要过
+  //     business→trade→token_data 三跳。回到前台立刻补一拍，不等下一个 1s。
+  //   · 跳拍与代次守卫在 refreshPositions 里，不在这儿：手动「拉取」和
+  //     swap 到终态那两条路同样需要它们。
+  useEffect(() => {
+    if (!token) return;
+    const tick = () => {
+      if (document.visibilityState !== 'visible') return;
+      void refreshPositions('自动', true);
+    };
+    tick();
+    const t = setInterval(tick, 1000);
+    const onVis = () => tick();
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
 
   // 「核对」：把目标地址与 mint 的**链上形态**查出来摆给人看。
   //
