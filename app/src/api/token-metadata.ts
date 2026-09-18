@@ -1,4 +1,5 @@
 import {call, type CallResult} from './envelope';
+import {normalizeTokenRisk, type TokenRisk} from '@/lib/token-risk';
 
 export const TOKEN_META_STATUS_OK = 1;
 export const TOKEN_META_STATUS_MISS = 2;
@@ -9,6 +10,12 @@ export const TOKEN_META_STATUS_UNAVAILABLE = 5;
 const TOKEN_CHAINS = new Set(['bsc', 'solana', 'base', 'robinhood', 'ethereum']);
 
 export type TokenRef = {chain: string; address: string};
+
+export type TokenPersonal = {
+  is_favorited: boolean;
+  /** Smallest-unit decimal string. Never coerce through Number/parseFloat. */
+  position_amount: string;
+};
 
 /** The only frontend representation of tokendata.v1.TokenInfo. */
 export type TokenInfo = {
@@ -35,12 +42,16 @@ export type TokenMetaResult = {
   address: string;
   status: number;
   source: number;
+  risk: TokenRisk;
   info?: TokenInfo;
   message?: string;
-  personal: {is_favorited: boolean};
+  personal: TokenPersonal;
 };
 
 export type BatchTokenMetadataReply = {results: TokenMetaResult[]};
+
+/** GET /v1/tokens/{chain}/{address}: dynamic fields stay beside static TokenInfo. */
+export type GetTokenReply = {info: TokenInfo; personal: TokenPersonal; risk: TokenRisk};
 
 function record(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -50,6 +61,15 @@ function record(value: unknown): Record<string, unknown> | undefined {
 
 function optionalString(value: unknown): string | undefined {
   return typeof value === 'string' && value !== '' ? value : undefined;
+}
+
+export function normalizeTokenPersonal(value: unknown): TokenPersonal {
+  const raw = record(value);
+  const amount = raw?.position_amount;
+  return {
+    is_favorited: raw?.is_favorited === true,
+    position_amount: typeof amount === 'string' && (amount === '' || /^\d+$/.test(amount)) ? amount : '',
+  };
 }
 
 export function tokenApiChain(chain: string): string | undefined {
@@ -102,6 +122,13 @@ export function normalizeTokenInfo(value: unknown): TokenInfo | undefined {
   };
 }
 
+export function normalizeGetToken(value: unknown): GetTokenReply | undefined {
+  const raw = record(value);
+  if (!raw) return undefined;
+  const info = normalizeTokenInfo(raw.info);
+  return info ? {info, personal: normalizeTokenPersonal(raw.personal), risk: normalizeTokenRisk(raw.risk)} : undefined;
+}
+
 export function normalizeBatchTokenMetadata(value: unknown, requested: TokenRef[]): BatchTokenMetadataReply {
   const raw = record(value);
   const rows = raw?.results;
@@ -132,9 +159,10 @@ export function normalizeBatchTokenMetadata(value: unknown, requested: TokenRef[
         ...echoed,
         status,
         source,
+        risk: normalizeTokenRisk(row.risk),
         ...(info ? {info} : {}),
         message: optionalString(row.message),
-        personal: {is_favorited: personal.is_favorited},
+        personal: normalizeTokenPersonal(personal),
       };
     }),
   };

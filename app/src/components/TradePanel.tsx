@@ -1003,7 +1003,7 @@ export function TradePanel({chain, address, symbol}: {chain: string; address: st
       const baselinePromise = getPortfolio(bearer, controller.signal)
         .then((portfolio) => portfolio.positions)
         .catch(() => undefined);
-      let current = await createTrade(bearer, intent, controller.signal);
+      let current = await createTrade(bearer, intent, controller.signal, {prepare: false});
       assertCurrentOperation(bearer, controller);
       timing.mark('create.done', `duplicate=${current.duplicate === true}`);
       setTrade(current);
@@ -1264,7 +1264,7 @@ export function TradePanel({chain, address, symbol}: {chain: string; address: st
   const sameTradeContext = operationTokenContextRef.current === currentTokenContextRef.current;
   const unresolvedForeignContext = hasUnresolvedSubmission && !sameTradeContext;
   const unresolvedForeignSession = hasUnresolvedSubmission && !sameTradeSession;
-  const canReview = !!session?.jwt && !!actorID && privyReady && authenticated && !!enabledChain && walletsReady && !!intentResult.intent && !previewBlocked && !busy && !unresolved && !hasUnresolvedSubmission;
+  const canReview = !!session?.jwt && privyReady && authenticated && !!enabledChain && walletsReady && !!intentResult.intent && !previewBlocked && !busy && !unresolved && !hasUnresolvedSubmission;
   const inputUnit = side === 'buy' ? 'USDC' : (symbol ?? activeTokenInfo?.symbol ?? 'token');
   const outputDecimals = side === 'buy' ? activeTokenInfo?.decimals : 6;
 
