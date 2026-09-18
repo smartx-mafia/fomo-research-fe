@@ -10,19 +10,19 @@
  * - 四种排序由服务端出（拼错回 100120，不静默回退），按行情排序时无行情条目服务端自动沉底；
  * - 未登录（400000 语义）显示登录引导；500106 是存储不可用，不是"没有收藏"。
  */
-import {useEffect, useState} from 'react';
+import {useState} from 'react';
 import useSWR from 'swr';
 import Link from 'next/link';
 
 import {listFavorites, type FavoriteItem, type FavoriteSort} from '@/api/favorites';
 import {ApiError} from '@/api/envelope';
 import {useSession} from '@/session/storage';
-import {StarButton, useFavorites} from '@/components/FavoritesProvider';
-import {TokenAvatarView, useTokenDisplay} from '@/components/TokenAvatar';
+import {useFavorites, StarButton} from '@/components/FavoritesProvider';
 import {normalizeTokenMarket} from '@/lib/market';
 import {fmtPrice, fmtCompact, fmtAge, shortAddr, DASH} from '@/lib/format';
 import {ChainBadge, PctBadge, Skeleton, EmptyState} from '@/components/ui';
 import {Flash} from '@/components/Flash';
+import {TokenAvatar} from '@/components/TokenAvatar';
 
 const SORTS: {value: FavoriteSort; label: string}[] = [
   {value: 'favorited_at_desc', label: 'Recently added'},
@@ -103,8 +103,10 @@ export default function WatchlistPanel() {
 
 /** 行渲染：market 缺席的条目也占一整行（symbol/name 静态兜底），行情位全部 "—" */
 function WatchlistRows({items}: {items: FavoriteItem[]}) {
-  const {primeFavoriteStatus} = useFavorites();
-  useEffect(() => primeFavoriteStatus(items.map((item) => ({chain: item.chain, address: item.address}))), [items, primeFavoriteStatus]);
+  const {ensureStatus} = useFavorites();
+  // 本地星标与列表保持同步（取消收藏后 30s 轮询会移除该行；星标即时反馈由 StarButton 乐观更新）
+  ensureStatus(items.map((i) => ({chain: i.chain, address: i.address})));
+
   return (
     <div className="overflow-x-auto">
       <table className="w-full min-w-[960px] border-collapse text-sm">
@@ -124,13 +126,23 @@ function WatchlistRows({items}: {items: FavoriteItem[]}) {
         <tbody>
           {items.map((item) => {
             const m = item.market ? normalizeTokenMarket(item.market) : undefined;
+            const symbol = m?.symbol ?? item.symbol;
+            const name = m?.name ?? item.name;
             return (
               <tr key={`${item.chain}:${item.address}`} className="border-b border-border/60 last:border-0 hover:bg-surface-2/60">
                 <td className="w-8 px-2 py-2">
-                  <StarButton chain={item.chain} address={item.address} knownFavorited />
+                  <StarButton chain={item.chain} address={item.address} />
                 </td>
                 <td className="px-3 py-2">
-                  <WatchlistTokenCell item={item} market={m} />
+                  {/* 路径式详情页在静态导出下无客户端路由，走整页加载经 _redirects 重写 */}
+                  <a href={`/token/${item.chain}/${item.address}`} className="flex items-center gap-2">
+                    <TokenAvatar chain={item.chain} address={item.address} size={24} fallbackLogo={m?.logo}
+                      fallbackSymbol={symbol} fallbackName={name} />
+                    <div className="flex flex-col leading-tight">
+                      <span className="font-medium text-foreground">{symbol ?? shortAddr(item.address, 6, 4)}</span>
+                      <span className="max-w-[160px] truncate text-xs text-muted">{name ?? shortAddr(item.address, 6, 4)}</span>
+                    </div>
+                  </a>
                 </td>
                 <td className="px-3 py-2">
                   <ChainBadge chainId={item.chain} />
@@ -160,22 +172,5 @@ function WatchlistRows({items}: {items: FavoriteItem[]}) {
         Missing quotes render as {DASH} — the server has no fresh snapshot for that token; it refreshes on its own schedule.
       </p>
     </div>
-  );
-}
-
-function WatchlistTokenCell({item, market}: {item: FavoriteItem; market?: ReturnType<typeof normalizeTokenMarket>}) {
-  const {info, isFavorited, personalReady} = useTokenDisplay(item.chain, item.address);
-  const symbol = info?.symbol ?? market?.symbol ?? item.symbol;
-  const name = info?.name ?? market?.name ?? item.name;
-  return (
-    // 路径式详情页在静态导出下无客户端路由，走整页加载经 _redirects 重写。
-    <a href={`/token/${item.chain}/${item.address}`} className="flex items-center gap-2">
-      <TokenAvatarView info={info} isFavorited={isFavorited} personalReady={personalReady} size={24} fallbackLogo={market?.logo}
-        fallbackSymbol={market?.symbol ?? item.symbol} fallbackName={market?.name ?? item.name} />
-      <div className="flex flex-col leading-tight">
-        <span className="font-medium text-foreground">{symbol ?? shortAddr(item.address, 6, 4)}</span>
-        <span className="max-w-[160px] truncate text-xs text-muted">{name ?? shortAddr(item.address, 6, 4)}</span>
-      </div>
-    </a>
   );
 }

@@ -32,7 +32,7 @@ describe('TokenAvatar badge precedence', () => {
     expect(view.container.querySelector('[data-token-badge]')).toBeNull();
   });
 
-  it('does not show favorite or launchpad while viewer state is being refreshed', () => {
+  it('shows verified even while viewer favorite state is refreshing', () => {
     const view = render(<TokenAvatarView info={info()} isFavorited personalReady={false} />);
     expect(view.container.querySelector('[data-token-badge]')).toBeNull();
     view.rerender(<TokenAvatarView info={info({is_verify: true})} isFavorited personalReady={false} />);

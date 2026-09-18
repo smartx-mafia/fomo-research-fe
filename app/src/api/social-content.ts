@@ -92,16 +92,7 @@ export type UserActor = {
   avatarURL?: string;
 };
 
-export type SmartMoneyActor = {
-  address: string;
-  chains: string[];
-  displayName?: string;
-  avatarURL?: string;
-  handle?: string;
-  xHandle?: string;
-  source?: string;
-  sourceURL?: string;
-};
+export type SmartMoneyActor = {address: string; chains: string[]};
 
 export type TradeCard = {
   side: 'buy' | 'sell';
@@ -173,6 +164,27 @@ export type SquareUpdatesData = {
 export type OpinionHistoryData = {
   versions: OpinionVersion[];
   nextCursor?: string;
+};
+
+export type TokenOpinionPage = {
+  items: OpinionFeedContent[];
+  nextCursor?: string;
+};
+
+export type FollowedHolderItem = {
+  user: UserActor;
+  /** Base-unit token quantity. Keep it as an exact decimal string. */
+  shares?: string;
+  costUSD?: string;
+  pnlPercent?: string;
+  remark?: string;
+};
+
+export type FollowedHolderPage = {
+  items: FollowedHolderItem[];
+  total: number;
+  nextCursor?: string;
+  token?: {chain: string; address: string; decimals: number; symbol?: string; name?: string; logo?: string};
 };
 
 export type LikeMutationResult = {
@@ -360,10 +372,7 @@ function normalizeSmartMoney(value: unknown): SmartMoneyActor | undefined {
   if (chains !== undefined && (!Array.isArray(chains) || chains.some((chain) => typeof chain !== 'string'))) {
     throw new SocialContentShapeError('feed smart_money.chains is invalid');
   }
-  return {address, chains: (chains as string[] | undefined) ?? [],
-    displayName: nonEmptyString(row.display_name), avatarURL: nonEmptyString(row.avatar_url),
-    handle: nonEmptyString(row.handle), xHandle: nonEmptyString(row.x_handle),
-    source: nonEmptyString(row.source), sourceURL: nonEmptyString(row.source_url)};
+  return {address, chains: (chains as string[] | undefined) ?? []};
 }
 
 function normalizePositionToken(card: UnknownRecord, position: PortfolioPosition): PositionToken | undefined {
@@ -376,7 +385,7 @@ function normalizePositionToken(card: UnknownRecord, position: PortfolioPosition
   }
   return {chain: position.asset.chain, address: position.asset.token_address, symbol: token.symbol, name: token.name, decimals: token.decimals,
     is_verify: token.is_verify === true,
-    ...Object.fromEntries(['logo', 'creator', 'twitter', 'website', 'launchpad', 'launchpad_name', 'launchpad_logo', 'total_supply', 'circulating_supply'].map((key) => [key, nonEmptyString(token[key])]))};
+    ...Object.fromEntries(['logo', 'creator', 'twitter', 'website', 'launchpad', 'launchpad_name', 'launchpad_logo'].map((key) => [key, nonEmptyString(token[key])]))};
 }
 
 function normalizeOpinionCard(value: unknown): OpinionFeedContent {
@@ -510,6 +519,61 @@ function normalizeHistoryData(value: unknown): OpinionHistoryData {
   };
 }
 
+function normalizeTokenOpinionData(value: unknown): TokenOpinionPage {
+  const row = record(value);
+  if (!row) throw new SocialContentShapeError('token opinions data is not an object');
+  if (row.items !== undefined && !Array.isArray(row.items)) {
+    throw new SocialContentShapeError('token opinions data.items is not an array');
+  }
+  const nextCursor = nonEmptyString(row.next_cursor);
+  return {
+    items: (row.items ?? []).map((item, index) => {
+      try {
+        return normalizeOpinionCard(item);
+      } catch (error) {
+        throw new SocialContentShapeError(`token opinions data.items[${index}] is invalid: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }),
+    ...(nextCursor ? {nextCursor} : {}),
+  };
+}
+
+function normalizeFollowedHolderData(value: unknown): FollowedHolderPage {
+  const row = record(value);
+  if (!row) throw new SocialContentShapeError('followed holders data is not an object');
+  if (row.items !== undefined && !Array.isArray(row.items)) {
+    throw new SocialContentShapeError('followed holders data.items is not an array');
+  }
+  const tokenRow = record(row.token);
+  const decimals = tokenRow ? safeInteger(tokenRow.decimals) : undefined;
+  const token = tokenRow && typeof tokenRow.chain === 'string' && tokenRow.chain !== '' && typeof tokenRow.address === 'string' && tokenRow.address !== '' && decimals !== undefined && decimals >= 0 && decimals <= 255
+    ? {
+        chain: tokenRow.chain,
+        address: tokenRow.address,
+        decimals,
+        ...(nonEmptyString(tokenRow.symbol) ? {symbol: nonEmptyString(tokenRow.symbol)} : {}),
+        ...(nonEmptyString(tokenRow.name) ? {name: nonEmptyString(tokenRow.name)} : {}),
+        ...(nonEmptyString(tokenRow.logo) ? {logo: nonEmptyString(tokenRow.logo)} : {}),
+      }
+    : undefined;
+  return {
+    items: (row.items ?? []).map((value, index) => {
+      const item = record(value);
+      if (!item) throw new SocialContentShapeError(`followed holders data.items[${index}] is not an object`);
+      return {
+        user: normalizeActor(item.user),
+        shares: typeof item.shares === 'string' && item.shares !== '' ? item.shares : undefined,
+        costUSD: typeof item.cost_usd === 'string' && item.cost_usd !== '' ? item.cost_usd : undefined,
+        pnlPercent: typeof item.pnl_percent === 'string' && item.pnl_percent !== '' ? item.pnl_percent : undefined,
+        remark: typeof item.remark === 'string' && item.remark !== '' ? item.remark : undefined,
+      };
+    }),
+    total: omittedInteger(row, 'total'),
+    ...(nonEmptyString(row.next_cursor) ? {nextCursor: nonEmptyString(row.next_cursor)} : {}),
+    ...(token ? {token} : {}),
+  };
+}
+
 function normalizeLikeResult(value: unknown): LikeMutationResult {
   const row = record(value);
   if (!row) throw new SocialContentShapeError('like data is not an object');
@@ -596,6 +660,41 @@ export async function getOpinionHistory(
     bearer: options.bearer,
   });
   return normalizeHistoryData(response.data);
+}
+
+/** Public token detail opinions. The cursor is opaque and bound to chain/address. */
+export async function listTokenOpinions(
+  chain: string,
+  address: string,
+  options: {bearer?: string; cursor?: string; limit?: number; signal?: AbortSignal} = {},
+): Promise<TokenOpinionPage> {
+  const query = new URLSearchParams();
+  if (options.cursor) query.set('cursor', options.cursor);
+  if (options.limit !== undefined) query.set('limit', String(options.limit));
+  const suffix = query.size > 0 ? `?${query.toString()}` : '';
+  const response = await socialCall(
+    `/v1/tokens/${encodeURIComponent(chain)}/${encodeURIComponent(address)}/opinions${suffix}`,
+    {bearer: options.bearer, signal: options.signal},
+  );
+  return normalizeTokenOpinionData(response.data);
+}
+
+/** Logged-in users' followed SmartX positions for one token. */
+export async function listTokenFollowHolders(
+  bearer: string,
+  chain: string,
+  address: string,
+  options: {cursor?: string; limit?: number; signal?: AbortSignal} = {},
+): Promise<FollowedHolderPage> {
+  const query = new URLSearchParams();
+  if (options.cursor) query.set('cursor', options.cursor);
+  if (options.limit !== undefined) query.set('limit', String(options.limit));
+  const suffix = query.size > 0 ? `?${query.toString()}` : '';
+  const response = await socialCall(
+    `/v1/social/token-follow-holders?chain=${encodeURIComponent(chain)}&address=${encodeURIComponent(address)}${suffix ? `&${suffix.slice(1)}` : ''}`,
+    {bearer, signal: options.signal},
+  );
+  return normalizeFollowedHolderData(response.data);
 }
 
 export async function getOpinionByTarget(

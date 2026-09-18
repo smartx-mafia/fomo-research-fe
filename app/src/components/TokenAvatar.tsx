@@ -80,7 +80,7 @@ export function TokenAvatarView({
         style={{fontSize: Math.max(10, Math.round(size * 0.36))}}
       >
         {source ? (
-          // Token artwork is served from arbitrary upstream hosts, so the static export cannot enumerate Next remotePatterns.
+          // Runtime token artwork comes from arbitrary upstream hosts.
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={source}
@@ -106,7 +106,7 @@ export function TokenAvatarView({
           style={{width: badgeSize, height: badgeSize, fontSize: Math.max(8, Math.round(badgeSize * 0.64)), lineHeight: 1}}
         >
           {visibleBadge.kind === 'verified' ? '✅' : visibleBadge.kind === 'favorite' ? '🌟' : (
-            // Same arbitrary-host constraint as the token artwork above.
+            // Runtime launchpad artwork comes from arbitrary upstream hosts.
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={visibleBadge.logo}

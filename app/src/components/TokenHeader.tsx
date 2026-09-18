@@ -5,8 +5,10 @@ import type { TokenMarket } from "@/lib/types";
 import { fmtPrice, shortAddr, chainLabel } from "@/lib/format";
 import { PctBadge } from "@/components/ui";
 import { Flash } from "@/components/Flash";
-import {StarButton} from '@/components/FavoritesProvider';
-import {TokenAvatarView, useTokenDisplay} from '@/components/TokenAvatar';
+import { StarButton, useFavorites } from "@/components/FavoritesProvider";
+import {TokenAvatar} from '@/components/TokenAvatar';
+import { useSession } from "@/session/storage";
+import { useEffect } from "react";
 
 /** 详情页头部。纯展示组件，实时数据由 TokenLive 通过 props 灌入 */
 export default function TokenHeader({
@@ -21,9 +23,13 @@ export default function TokenHeader({
   live?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
-  const tokenDisplay = useTokenDisplay(chain, address);
-  const displayName = tokenDisplay.info?.name ?? data.name;
-  const displaySymbol = tokenDisplay.info?.symbol ?? data.symbol;
+  // 详情页行情端点没有 personal 字段：星标初始态用批量 status 端点查（favorites.md §4）
+  const {ensureStatus} = useFavorites();
+  const session = useSession();
+  useEffect(() => {
+    if (session) ensureStatus([{chain, address}]);
+  }, [session, chain, address, ensureStatus]);
+
   function handleCopy() {
     navigator.clipboard.writeText(address).catch(() => {});
     setCopied(true);
@@ -33,12 +39,12 @@ export default function TokenHeader({
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="flex items-center gap-3">
-        <TokenAvatarView info={tokenDisplay.info} isFavorited={tokenDisplay.isFavorited} personalReady={tokenDisplay.personalReady} size={44}
-          fallbackLogo={data.logo} fallbackSymbol={data.symbol} fallbackName={data.name} />
+        <TokenAvatar chain={chain} address={address} size={44} fallbackLogo={data.logo}
+          fallbackSymbol={data.symbol} fallbackName={data.name} />
         <div className="flex flex-col gap-1">
           <div className="flex items-center gap-2">
-            <span className="text-base font-semibold text-foreground">{displayName ?? displaySymbol ?? "Unknown"}</span>
-            {displaySymbol ? <span className="text-sm text-muted">{displaySymbol}</span> : null}
+            <span className="text-base font-semibold text-foreground">{data.name ?? data.symbol ?? "Unknown"}</span>
+            {data.symbol && <span className="text-sm text-muted">{data.symbol}</span>}
             <span className="rounded border border-border bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-muted">
               {chainLabel(chain)}
             </span>

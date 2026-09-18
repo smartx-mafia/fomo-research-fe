@@ -22,15 +22,6 @@ describe('Square TradeCard wire contract', () => {
     expect(item.content.trade.occurredAt.seconds).toBe(1788382219);
     expect(item.sortTime.seconds).toBe(1789027495);
   });
-  it('preserves the wallet profile and its source from the feed', async () => {
-    const row = smartMoneySell();
-    Object.assign(row.smart_money, {display_name: '阿峰_Afeng', avatar_url: 'https://gmgn.ai/avatar.jpg',
-      handle: 'afeng', x_handle: 'aa_AFeng', source: 'gmgn', source_url: 'https://gmgn.ai/robinhood/address/0xwallet'});
-    callMock.mockResolvedValue({data: {items: [row]}});
-    const result = (await listSquareFeedPage(SQUARE_LANES.NEWEST)).items[0];
-    expect(result.smartMoney).toMatchObject({displayName: '阿峰_Afeng', avatarURL: 'https://gmgn.ai/avatar.jpg',
-      handle: 'afeng', xHandle: 'aa_AFeng', source: 'gmgn', sourceURL: 'https://gmgn.ai/robinhood/address/0xwallet'});
-  });
   it('allows user trade actor, keeps missing token metadata unavailable, and sends repeated filter params', async () => {
     const row = smartMoneySell();
     row.actor_type = 'user'; row.actor_identifier = 'alice'; row.actor = {identifier: 'alice', username: 'alice', nickname: 'Alice', avatar_url: ''}; row.smart_money = {address: '', chains: []}; row.trade.token = {chain: '', address: '', symbol: '', name: '', decimals: 0, logo: '', creator: '', twitter: '', website: '', launchpad: '', launchpad_name: '', launchpad_logo: ''};

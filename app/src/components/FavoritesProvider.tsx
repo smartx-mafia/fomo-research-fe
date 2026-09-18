@@ -30,7 +30,6 @@ import {
   type TokenRef,
 } from '@/api/token-metadata';
 import {clearSite, useSession} from '@/session/storage';
-import type {TokenRisk} from '@/lib/token-risk';
 
 const META_FRESH_MS = 5 * 60_000;
 const META_RETRY_MS = 60_000;
@@ -40,8 +39,6 @@ const EMPTY_BOOLEAN_MAP: Record<string, boolean> = {};
 export type TokenMetadataState = {
   status: 'ready' | 'missing' | 'invalid' | 'error';
   info?: TokenInfo;
-  /** Dynamic risk stays beside static info, including when a later request fails. */
-  risk?: TokenRisk;
   checkedAt: number;
   retryAt: number;
 };
@@ -106,8 +103,8 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
   const drainMetadataRef = useRef<() => void>(() => {});
   const pendingViewerResetRef = useRef(false);
 
-  // Switch the imperative identity refs during render so an interaction in the
-  // commit→effect gap can never use the previous viewer's JWT or favorite map.
+  // Switch imperative identity refs during render so interactions in the
+  // commit-to-effect gap can never use the previous viewer's JWT or favorites.
   if (jwtRef.current !== session?.jwt) {
     jwtRef.current = session?.jwt;
     viewerGenerationRef.current += 1;
@@ -177,11 +174,11 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
             response.data.results.forEach((result, index) => {
               const key = keys[index];
               if (result.status === TOKEN_META_STATUS_OK && result.info) {
-                updates[key] = {status: 'ready', info: result.info, risk: result.risk, checkedAt, retryAt: checkedAt + META_FRESH_MS};
+                updates[key] = {status: 'ready', info: result.info, checkedAt, retryAt: checkedAt + META_FRESH_MS};
               } else if (result.status === TOKEN_META_STATUS_INVALID) {
-                updates[key] = {status: 'invalid', risk: result.risk, checkedAt, retryAt: Number.POSITIVE_INFINITY};
+                updates[key] = {status: 'invalid', checkedAt, retryAt: Number.POSITIVE_INFINITY};
               } else {
-                updates[key] = {status: 'missing', risk: result.risk, checkedAt, retryAt: checkedAt + META_RETRY_MS};
+                updates[key] = {status: 'missing', checkedAt, retryAt: checkedAt + META_RETRY_MS};
               }
               if (generation === viewerGenerationRef.current) {
                 const mutation = activeMutationRef.current.get(key);
@@ -195,10 +192,7 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
                     favoriteUpdates[key] = result.personal.is_favorited;
                     if (bearer) queriedStatusRef.current.add(key);
                   }
-                } else if (mutation?.generation === generation ||
-                  personalGenerationRef.current.get(key) !== generation) {
-                  // This canonical personal value raced a mutation and was not accepted.
-                  // Keep it visibly unready and force a new request after both operations finish.
+                } else if (mutation?.generation === generation || personalGenerationRef.current.get(key) !== generation) {
                   personalGenerationRef.current.delete(key);
                   personalReadyUpdates[key] = false;
                   forcedPersonalRefreshRef.current.set(key, batch[index]);
@@ -215,12 +209,10 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
             }
           } catch (error) {
             const checkedAt = Date.now();
-            if (error instanceof ApiError && error.code === 400000 && generation === viewerGenerationRef.current) {
-              clearSite();
-            }
+            if (error instanceof ApiError && error.code === 400000 && generation === viewerGenerationRef.current) clearSite();
             setMetadataMap((current) => {
               const next = {...current};
-              for (const key of keys) next[key] = {status: 'error', risk: current[key]?.risk, checkedAt, retryAt: checkedAt + META_RETRY_MS};
+              for (const key of keys) next[key] = {status: 'error', checkedAt, retryAt: checkedAt + META_RETRY_MS};
               return next;
             });
           } finally {
@@ -235,10 +227,7 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
             }
             endRequest();
             if (generation !== viewerGenerationRef.current) {
-              for (const token of batch) {
-                const key = tokenKey(token.chain, token.address)!;
-                pendingMetadataRef.current.set(key, token);
-              }
+              for (const token of batch) pendingMetadataRef.current.set(tokenKey(token.chain, token.address)!, token);
             }
           }
         }
@@ -289,18 +278,14 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
       const key = tokenKey(ref.chain, ref.address)!;
       queriedStatusRef.current.add(key);
       keys.push(key);
-      if (statusMapRef.current[key] !== true) {
-        mutationVersionRef.current.set(key, (mutationVersionRef.current.get(key) ?? 0) + 1);
-      }
+      if (statusMapRef.current[key] !== true) mutationVersionRef.current.set(key, (mutationVersionRef.current.get(key) ?? 0) + 1);
     }
-    if (keys.length === 0) return;
-    if (!keys.every((key) => statusMapRef.current[key] === true)) {
-      const next = {...statusMapRef.current};
-      for (const key of keys) next[key] = true;
-      statusMapRef.current = next;
-      setStatusMapState(next);
-    }
-  }, [setStatusMap]);
+    if (keys.length === 0 || keys.every((key) => statusMapRef.current[key] === true)) return;
+    const next = {...statusMapRef.current};
+    for (const key of keys) next[key] = true;
+    statusMapRef.current = next;
+    setStatusMapState(next);
+  }, []);
 
   useEffect(() => {
     if (!pendingViewerResetRef.current) return;
@@ -397,16 +382,10 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
         const changed = response.data.changed === true;
         const normalizedKey = tokenKey(response.data.chain ?? ref.chain, response.data.address ?? ref.address) ?? key;
         setStatusMap((current) => {
-          const next = {...current};
-          delete next[key];
-          next[normalizedKey] = favorited;
-          return next;
+          const next = {...current}; delete next[key]; next[normalizedKey] = favorited; return next;
         });
         setBadgeFavoriteMap((current) => {
-          const next = {...current};
-          delete next[key];
-          next[normalizedKey] = favorited;
-          return next;
+          const next = {...current}; delete next[key]; next[normalizedKey] = favorited; return next;
         });
         queriedStatusRef.current.add(normalizedKey);
         personalGenerationRef.current.set(normalizedKey, generation);
@@ -418,20 +397,14 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
         setStatusMap((values) => ({...values, [key]: currently}));
         setBadgeFavoriteMap((values) => {
           const next = {...values};
-          if (hadBadgeFavorite) next[key] = previousBadgeFavorite;
-          else delete next[key];
+          if (hadBadgeFavorite) next[key] = previousBadgeFavorite; else delete next[key];
           return next;
         });
-        // A metadata response that arrived during the mutation deliberately skipped its
-        // personal value. Do not leave that generation marked fresh after the mutation failed.
         personalGenerationRef.current.delete(key);
         setPersonalReadyMap((values) => ({...values, [key]: false}));
         forcedPersonalRefreshRef.current.set(key, ref);
         if (error instanceof ApiError) {
-          if (error.code === 400000) {
-            clearSite();
-            return {ok: false, code: 400000, message: 'Session expired — sign in again'};
-          }
+          if (error.code === 400000) { clearSite(); return {ok: false, code: 400000, message: 'Session expired — sign in again'}; }
           if (error.code === 430110) return {ok: false, code: 430110, message: 'Watchlist is full — remove some first'};
           if (error.code === 200107) return {ok: false, code: 200107, message: 'Token not found on this chain'};
           if (error.code === 500097) return {ok: false, code: 500097, message: 'Market upstream unavailable — try again'};

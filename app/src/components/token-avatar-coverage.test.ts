@@ -25,6 +25,7 @@ describe('token avatar coverage boundary', () => {
       './SquareOpinionCard.tsx',
       './SquareTradeCard.tsx',
       './SmartMoneyProfile.tsx',
+      '../features/fast-swap/FastSwapPage.tsx',
     ]) {
       expect(source(file), `${file} must use the canonical TokenAvatar`).toMatch(/TokenAvatar(?:View)?/);
     }

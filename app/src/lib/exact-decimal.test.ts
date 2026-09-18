@@ -5,6 +5,7 @@ import {
   decimalSign,
   formatBaseUnitsExact,
   formatDecimalExact,
+  formatPriceExact,
   marketValueFromBaseUnits,
   subtractDecimalStrings,
 } from './exact-decimal';
@@ -29,5 +30,12 @@ describe('portfolio exact decimal math', () => {
     expect(formatDecimalExact('-0.0049', 2)).toBe('0');
     expect(decimalSign('-0.00000001')).toBe(-1);
     expect(decimalSign('0.000')).toBe(0);
+  });
+
+  it('formats scientific decimal strings exactly for upstream display values', () => {
+    expect(formatDecimalExact('2.160681926833195e-3', 6)).toBe('0.002161');
+    expect(formatDecimalExact('-1.23e+3', 2)).toBe('-1,230');
+    expect(formatPriceExact('0.000008481375161447344')).toBe('0.000008481375161447344');
+    expect(formatPriceExact('0')).toBe('0');
   });
 });

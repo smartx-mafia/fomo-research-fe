@@ -265,7 +265,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
   const [displayNow, setDisplayNow] = useState(() => Date.now());
   useEffect(() => {
     const update = () => { if (document.visibilityState === 'visible') setDisplayNow(Date.now()); };
-    const timer = window.setInterval(update, 1_000);
+    const timer = window.setInterval(update, 60_000);
     document.addEventListener('visibilitychange', update);
     return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', update); };
   }, []);
@@ -336,12 +336,6 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
   });
   const ensureRemarks = useCallback((items: SquareFeedItem[], refresh = false) =>
     authorRelations.ensure(items.filter((item) => item.actorType !== 'smart_money' && item.actor.identifier).map((item) => item.actor.identifier), refresh), [authorRelations.ensure]);
-
-  const visibleItems = laneStates[activeLane].items;
-  useEffect(() => {
-    // Rehydrate missing relations when cached cards survive a scope reset or Fast Refresh.
-    void ensureRemarks(visibleItems);
-  }, [ensureRemarks, visibleItems]);
 
   const loadFirstPage = useCallback(async (lane: SquareLaneSlug, refresh: boolean, overrideFilters?: FilterSelection) => {
     const bearer = sessionJWTRef.current;
@@ -551,13 +545,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
       url.searchParams.set('lane', lane);
       window.history[method]({}, '', `${url.pathname}?${url.searchParams.toString()}${url.hash}`);
     };
-    // 子组件 effect 会先于 SquarePage 的 effect 运行。若这里无条件写回默认
-    // for-you，父页面还没来得及读取的 newest/friends 深链就会永久丢失。
-    const requestedLane = new URL(window.location.href).searchParams.get('lane');
-    const initialURLLane = requestedLane && (LANE_ORDER as readonly string[]).includes(requestedLane)
-      ? requestedLane as SquareLaneSlug
-      : activeLaneRef.current;
-    canonicalize(initialURLLane, 'replaceState');
+    canonicalize(activeLaneRef.current, 'replaceState');
 
     const onPopState = () => {
       const value = new URL(window.location.href).searchParams.get('lane');

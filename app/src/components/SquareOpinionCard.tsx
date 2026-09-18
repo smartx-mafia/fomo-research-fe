@@ -6,8 +6,8 @@ import {useState} from 'react';
 import type {SquareOpinionItem} from '@/api/social-content';
 import {opinionAge, opinionCycleReturn} from '@/lib/opinion-card-display';
 import {decimalSign, formatDecimalExact} from '@/lib/exact-decimal';
-import styles from './SquareOpinionCard.module.css';
 import {TokenAvatar} from '@/components/TokenAvatar';
+import styles from './SquareOpinionCard.module.css';
 
 export function SquareOpinionCard({item, remark, followControl, likePending, onToggleLike, now}: {
   item: SquareOpinionItem;
@@ -41,14 +41,13 @@ export function SquareOpinionCard({item, remark, followControl, likePending, onT
       </div>
       <div className={styles.content}>
         <header className={styles.header}>
-          {/* 作者身份块整块链到用户资料页；关注是相邻的独立操作，避免在链接内嵌按钮。 */}
-          <a href={`/user/${encodeURIComponent(actor.identifier)}`} className={`${styles.identity} ${styles.identityLink}`}>
+          <div className={styles.identity}>
             <div className={styles.nameRow}>
               <span className={styles.name} title={name}>{name}</span>
               {remark ? <span className={styles.remark} title={remark}>{remark}</span> : null}
             </div>
             {actor.username ? <p className={styles.handle}>@{actor.username}</p> : null}
-          </a>
+          </div>
           <div className={styles.authorActions}>
           <time className={styles.time} dateTime={Number.isFinite(published.getTime()) ? published.toISOString() : undefined}
             title={Number.isFinite(published.getTime()) ? published.toLocaleString() : undefined}>

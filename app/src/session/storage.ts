@@ -54,6 +54,36 @@ function raw(key: string): string | null {
   }
 }
 
+/** Durable opaque records that must survive a tab close, such as an unresolved trade locator. */
+export function writeDurableRecord(key: string, value: string): boolean {
+  try {
+    localStorage.setItem(key, value);
+    return localStorage.getItem(key) === value;
+  } catch {
+    return false;
+  }
+}
+
+export function removeDurableRecord(key: string): boolean {
+  try {
+    localStorage.removeItem(key);
+    return localStorage.getItem(key) === null;
+  } catch {
+    return false;
+  }
+}
+
+export function listDurableRecords(prefix: string): {key: string; value: string}[] {
+  const records: {key: string; value: string}[] = [];
+  for (let index = 0; index < localStorage.length; index += 1) {
+    const key = localStorage.key(index);
+    if (!key?.startsWith(prefix)) continue;
+    const value = localStorage.getItem(key);
+    if (value !== null) records.push({key, value});
+  }
+  return records;
+}
+
 function parse<T>(key: string): T | null {
   const s = raw(key);
   if (!s) return null;
@@ -89,8 +119,9 @@ export function writeSite(jwt: string, user: UserInfo, meta: LoginMeta): boolean
   }
 }
 
-/** 只清本站的键。**不碰 privy: 开头的键** —— 那些由 Privy SDK 自己管，
- *  手删会让它的内存态与存储不一致，下次 sendCode 直接抛。 */
+/** 清除本站登录凭据。账户级未决交易定位记录必须保留到查到终态；
+ * **不碰 privy: 开头的键** —— 那些由 Privy SDK 自己管，手删会让它的内存态
+ * 与存储不一致，下次 sendCode 直接抛。 */
 export function clearSite(): void {
   try {
     localStorage.removeItem(KEYS.jwt);

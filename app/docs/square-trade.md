@@ -12,7 +12,6 @@
 - `SquareItem.sort_time` 用于 Feed 排序和未读，`trade.occurred_at` 只用于展示成交发生时间。
 - `tx_hash` 的浏览器链接使用 `tx_chain`；`tx_chain` 为空时才回退到 `trade.chain`。
 - `position_target_id` 只有平台成交已归入仓位周期时才有值；聪明钱交易为空，不允许拿它创建观点。
-- 外部钱包直接使用 Feed 内的 `smart_money.display_name/avatar_url/handle/x_handle/source/source_url` 展示资料与来源；缺少资料时回退钱包地址，不额外补资料请求。来源链接只允许 HTTP(S)。
 - `actor_type=user` 时读取 `actor` 并允许关注；`actor_type=smart_money` 时读取 `smart_money`，不展示用户关注按钮。
 - `opinion` 对 Trade 卡片为 `null`；关注关系只对用户 actor 批量读取，Like 只对 Opinion 可用。
 
@@ -22,5 +21,3 @@
 
 当前未实现的 PRD 能力仍保持关闭：Trade 与 Opinion 混合 Filter UI、Live/Pause 缓冲流、Trade Position Details、后端成交时 Market Cap 字段、
 PnL Milestone 和官方置顶。Trade 卡片展示真实接口字段，不用占位数据补齐这些字段。
-
-本地预览 `/square?lane=newest&mode=token` 读取测试后端真实 Feed。新交易沿用现有 30 秒未读检查，点击更新提示或 Refresh 后读取首屏；不额外建立交易流连接。
