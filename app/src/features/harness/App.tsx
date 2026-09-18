@@ -20,8 +20,12 @@ import {
   AUTH_METHOD_PRIVY_TYPE,
   login as loginBackend,
   getUserInfo,
+  lastTradeByAsset,
   listPositions,
+  listRecentTrades,
+  positionActivityMs,
   positionKey,
+  positionsMark,
   timestampMs,
   type AuthMethod,
   type Position,
@@ -231,6 +235,8 @@ export function App() {
   const signers = useWalletSigners();
 
   const [positions, setPositions] = useState<Position[] | null>(null);
+  // 每个标的最近一笔成交的时刻，只用来给持仓排序（见 refreshTradeTimes）
+  const [lastTrade, setLastTrade] = useState<Map<string, number>>(() => new Map());
   // ── 转账（把币转出这只 embedded 钱包）─────────────────────────────
   //
   // 目标地址预填一个值只是省事，**不是默认收款人**。地址在页面上必须
@@ -701,6 +707,26 @@ export function App() {
   // 冲掉 —— 而少写日志正是 quiet 存在的理由，失败那一支漏掉就前功尽弃。
   // 恢复时补一条「已恢复」，否则人只看到错误停了，分不清是好了还是页面死了。
   const posErrRef = useRef<string | null>(null);
+
+  // 持仓按「最近一笔成交」倒序要的数据（2026-09-18 按需求加）。
+  //
+  // /v1/portfolio 的仓位行只有 opened_at，所以另拉一页全局流水取每个标的的最近成交。
+  // **不跟着每秒轮询打**：只在持仓指纹（positionsMark，只含账本量）变了时拉 ——
+  // 指纹变了恰好意味着刚有成交；手动「拉取」也拉。失败不影响持仓本身，
+  // 排序退回开仓时刻，只写一条日志（同一句不重复写）。
+  const posMarkRef = useRef<string | null>(null);
+  const tradeErrRef = useRef<string | null>(null);
+  const refreshTradeTimes = async () => {
+    try {
+      setLastTrade(lastTradeByAsset(await listRecentTrades(token)));
+      tradeErrRef.current = null;
+    } catch (e) {
+      const sig = e instanceof Error ? e.message : String(e);
+      if (tradeErrRef.current !== sig) say(`成交流水拉取失败，持仓暂按开仓时间排：${sig}`, true);
+      tradeErrRef.current = sig;
+    }
+  };
+
   const refreshPositions = async (why: string, quiet = false) => {
     if (posBusyRef.current) return;
     posBusyRef.current = true;
@@ -709,6 +735,11 @@ export function App() {
       const ps = await listPositions(token);
       if (gen !== posGenRef.current) return;
       setPositions(ps);
+      const mark = positionsMark(ps);
+      if (mark !== posMarkRef.current || !quiet) {
+        posMarkRef.current = mark;
+        void refreshTradeTimes();
+      }
       const held = ps.filter((p) => p.shares_raw !== '0').length;
       if (posErrRef.current !== null) {
         say(`持仓已恢复（${why}）：${ps.length} 行，其中还有量的 ${held} 行`);
@@ -932,15 +963,13 @@ export function App() {
 
   // 仓位分两组，各自按**开仓时刻**倒序。
   //
-  // **排的是 opened_at，而它与从前那句「最近更新的排在前面」不是一回事。**
-  // 旧接口有 `updated_at`，portfolio 这条回包里没有任何"最后更新时刻"——
-  // 最接近的是 applied_revision（修订号，跨行不可比）。所以这里排开仓时刻，
-  // 页面上那句说明也跟着改了：把「最近更新」写在一个其实按开仓排的列表上，
-  // 比不写更糟。
+  // **排的是「最近一笔成交」**（2026-09-18 起，按需求从 opened_at 改过来）：
+  // 取最近一笔成交与开仓时刻中较晚的那个，倒序。portfolio 的仓位行里没有
+  // "最后更新时刻"，成交时刻来自另拉的一页全局流水（见 refreshTradeTimes）；
+  // 流水没覆盖到 / 拉失败的行退回 opened_at。规则见 api.ts 的 positionActivityMs。
   //
-  // **走 timestampMs 而不是 Date.parse**：opened_at 是 {seconds, nanos}，
-  // 不是 RFC3339 串 —— `Date.parse(对象)` 得到 NaN，而 NaN 参与比较不抛错，
-  // 只是让 sort 的结果变成未定义顺序，看起来像后端乱回。
+  // opened_at 是 {seconds, nanos}，不是 RFC3339 串 —— 走 timestampMs，别用
+  // Date.parse（得到 NaN，而 NaN 参与比较不抛错，只让 sort 顺序变成未定义）。
   //
   // 分组的理由是**这两组要做的事不同**：持仓中的是要卖的，已清仓的是拿来
   // 回看盈亏的。混在一起时，真正要操作的那几行会被历史记录挤下去。
@@ -948,13 +977,13 @@ export function App() {
   const grouped = useMemo(() => {
     if (!positions) return null;
     const newest = [...positions].sort(
-      (a, b) => timestampMs(b.opened_at) - timestampMs(a.opened_at),
+      (a, b) => positionActivityMs(b, lastTrade) - positionActivityMs(a, lastTrade),
     );
     return {
       held: newest.filter((p) => p.shares_raw !== '0'),
       closed: newest.filter((p) => p.shares_raw === '0'),
     };
-  }, [positions]);
+  }, [positions, lastTrade]);
 
   const gate = readiness({
     ready,
@@ -1961,7 +1990,7 @@ export function App() {
                 {grouped && grouped.held.length > 0 && (
                   <>
                     <p className="hint tight">
-                      <b>持仓中</b>（{grouped.held.length}）· 最近开仓的排在前面
+                      <b>持仓中</b>（{grouped.held.length}）· 最近有成交的排在前面
                     </p>
                     {positionTable(grouped.held)}
                   </>

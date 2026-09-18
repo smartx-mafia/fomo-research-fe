@@ -2,7 +2,11 @@ import {afterEach, describe, expect, it, vi} from 'vitest';
 
 import {
   ApiError,
+  assetTimeKey,
+  lastTradeByAsset,
   listPositions,
+  positionActivityMs,
+  type PortfolioTrade,
   login,
   positionKey,
   positionsMark,
@@ -473,5 +477,35 @@ describe('login 的 auth_method 是参数', () => {
     await login('AUTH_METHOD_EMAIL', 'idt');
     const headers = (f.mock.calls[0]![1] as {headers: Record<string, string>}).headers;
     expect(headers).not.toHaveProperty('Authorization');
+  });
+});
+
+describe('持仓按最近成交排序', () => {
+  const pos = (chain: string, addr: string, openedSec: number) =>
+    ({asset: {chain, chain_id: 0, kind: '', token_address: addr}, opened_at: {seconds: openedSec, nanos: 0}}) as Position;
+  const trade = (chain: string, token: string, created_at: string) =>
+    ({trade_id: 't', side: 'buy', chain, token, created_at}) as PortfolioTrade;
+
+  it('每个标的取最近一笔；EVM 地址不分大小写，Solana 分', () => {
+    const m = lastTradeByAsset([
+      trade('bsc', '0xABC', '2026-09-18T01:00:00Z'),
+      trade('bsc', '0xabc', '2026-09-18T03:00:00Z'),
+      trade('bsc', '0xabc', '2026-09-18T02:00:00Z'),
+      trade('solana', 'Mint', '2026-09-18T04:00:00Z'),
+      trade('solana', 'x', 'not-a-time'),
+    ]);
+    expect(m.get(assetTimeKey('bsc', '0xAbC'))).toBe(Date.parse('2026-09-18T03:00:00Z'));
+    expect(m.get(assetTimeKey('solana', 'Mint'))).toBe(Date.parse('2026-09-18T04:00:00Z'));
+    expect(m.has(assetTimeKey('solana', 'mint'))).toBe(false);
+    expect(m.size).toBe(2);
+  });
+
+  it('取成交与开仓中较晚的；流水里没有的退回开仓时刻', () => {
+    const m = lastTradeByAsset([trade('bsc', '0xold', '2026-09-18T05:00:00Z')]);
+    const old = pos('bsc', '0xOLD', Date.parse('2026-09-01T00:00:00Z') / 1000); // 早开仓、刚加仓
+    const fresh = pos('solana', 'New', Date.parse('2026-09-18T04:00:00Z') / 1000); // 晚开仓、没再动
+    const sorted = [fresh, old].sort((a, b) => positionActivityMs(b, m) - positionActivityMs(a, m));
+    expect(sorted).toEqual([old, fresh]);
+    expect(positionActivityMs(fresh, m)).toBe(Date.parse('2026-09-18T04:00:00Z'));
   });
 });

@@ -421,6 +421,61 @@ export function positionsMark(ps: Position[]): string {
 }
 
 /**
+ * 全局成交流水里本页用得到的那几个字段（`GET /v1/portfolio/position/trades`，
+ * 后端 business/v1/portfolio.proto 的 PortfolioTrade）。
+ */
+export type PortfolioTrade = {
+  trade_id: string;
+  side: string; // buy | sell
+  chain: string; // 链名，与 Position.asset.chain 同一套
+  token: string; // 标的地址 / mint
+  created_at: string; // 下单时刻，RFC3339
+  confirmed_at?: string;
+};
+
+/**
+ * 当前用户最近的成交（全局模式：chain / asset / 轮次都不传），新的在前。
+ *
+ * 只为了给持仓排序拿「最近一笔成交时间」——`/v1/portfolio` 的仓位行里只有
+ * `opened_at`（开仓时刻），加仓 / 减仓后那一行不会动。
+ */
+export function listRecentTrades(token: string, limit = 50): Promise<PortfolioTrade[]> {
+  return call<{trades?: PortfolioTrade[]}>(token, `/v1/portfolio/position/trades?limit=${limit}`).then(
+    (d) => d.trades ?? [],
+  );
+}
+
+/**
+ * 流水与仓位对齐用的键：链名 + 地址。EVM 地址大小写不敏感（校验和写法与全小写
+ * 是同一个地址），一律转小写；Solana 的 base58 大小写敏感，原样保留。
+ */
+export function assetTimeKey(chain: string, address: string): string {
+  return `${chain}:${address.startsWith('0x') ? address.toLowerCase() : address}`;
+}
+
+/** 每个标的最近一笔成交的毫秒时刻。解析不了的时间串跳过。 */
+export function lastTradeByAsset(trades: PortfolioTrade[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const t of trades) {
+    const ms = Date.parse(t.created_at);
+    if (Number.isNaN(ms)) continue;
+    const k = assetTimeKey(t.chain, t.token);
+    if (ms > (out.get(k) ?? -Infinity)) out.set(k, ms);
+  }
+  return out;
+}
+
+/**
+ * 仓位排序用的时刻：最近一笔成交与开仓取较晚的那个。
+ *
+ * 流水只取了最近一页，没出现的仓位退回开仓时刻 —— 它最近一笔成交一定比这一页
+ * 都早，退回之后仍排在这一页覆盖到的仓位后面，顺序不会错乱。
+ */
+export function positionActivityMs(p: Position, last: Map<string, number>): number {
+  return Math.max(timestampMs(p.opened_at), last.get(assetTimeKey(p.asset.chain, p.asset.token_address)) ?? 0);
+}
+
+/**
  * 列出当前用户的全部仓位。
  *
  * **打的是 `GET /v1/portfolio`。** 旧的 `/v1/meme/positions` 已经从后端下线，
