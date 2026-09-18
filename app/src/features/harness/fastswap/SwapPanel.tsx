@@ -17,6 +17,7 @@ import {Badge, Btn, Copy, Field, Info, Note, Tabs} from '../ui';
 import {SwapApiError, createSwapClient, type HttpTiming} from './client';
 import {NO_FAULTS, SwapRun, type Faults, type RunState, type Signer} from './flow';
 import {createSwapStore, withSwapLock, type SwapRecord} from './store';
+import {StageLog, secs, type TraceView} from './stagelog';
 import {acceptedMinOut} from './verify';
 import {
   ExecutionStatus,
@@ -171,8 +172,23 @@ export function SwapPanel(p: SwapPanelProps) {
 
   const store = useMemo(() => createSwapStore(p.account), [p.account]);
   const runRef = useRef<SwapRun | null>(null);
+  // 这一笔的阶段时间线（trade_id + 每次切换的毫秒时刻），每次开跑 / 恢复时换新的
+  const stageLogRef = useRef<StageLog | null>(null);
+  // 交易卡里那张前端时间线表的数据。跑完不清 —— 要回看的正是刚跑完的那一笔。
+  const [trace, setTrace] = useState<TraceView | null>(null);
   const client = useMemo(
-    () => createSwapClient({token: p.token, onTiming: (t: HttpTiming) => runRef.current?.onHttpTiming(t)}),
+    () =>
+      createSwapClient({
+        token: p.token,
+        onTiming: (t: HttpTiming) => {
+          runRef.current?.onHttpTiming(t);
+          const log = stageLogRef.current;
+          if (log) {
+            log.http(t);
+            setTrace(log.view());
+          }
+        },
+      }),
     [p.token],
   );
 
@@ -358,7 +374,14 @@ export function SwapPanel(p: SwapPanelProps) {
       sleep,
       visible: () => document.visibilityState === 'visible',
       uuid,
-      onUpdate: (s: RunState) => setRun(s),
+      onUpdate: (s: RunState) => {
+        const log = stageLogRef.current;
+        if (log) {
+          for (const line of log.observe(s)) p.say(line, s.stage === 'stopped');
+          setTrace(log.view());
+        }
+        setRun(s);
+      },
       telemetry: async (events: Parameters<typeof client.telemetry>[0]) => {
         const r = await client.telemetry(events, uuid());
         if (r.rejected_count > 0) p.say(`埋点：${r.accepted_count} 条收下，${r.rejected_count} 条被拒`, true);
@@ -372,11 +395,13 @@ export function SwapPanel(p: SwapPanelProps) {
     (s: RunState) => {
       runRef.current = null;
       setRunning(false);
+      if (stageLogRef.current) p.say(stageLogRef.current.summary(s), s.stage === 'stopped');
+      stageLogRef.current = null;
       if (s.stage === 'done') {
-        p.say(`Swap ${s.swapID} 到终态：${outcomeLabel(s.snapshot?.settlement.outcome)}`);
+        p.say(`[trade_id ${s.swapID}] 到终态：${outcomeLabel(s.snapshot?.settlement.outcome)}`);
         p.onTerminal();
       } else if (s.stage === 'stopped') {
-        p.say(`Swap 停下：${s.stopReason}`, true);
+        p.say(`[trade_id ${s.swapID ?? '（未建单）'}] 停下：${s.stopReason}`, true);
       }
       void loadActive();
     },
@@ -391,7 +416,12 @@ export function SwapPanel(p: SwapPanelProps) {
     const floor = acceptedMinOut(freshQuote.reply.min_out_raw, quoteReq.slippage_bps);
     const r = SwapRun.start(depsFor(srcWallet.address), quoteReq, floor);
     runRef.current = r;
-    p.say(`⚡ 执行 ${quoteReq.origin_chain}→${quoteReq.destination_chain} ${sideLabel(quoteReq.side)}，amount_in_raw=${quoteReq.amount_in_raw}`);
+    stageLogRef.current = new StageLog(() => performance.now());
+    setTrace(stageLogRef.current.view());
+    p.say(
+      `⚡ 执行 ${quoteReq.origin_chain}→${quoteReq.destination_chain} ${sideLabel(quoteReq.side)}，amount_in_raw=${quoteReq.amount_in_raw}` +
+        ` · client_intent_id=${r.snapshotState.clientIntentID}`,
+    );
     finish(await r.run());
   };
 
@@ -399,9 +429,17 @@ export function SwapPanel(p: SwapPanelProps) {
   const [active, setActive] = useState<SwapSnapshot[] | null>(null);
   const [activeErr, setActiveErr] = useState<string | null>(null);
   const [localRecs, setLocalRecs] = useState<SwapRecord[]>([]);
+  // 与持仓轮询同样的两把守卫（见 App.tsx 的 refreshPositions）：
+  //   activeBusyRef —— 上一拍没回来就跳过这一拍，慢响应不堆积（一拍最多翻 5 页）。
+  //   activeGenRef  —— 迟到的响应不许覆盖新的，列表不往回跳。
+  // 守卫放在 loadActive 里而不是轮询 effect 里：手动「刷新」与 swap 收尾那两条路同样需要。
+  const activeBusyRef = useRef(false);
+  const activeGenRef = useRef(0);
   const loadActive = useCallback(async () => {
     setLocalRecs(store.list());
-    if (!p.token) return;
+    if (!p.token || activeBusyRef.current) return;
+    activeBusyRef.current = true;
+    const gen = ++activeGenRef.current;
     try {
       const out: SwapSnapshot[] = [];
       let cursor = '';
@@ -411,13 +449,37 @@ export function SwapPanel(p: SwapPanelProps) {
         if (!r.next_cursor) break;
         cursor = r.next_cursor;
       }
+      if (gen !== activeGenRef.current) return;
       setActive(out);
       setActiveErr(null);
     } catch (e) {
+      // 失败只更新卡片上那一行，不写「过程」日志 —— 1 秒一条会把右栏冲掉
+      if (gen !== activeGenRef.current) return;
       setActiveErr(errText(e));
+    } finally {
+      activeBusyRef.current = false;
     }
   }, [client, store, p.token]);
-  useEffect(() => void loadActive(), [loadActive]);
+  // 在途 Swap 每秒自动刷新（2026-09-18 按需求加）。
+  //   · 没 token 不轮询（loadActive 里本来就会直接返回，这里连 interval 都不起）
+  //   · 页面不可见时停，回到前台立刻补一拍，不等下一个 1s
+  //   · loadActive 换了（token / 账号变了）就重建 interval，卸载时清掉
+  useEffect(() => {
+    if (!p.token) {
+      void loadActive(); // 仍刷新本地记录那一半
+      return;
+    }
+    const tick = () => {
+      if (document.visibilityState === 'visible') void loadActive();
+    };
+    tick();
+    const t = setInterval(tick, 1000);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener('visibilitychange', tick);
+    };
+  }, [loadActive, p.token]);
 
   const walletForChain = (chain: string) => (chain === SOLANA ? p.solWallet : p.evmWallet);
 
@@ -439,7 +501,10 @@ export function SwapPanel(p: SwapPanelProps) {
     setRunning(true);
     const r = new SwapRun(depsFor(w?.address ?? ''), rec);
     runRef.current = r;
-    p.say(`${mode === 'cancel' ? '取消' : mode === 'follow' ? '跟进' : '恢复'} swap ${swapID}`);
+    const verb = mode === 'cancel' ? '取消' : mode === 'follow' ? '跟进' : '恢复';
+    stageLogRef.current = new StageLog(() => performance.now(), undefined, `用户点${verb}`);
+    setTrace(stageLogRef.current.view());
+    p.say(`${mode === 'cancel' ? '取消' : mode === 'follow' ? '跟进' : '恢复'} [trade_id ${swapID}]`);
     finish(await (mode === 'cancel' ? r.cancel() : mode === 'follow' ? r.follow() : r.resume()));
   };
 
@@ -485,8 +550,6 @@ export function SwapPanel(p: SwapPanelProps) {
                 : '等一份与当前输入对应的展示报价'
               : null;
 
-  const tl = run?.timeline;
-  const lastHttp = tl?.execution_http?.at(-1);
   const localRecord = run ? store.byIntent(run.clientIntentID) : undefined;
   const canCancelRun =
     !running && !!run?.swapID && run.stage === 'stopped' && !localRecord?.artifact &&
@@ -664,28 +727,8 @@ export function SwapPanel(p: SwapPanelProps) {
             </Info>
           )}
 
-          <Info label="时间线（fastswap-app.md §9）">
-            <p className="hint tight">quote_ms {ms(freshQuote?.ms)} · create_ms {ms(tl?.create_ms)} · privy_sign_ms {ms(tl?.privy_sign_ms)} · serialize_ms {ms(tl?.serialize_ms)}</p>
-            {tl?.execution_http?.map((h, i) => (
-              <p key={i} className="hint tight">
-                execution_http #{i + 1}：响应头 +{ms(h.headers == null ? undefined : h.headers - h.start)} · 响应体 +
-                {ms(h.body == null ? undefined : h.body - h.start)} · 解析完成 +{ms(h.parsed == null ? undefined : h.parsed - h.start)}
-              </p>
-            ))}
-            {!lastHttp && <p className="hint tight">还没有上报尝试</p>}
-            <p className="hint tight">
-              destination_observed_at {tl?.destination_observed_at ?? '—'} · source_confirmed_at {tl?.source_confirmed_at ?? '—'} ·
-              accounting_posted_at {tl?.accounting_posted_at ?? '—'}（本机首次观察到的墙钟）
-            </p>
-          </Info>
+          {trace && <TraceTable v={trace} />}
 
-          <Info label={`过程 · ${run.notes.length} 条`}>
-            {run.notes.map((n, i) => (
-              <p key={i} className="hint tight" style={n.bad ? {color: 'var(--err, #f87171)'} : undefined}>
-                {n.at.slice(11, 23)} {n.text}
-              </p>
-            ))}
-          </Info>
           {snap && (
             <Info label="快照全文">
               {/* 复制按钮在上面不在下面：报障时要贴的就是这一整坨，
@@ -751,5 +794,71 @@ export function SwapPanel(p: SwapPanelProps) {
       })}
 
     </div>
+  );
+}
+
+/**
+ * 前端时间线表，版式照 trade-trace skill 的「lifecycle 时间线」：
+ * 时刻 / 谁 / 在做什么 / 距上一步 / 距开始 / 阶段。只有本页看到的，不含后端与链上。
+ * 「距上一步」最长的那一行加粗 —— 它就是这一笔的瓶颈。
+ */
+function TraceTable({v}: {v: TraceView}) {
+  const title =
+    `前端时间线 · ${v.swapID ? `trade_id ${v.swapID}` : `intent ${v.clientIntentID}`}` +
+    ` · ${v.closed ? '总时长' : '已进行'} ${secs(v.total)}`;
+  // 默认折叠（Info 是 <details>）：标题已经给出 trade_id 与总时长，要细看再展开
+  return (
+    <Info label={title}>
+      {v.swapID && (
+        <p className="hint tight">
+          trade_id <code className="code">{v.swapID}</code> <Copy text={v.swapID} />
+          {v.requestID && (
+            <>
+              {' · '}request_id <code className="code">{v.requestID}</code> <Copy text={v.requestID} />
+            </>
+          )}
+        </p>
+      )}
+      {v.stages.length > 0 && (
+        <p className="hint tight">
+          各阶段耗时：{v.stages.map((x) => `${x.stage} ${secs(x.ms)}`).join(' · ')}
+        </p>
+      )}
+      <div className="tblwrap">
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>时刻</th>
+              <th>谁</th>
+              <th>在做什么</th>
+              <th>距上一步</th>
+              <th>距开始</th>
+              <th>阶段</th>
+            </tr>
+          </thead>
+          <tbody>
+            {v.rows.map((r, i) => (
+              <tr key={i} style={r.bad ? {color: 'var(--err, #f87171)'} : undefined}>
+                <td style={{whiteSpace: 'nowrap', fontFamily: 'var(--mono)'}}>
+                  {r.mark ? `${r.mark} ` : ''}
+                  {r.at}
+                </td>
+                <td style={{whiteSpace: 'nowrap'}}>{r.who}</td>
+                <td style={{wordBreak: 'break-all'}}>{r.what}</td>
+                <td style={{whiteSpace: 'nowrap', fontWeight: i === v.slowest ? 700 : undefined}}>
+                  {r.sincePrev === null ? '—' : secs(r.sincePrev)}
+                </td>
+                <td style={{whiteSpace: 'nowrap'}}>{secs(r.sinceStart)}</td>
+                <td style={{whiteSpace: 'nowrap'}}>{r.flip ?? ''}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="hint tight">
+        ▶️ 用户点执行（零点）· ✍️ 签名后回传（首次上报）· ✅ 前端判定成交 · ❌ 前端判定失败 · ⏹️ 前端停下未拿到结论；
+        加粗的「距上一步」是最长的一段。只列关键点：内部阶段的耗时并入下一行，重试与轮询合成一行。时刻为本机时钟，只含前端视角。
+      </p>
+    </Info>
   );
 }
