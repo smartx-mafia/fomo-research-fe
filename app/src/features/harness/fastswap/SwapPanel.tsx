@@ -324,6 +324,20 @@ export function SwapPanel(p: SwapPanelProps) {
 
   const [running, setRunning] = useState(false);
 
+  // 新报价成功 = 人已经在准备下一笔了：把上一笔已经停下 / 到终态的交易卡（连同时间线）清掉，
+  // 否则「stopped 430611 route unsupported …」这种上一笔的结论会一直挂在新报价下面，
+  // 看起来像是这份报价出了错。
+  // 只清已结束的：还在跑的不动。清掉不丢东西 —— 过程日志里留着原文，
+  // 建了单没签的那种仍在「在途 Swap」里可以恢复 / 取消。
+  useEffect(() => {
+    if (!quote || running) return;
+    if (run?.stage === 'stopped' || run?.stage === 'done') {
+      setRun(null);
+      setTrace(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quote]);
+
   // 签名默认**静默**（2026-09-18 起，按用户要求）：沿用 main.tsx 全局的 showWalletUIs=false。
   //
   // **静默签名，没有开关**（Privy 的 uiOptions 一律不传）。
