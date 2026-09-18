@@ -5,11 +5,13 @@ export type UnifiedLeaderboardMeta = {windows: string[]; dimensions: string[]};
 export type LeaderboardIdentity =
   | {type: 'smartx_user' | 'external_user'; id: string; namespace?: string; address?: string}
   | {type: 'wallet'; id?: string; namespace: string; address: string};
+export type LeaderboardSourceTag = {code: string; logo_url: string};
 export type UnifiedLeaderboardEntry = {
   rank: number;
   identity: LeaderboardIdentity;
   profile: {display_name: string; username: string; avatar_url: string; x_handle: string};
   platforms: string[];
+  source_tags?: LeaderboardSourceTag[];
   dimension: string;
   pnl_basis: string;
   total_profit_usd: string;

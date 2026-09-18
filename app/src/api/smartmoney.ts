@@ -28,7 +28,8 @@ export type SmartMoneyHolding = {
   unrealized_profit_pnl?: string;
   total_profit?: string;
   total_profit_pnl?: string;
-  is_honeypot?: boolean;
+  is_honeypot?: boolean | null;
+  valuation_consistent?: boolean;
   start_holding_at?: number;
   last_active_at?: number;
   end_holding_at?: number;

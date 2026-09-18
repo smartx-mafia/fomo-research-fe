@@ -2,10 +2,11 @@
 
 import {useState} from 'react';
 import useSWR from 'swr';
-import {getUnifiedLeaderboard, getUnifiedLeaderboardMeta, leaderboardIdentityKey, type UnifiedLeaderboardEntry, type UnifiedLeaderboardQuery} from '@/api/leaderboard-new';
+import {getUnifiedLeaderboard, getUnifiedLeaderboardMeta, leaderboardIdentityKey, type LeaderboardSourceTag, type UnifiedLeaderboardEntry, type UnifiedLeaderboardQuery} from '@/api/leaderboard-new';
 import {ApiError} from '@/api/envelope';
 import {decimalSign, formatDecimalExact} from '@/lib/exact-decimal';
 import {chainLabel, shortAddr} from '@/lib/format';
+import {leaderboardDetailHref} from '@/lib/leaderboard-detail';
 
 const windowName = (value: string) => ({'1d': '24H', '7d': '7D', '30d': '30D', all: '全部时间'}[value] ?? value);
 const dimensionName = (value: string) => value === 'ALL' ? '全部' : value;
@@ -19,19 +20,30 @@ function money(value: string) {
   return `${decimalSign(value) === -1 ? '-' : ''}$${formatted.replace(/^-/, '')}`;
 }
 
+function PlatformBadge({platform, tag}: {platform: string; tag?: LeaderboardSourceTag}) {
+  const [failed, setFailed] = useState(false);
+  const logo = !failed && tag && /^https?:\/\//i.test(tag.logo_url) ? tag.logo_url : undefined;
+  return <span className="flex items-center gap-1 rounded border border-border px-1.5 py-0.5">
+    {logo ? <img src={logo} alt="" className="h-3.5 w-3.5 rounded-sm object-cover" onError={() => setFailed(true)} /> : null}
+    {platform}
+  </span>;
+}
+
 function IdentityCell({entry}: {entry: UnifiedLeaderboardEntry}) {
   const {identity, profile} = entry;
   const [failedLogo, setFailedLogo] = useState<string>();
   const name = profile.display_name || profile.username || (identity.type === 'wallet' ? identity.address : identity.id);
   const label = identity.type === 'wallet' && name === identity.address ? shortAddr(name, 8, 6) : name;
   const avatar = /^https?:\/\//i.test(profile.avatar_url) && failedLogo !== profile.avatar_url ? profile.avatar_url : undefined;
+  const href = leaderboardDetailHref(entry);
+  const avatarContent = avatar ? <img src={avatar} alt="" className="h-full w-full object-cover" onError={() => setFailedLogo(avatar)} /> : label.slice(0, 1).toUpperCase() || '?';
   return <div className="flex items-center gap-3">
     <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-surface-2 text-sm font-semibold text-muted">
-      {avatar ? <img src={avatar} alt="" className="h-full w-full object-cover" onError={() => setFailedLogo(avatar)} /> : label.slice(0, 1).toUpperCase() || '?'}
+      {href ? <a href={href} aria-label={`查看 ${label} 的持仓`} className="flex h-full w-full items-center justify-center">{avatarContent}</a> : avatarContent}
     </div>
-    <div className="min-w-0"><p className="max-w-[280px] truncate font-medium text-foreground" title={name}>{label}</p>
+    <div className="min-w-0"><p className="max-w-[280px] truncate font-medium text-foreground" title={name}>{href ? <a href={href} className="hover:text-accent">{label}</a> : label}</p>
       <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] text-muted">
-        <span>{entry.dimension}</span>{entry.platforms.map((platform) => <span key={platform} className="rounded border border-border px-1.5 py-0.5">{platform}</span>)}
+        <span>{entry.dimension}</span>{entry.platforms.map((platform) => <PlatformBadge key={platform} platform={platform} tag={entry.source_tags?.find((tag) => tag.code.toLowerCase() === platform.toLowerCase())} />)}
         {identity.type === 'external_user' && profile.x_handle ? <a className="text-accent hover:underline" href={`https://x.com/${encodeURIComponent(profile.x_handle)}`} target="_blank" rel="noopener noreferrer">@{profile.x_handle}</a> : null}
       </div>
     </div>

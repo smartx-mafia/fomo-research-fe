@@ -6,7 +6,7 @@ import userEvent from '@testing-library/user-event';
 vi.mock('./LeaderboardView', () => ({LeaderboardView: () => <p>原榜单内容</p>}));
 vi.mock('./UnifiedLeaderboardView', () => ({UnifiedLeaderboardView: () => <p>新版榜单内容</p>}));
 import {LeaderboardTabs} from './LeaderboardTabs';
-afterEach(cleanup);
+afterEach(() => {cleanup(); window.history.replaceState(null, '', '/leaderboard');});
 it('keeps the existing board as default and switches to the new subtab', async () => {
   const user = userEvent.setup();
   render(<LeaderboardTabs />);
@@ -17,4 +17,11 @@ it('keeps the existing board as default and switches to the new subtab', async (
   expect(screen.queryByText('原榜单内容')).toBeNull();
   await user.keyboard('{ArrowLeft}');
   expect(screen.getByText('原榜单内容')).toBeTruthy();
+});
+
+it('returns directly to the unified subtab from a detail page', () => {
+  window.history.replaceState(null, '', '/leaderboard#unified');
+  render(<LeaderboardTabs />);
+  expect(screen.getByText('新版榜单内容')).toBeTruthy();
+  expect(screen.queryByText('原榜单内容')).toBeNull();
 });
