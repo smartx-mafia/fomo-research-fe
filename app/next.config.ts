@@ -98,13 +98,15 @@ const nextConfig: NextConfig = {
       { source: "/user/:identifier", destination: "/user" },
 
       // harness 的后端调用全部走相对路径（`''` 或 `'/test-env'` 前缀，见
-      // migration-spec §5.4），这三条把它们接到上面那个 Route Handler 上。
+      // migration-spec §5.4），这四条把它们接到上面那个 Route Handler 上。
       // 目标源与「摘不摘 Origin」由 route.dev.ts 里的 RULES 决定，这里只负责把
       // 原始路径原样带过去 —— 两边的前缀必须一一对应，改一边就得改另一边。
       //
-      // 顺序与 RULES 无关（三条前缀互不重叠），但 `/test-env/v1` 必须在
-      // `/v1` 之前能被单独识别，所以它自带完整前缀、不复用 `/v1`。
+      // 顺序与 RULES 无关（四条前缀互不重叠），但 `/test-env/*` 必须能与
+      // `/v1`、`/v2/swaps` 分开识别，所以它们自带完整前缀、不复用后两条。
+      // 漏了 `/test-env/v2/swaps` 那一条，切到测试环境后 capabilities 就是页面 404。
       { source: "/test-env/v1/:path*", destination: "/api/harness/proxy/test-env/v1/:path*" },
+      { source: "/test-env/v2/swaps/:path*", destination: "/api/harness/proxy/test-env/v2/swaps/:path*" },
       { source: "/v2/swaps/:path*", destination: "/api/harness/proxy/v2/swaps/:path*" },
       { source: "/v1/:path*", destination: "/api/harness/proxy/v1/:path*" },
     ];

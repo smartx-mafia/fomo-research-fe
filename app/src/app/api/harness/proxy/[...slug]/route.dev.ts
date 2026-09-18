@@ -57,6 +57,22 @@ const RULES: readonly ProxyRule[] = [
     stripOrigin: false,
   },
   {
+    // **测试环境 Fast Swap v2。** 选中测试环境后 fastswap 的请求同样带 `/test-env`
+    // 前缀（client.ts 与 api.ts 共用 API_PREFIX）。没有这一条时它落不到任何规则，
+    // 被 Next 当成页面 404 —— 页面上显示「HTTP 404 没到 fastswap 的信封层」。
+    //
+    // 测试环境的 fastswap 挂在与 business 同一个入口下（2026-09-18 实测
+    // sm-test-api.smartx.io 与 35.78.100.24 的 /v2/swaps/capabilities 都回信封），
+    // 所以默认跟 TEST_BUSINESS_ORIGIN 走；要单独指就配 TEST_FASTSWAP_ORIGIN。
+    // 照样摘 Origin，理由见文件头。
+    name: "test-env fastswap",
+    prefix: ["test-env", "v2", "swaps"],
+    origin: () =>
+      process.env.TEST_FASTSWAP_ORIGIN || process.env.TEST_BUSINESS_ORIGIN || "https://sm-test-api.smartx.io",
+    rewrite: (slug) => "/" + slug.slice(1).join("/"),
+    stripOrigin: true,
+  },
+  {
     // **Fast Swap v2。** 它不在 business 上，是独立进程 sx_fastswap
     //（后端仓 configs/local/fastswap.yaml 的 fastswap.public.addr）。
     // `stripOrigin` 的理由见文件头。
