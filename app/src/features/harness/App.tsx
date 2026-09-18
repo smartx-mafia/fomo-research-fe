@@ -696,6 +696,11 @@ export function App() {
   // 唯一的时间线。手动「拉取」与 swap 到终态仍然照写。
   const posBusyRef = useRef(false);
   const posGenRef = useRef(0);
+  // 轮询失败时的去重：只在「错误内容变了」时写一条，不是每拍都写。
+  // 上游一挂就以 1 秒一条的速度刷同一句，等于把过程日志这条唯一的时间线
+  // 冲掉 —— 而少写日志正是 quiet 存在的理由，失败那一支漏掉就前功尽弃。
+  // 恢复时补一条「已恢复」，否则人只看到错误停了，分不清是好了还是页面死了。
+  const posErrRef = useRef<string | null>(null);
   const refreshPositions = async (why: string, quiet = false) => {
     if (posBusyRef.current) return;
     posBusyRef.current = true;
@@ -705,7 +710,12 @@ export function App() {
       if (gen !== posGenRef.current) return;
       setPositions(ps);
       const held = ps.filter((p) => p.shares_raw !== '0').length;
-      if (!quiet) say(`持仓已更新（${why}）：${ps.length} 行，其中还有量的 ${held} 行`);
+      if (posErrRef.current !== null) {
+        say(`持仓已恢复（${why}）：${ps.length} 行，其中还有量的 ${held} 行`);
+        posErrRef.current = null;
+      } else if (!quiet) {
+        say(`持仓已更新（${why}）：${ps.length} 行，其中还有量的 ${held} 行`);
+      }
     } catch (e) {
       if (gen !== posGenRef.current) return;
       // 尾句跟着码表的 retryable 走：430114（准入门禁）这种重试没有用的码，直接说该做的事。
@@ -715,7 +725,10 @@ export function App() {
         : info.retryable
           ? `${info.text} —— ${info.advice}`
           : `**这个码重试没有用**：${info.text} —— ${info.advice}`;
-      say(`持仓重查失败（${why}）：${e instanceof Error ? e.message : String(e)} —— **交易本身不受影响**，${tail}`, true);
+      const line = `持仓重查失败（${why}）：${e instanceof Error ? e.message : String(e)} —— **交易本身不受影响**，${tail}`;
+      const sig = e instanceof Error ? e.message : String(e);
+      if (!quiet || posErrRef.current !== sig) say(line, true);
+      posErrRef.current = sig;
     } finally {
       posBusyRef.current = false;
     }
