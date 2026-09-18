@@ -772,7 +772,8 @@ export function SwapPanel(p: SwapPanelProps) {
         const brief = s ? rowBrief(s.intent) : rec ? rowBrief(rec.intent) : null;
         return (
           <div key={id} className="row tight">
-            <code className="code">{id.slice(0, 8)}</code>
+            <code className="code" title={id}>{id.slice(0, 8)}</code>
+            <Copy text={id} />
             {brief && (
               <span className="hint tight">
                 {brief.chain} · {brief.dir} · <code className="code">{brief.token.slice(0, 6)}…{brief.token.slice(-4)}</code> ·{' '}
@@ -781,9 +782,18 @@ export function SwapPanel(p: SwapPanelProps) {
             )}
             {s ? (
               <>
-                <Badge kind="off">{preparationLabel(s.preparation.status)}</Badge>
-                <Badge kind="off">{executionLabel(s.execution.status)}</Badge>
-                <Badge kind="live">{outcomeLabel(s.settlement.outcome)}</Badge>
+                {/* 与交易卡同一套标签与配色（wire.ts 的 *Tone）：灰=还没发生，黄=进行中，绿=走完，红=出事。
+                    链上三段只在上报之后才有意义 —— 之前恒为「未开始」，摆出来只占地方。 */}
+                <Badge kind={preparationTone(s.preparation.status)}>准备 · {preparationLabel(s.preparation.status)}</Badge>
+                <Badge kind={executionTone(s.execution.status)}>执行 · {executionLabel(s.execution.status)}</Badge>
+                {s.execution.status !== ExecutionStatus.NOT_REPORTED && (
+                  <>
+                    <Badge kind={chainLegTone(s.settlement.source)}>源链 · {chainLegLabel(s.settlement.source)}</Badge>
+                    <Badge kind={relayTone(s.settlement.relay)}>Relay · {relayLabel(s.settlement.relay)}</Badge>
+                    <Badge kind={chainLegTone(s.settlement.destination)}>目的链 · {chainLegLabel(s.settlement.destination)}</Badge>
+                  </>
+                )}
+                <Badge kind={outcomeTone(s.settlement.outcome)}>结局 · {outcomeLabel(s.settlement.outcome)}</Badge>
               </>
             ) : (
               <Badge kind="off">不在 /active（可能已终态）</Badge>
