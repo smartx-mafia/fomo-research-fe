@@ -12,6 +12,15 @@ export type MemeChain = {
 
 export type TokenInfo = CanonicalTokenInfo;
 
+/** Legacy position shape kept for the token trade panel while portfolio APIs migrate. */
+export type Position = {
+  asset_chain_id: number;
+  asset: string;
+  asset_decimals?: number;
+  shares: string;
+  updated_at: string;
+};
+
 export type TradeIntent = {
   chain: string;
   side: TradeSide;
@@ -186,11 +195,16 @@ export async function submitTrade(
   bearer: string,
   tradeID: string,
   signature: string,
-  prepareID: string,
+  prepareIDOrSignal?: string | AbortSignal,
   signal?: AbortSignal,
 ) {
+  const prepareID = typeof prepareIDOrSignal === 'string' ? prepareIDOrSignal : undefined;
+  const requestSignal = typeof prepareIDOrSignal === 'string' ? signal : prepareIDOrSignal;
   const response = await call<TradeReply>(`/v1/meme/trades/${encodeURIComponent(tradeID)}/submit`, {
-    method: 'POST', bearer, body: {signature, prepare_id: prepareID}, signal,
+    method: 'POST',
+    bearer,
+    body: {signature, ...(prepareID ? {prepare_id: prepareID} : {})},
+    signal: requestSignal,
   });
   return response.data;
 }
@@ -198,6 +212,11 @@ export async function submitTrade(
 export async function getTrade(bearer: string, tradeID: string, signal?: AbortSignal) {
   const response = await call<TradeReply>(`/v1/meme/trades/${encodeURIComponent(tradeID)}`, {bearer, signal});
   return response.data;
+}
+
+export async function listPositions(bearer: string, signal?: AbortSignal): Promise<Position[]> {
+  const response = await call<{positions?: Position[]}>('/v1/meme/positions', {bearer, signal});
+  return response.data.positions ?? [];
 }
 
 export async function prepareDelegation(bearer: string, chain: string, signal?: AbortSignal) {

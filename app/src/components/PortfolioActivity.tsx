@@ -83,7 +83,7 @@ function TransferRow({transfer}: {transfer: TransferEntry}) {
   );
 }
 
-export function PortfolioActivity({bearer}: {bearer: string}) {
+export function PortfolioActivity({bearer}: {bearer: string; userIdentifier?: string}) {
   const [tab, setTab] = useState<ActivityTab>('trades');
   const getTradeKey = (index: number, previous: PortfolioTradePage | null): readonly ['portfolio-activity-trades', string, string] | null => {
       if (tab !== 'trades' || (index > 0 && !previous?.next_cursor)) return null;
