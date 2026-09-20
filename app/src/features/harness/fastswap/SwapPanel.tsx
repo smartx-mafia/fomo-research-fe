@@ -8,7 +8,7 @@
 
 import {useCallback, useEffect, useMemo, useRef, useState} from 'react';
 import {useSign7702Authorization, useSignTypedData, type ConnectedWallet} from '@privy-io/react-auth';
-import {useSignTransaction, type ConnectedStandardSolanaWallet} from '@privy-io/react-auth/solana';
+import {useSignMessage, useSignTransaction, type ConnectedStandardSolanaWallet} from '@privy-io/react-auth/solana';
 
 import {formatUnits, USDC_MINT} from '../balance';
 import {CHAINS, caipOf, chainOfCaip, type Chain} from '../chains';
@@ -46,6 +46,7 @@ import {
 
 const SOLANA = caipOf('solana');
 const QUOTE_DEBOUNCE_MS = 400;
+const PREWARM_SESSION_TIMEOUT_MS = 4_000;
 /** 服务端 quote.max_slippage_bps 本机配置是 300；超限拒单不截断。 */
 const DEFAULT_SLIPPAGE_BPS = '300';
 
@@ -62,6 +63,8 @@ export type SwapPanelProps = {
   evmWallet: ConnectedWallet | undefined;
   /** 按地址取 Privy 钱包 id（`user.linkedAccounts[].id`）。 */
   walletIdOf: (address: string | undefined) => string | null;
+  /** 预热前先刷新 Privy 会话；只判断会话可用，不保存 token。 */
+  getAccessToken: () => Promise<string | null>;
   say: (text: string, bad?: boolean) => void;
   /** 一笔到终态后调（刷新持仓 / 余额，只作旁证）。 */
   onTerminal: () => void;
@@ -168,6 +171,7 @@ const ms = (v: number | undefined) => (v == null ? '—' : `${Math.round(v)} ms`
 
 export function SwapPanel(p: SwapPanelProps) {
   const {signTransaction} = useSignTransaction();
+  const {signMessage: signWarmupMessage} = useSignMessage();
   const {signTypedData} = useSignTypedData();
   const {signAuthorization} = useSign7702Authorization();
 
@@ -324,6 +328,21 @@ export function SwapPanel(p: SwapPanelProps) {
   const saidDigest = useRef('');
 
   const [running, setRunning] = useState(false);
+  const [settledPrepareQuoteKey, setSettledPrepareQuoteKey] = useState('');
+  const [pageVisible, setPageVisible] = useState(true);
+  const preparedRef = useRef<{key: string; run: SwapRun} | null>(null);
+  const prepareQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const prepareGenerationRef = useRef(0);
+  const consumedPrepareKeyRef = useRef('');
+  const [prepareNonce, setPrepareNonce] = useState(0);
+  const [preparing, setPreparing] = useState(false);
+  const [prepareError, setPrepareError] = useState<string | null>(null);
+  const warmedKeysRef = useRef(new Set<string>());
+  const prewarmInFlightRef = useRef(false);
+  const prewarmDesiredKeyRef = useRef('');
+  const [prewarm, setPrewarm] = useState<{key: string; status: 'idle' | 'running' | 'succeeded' | 'failed'; ms: number | null}>({
+    key: '', status: 'idle', ms: null,
+  });
 
   // 新报价成功 = 人已经在准备下一笔了：把上一笔已经停下 / 到终态的交易卡（连同时间线）清掉，
   // 否则「stopped 430611 route unsupported …」这种上一笔的结论会一直挂在新报价下面，
@@ -403,8 +422,160 @@ export function SwapPanel(p: SwapPanelProps) {
       },
       walletAddress,
     }),
-    [client, store, signer, p.account, takeFault, p],
+    [client, store, signer, p.account, p.say, takeFault],
   );
+
+  useEffect(() => {
+    const changed = () => setPageVisible(document.visibilityState !== 'hidden');
+    changed();
+    document.addEventListener('visibilitychange', changed);
+    return () => document.removeEventListener('visibilitychange', changed);
+  }, []);
+
+  // 与展示报价共用相同的稳定输入窗口，但不等 `/quote` 回来：两个请求并行，
+  // 报价网络时间不会再串到完整交易的预构建之前。
+  useEffect(() => {
+    if (!quoteReq || !route?.enabled || !p.gateReady || !srcWallet || !signer) {
+      setSettledPrepareQuoteKey('');
+      return;
+    }
+    const key = quoteKey;
+    const timer = setTimeout(() => setSettledPrepareQuoteKey(key), QUOTE_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+  }, [p.gateReady, quoteKey, quoteReq, route?.enabled, signer, srcWallet]);
+
+  const prepareKey = settledPrepareQuoteKey === quoteKey && quoteReq && route?.enabled && p.gateReady && srcWallet && signer
+    ? `${quoteKey}\u0000${prepareNonce}`
+    : '';
+
+  const cancelPrepared = useCallback(async (old: {key: string; run: SwapRun}): Promise<void> => {
+    const state = old.run.snapshotState;
+    const record = store.byIntent(state.clientIntentID);
+    if (!state.swapID) throw new Error('旧 Create 尚未拿到 swap_id，结果不可确认；已停止创建新意图');
+    if (record?.artifact || state.snapshot?.execution.status !== ExecutionStatus.NOT_REPORTED) {
+      throw new Error('旧交易已经签名或上报，不能按未签交易取消；请先恢复同一笔');
+    }
+    p.say(`[trade_id ${state.swapID}] 输入变化，先取消旧的未签可执行交易`);
+    runRef.current = old.run;
+    const cancelled = await old.run.cancel();
+    if (cancelled.stage !== 'done') {
+      throw new Error(`旧交易取消未确认：${cancelled.stopReason ?? '未到终态'}；已停止创建新意图`);
+    }
+    if (preparedRef.current === old) preparedRef.current = null;
+  }, [p.say, store]);
+
+  // 输入稳定后，串行生成完整可签交易。prepareKey 变空也必须进入队列取消旧意图；
+  // 只有旧 swap 的取消已经确认到终态，才会为新输入 Create。
+  useEffect(() => {
+    if (running) return;
+    // consumed 只阻止“同一轮输入在终态后立刻自动再建一笔”。一旦离开这轮输入，
+    // 即使之后又改回来，也应视为新的明确输入过程。
+    if (consumedPrepareKeyRef.current && consumedPrepareKeyRef.current !== prepareKey) {
+      consumedPrepareKeyRef.current = '';
+    }
+    const oldAtSchedule = preparedRef.current;
+    if (!prepareKey) {
+      if (!oldAtSchedule) {
+        setPreparing(false);
+        return;
+      }
+    } else if (oldAtSchedule?.key === prepareKey || !oldAtSchedule && consumedPrepareKeyRef.current === prepareKey) {
+      return;
+    }
+    const generation = ++prepareGenerationRef.current;
+    setPreparing(true);
+    setPrepareError(null);
+    prepareQueueRef.current = prepareQueueRef.current.then(async () => {
+      const old = preparedRef.current;
+      if (old && old.key !== prepareKey) await cancelPrepared(old);
+      if (generation !== prepareGenerationRef.current) return;
+      if (!prepareKey || !quoteReq || !srcWallet || !signer) return;
+
+      const next = SwapRun.start(depsFor(srcWallet.address), quoteReq, null);
+      preparedRef.current = {key: prepareKey, run: next};
+      runRef.current = next;
+      p.say(`⏱ 输入稳定，后台准备完整可签交易 · client_intent_id=${next.snapshotState.clientIntentID}`);
+      const state = await next.prepare();
+      // 输入在请求期间变化时，下一项串行任务会取消这笔；这里不并发 cancel。
+      if (generation !== prepareGenerationRef.current) return;
+      if (state.stage === 'ready') {
+        p.say(`[trade_id ${state.swapID}] 可签交易 READY（预构建 ${ms(state.timeline.create_ms)}），点击时只签名并上报`);
+      } else {
+        setPrepareError(state.stopReason ?? '可签交易准备失败');
+      }
+    }).catch((e: unknown) => {
+      if (generation === prepareGenerationRef.current) setPrepareError(errText(e));
+    }).finally(() => {
+      if (generation === prepareGenerationRef.current) setPreparing(false);
+    });
+  }, [cancelPrepared, depsFor, p.say, prepareKey, quoteReq, running, signer, srcWallet]);
+
+  const prepared = preparedRef.current?.key === prepareKey ? preparedRef.current.run.snapshotState : null;
+  const preparedReady = prepared?.stage === 'ready' && prepared.snapshot?.execution.status === ExecutionStatus.NOT_REPORTED;
+  const prewarmWalletAddress = shape.origin === SOLANA ? p.solWallet?.address ?? '' : p.evmWallet?.address ?? '';
+  const prewarmKey = preparedReady && prewarmWalletAddress
+    ? `${p.account}\u0000${shape.origin}\u0000${prewarmWalletAddress}\u0000${prepared?.swapID ?? ''}\u0000${prepared?.snapshot?.revision.revision ?? ''}`
+    : '';
+  prewarmDesiredKeyRef.current = prewarmKey;
+
+  // READY 之后、点击之前支付 Privy 会话与 signer 初始化成本。失败时记录并放行；
+  // 预热不是交易授权，最终交易仍会完成全部签前/签后核对。
+  useEffect(() => {
+    if (!prewarmKey || !preparedReady || !pageVisible ||
+        prewarmInFlightRef.current || warmedKeysRef.current.has(prewarmKey)) return;
+    prewarmInFlightRef.current = true;
+    setPrewarm({key: prewarmKey, status: 'running', ms: null});
+    const started = performance.now();
+    const desired = prewarmKey;
+    void (async () => {
+      let status: 'succeeded' | 'failed' = 'succeeded';
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const access = await Promise.race([
+          p.getAccessToken(),
+          new Promise<never>((_, reject) => {
+            timeout = setTimeout(() => reject(new Error('Privy signer warm-up session timed out')), PREWARM_SESSION_TIMEOUT_MS);
+          }),
+        ]);
+        if (timeout) {clearTimeout(timeout); timeout = undefined;}
+        if (!access) throw new Error('Privy session is unavailable for signer warm-up');
+        if (prewarmDesiredKeyRef.current !== desired || document.visibilityState === 'hidden') {
+          throw new DOMException('Signer warm-up context changed', 'AbortError');
+        }
+        if (shape.origin === SOLANA) {
+          if (!p.solWallet) throw new Error('浏览器里没有 Solana embedded 钱包');
+          const message = new TextEncoder().encode([
+            'SmartX Fast Swap signer warm-up',
+            `origin:${location.origin}`,
+            `wallet:${p.solWallet.address}`,
+            `nonce:${uuid()}`,
+            'purpose:non-authorizing latency warm-up',
+          ].join('\n'));
+          await signWarmupMessage({message, wallet: p.solWallet, options: {uiOptions: {showWalletUIs: false}}});
+        } else {
+          if (!p.evmWallet) throw new Error('浏览器里没有 EVM embedded 钱包');
+          const provider = await p.evmWallet.getEthereumProvider();
+          await provider.request({method: 'eth_chainId'});
+        }
+      } catch {
+        status = 'failed';
+      } finally {
+        if (timeout) clearTimeout(timeout);
+        const elapsed = performance.now() - started;
+        prewarmInFlightRef.current = false;
+        if (prewarmDesiredKeyRef.current === desired) {
+          warmedKeysRef.current.add(desired);
+          setPrewarm({key: desired, status, ms: elapsed});
+          p.say(`Privy signer 预热${status === 'succeeded' ? '完成' : '失败后放行'}：${Math.round(elapsed)}ms`);
+        } else {
+          // 新输入在旧预热结束前已经 READY：触发一次新渲染，让新 key 接着预热。
+          setPrewarm({key: '', status: 'idle', ms: null});
+        }
+      }
+    })();
+  }, [p.evmWallet, p.getAccessToken, p.say, p.solWallet, pageVisible, preparedReady, prewarm.status, prewarmKey, shape.origin, signWarmupMessage]);
+
+  const prewarmSettled = !preparedReady || warmedKeysRef.current.has(prewarmKey) && !prewarmInFlightRef.current;
 
   const finish = useCallback(
     (s: RunState) => {
@@ -425,19 +596,29 @@ export function SwapPanel(p: SwapPanelProps) {
   );
 
   const doRun = async () => {
-    if (!quoteReq || !srcWallet || !freshQuote) return;
+    const hot = preparedRef.current;
+    if (!quoteReq || !srcWallet || !freshQuote || !hot || hot.key !== prepareKey ||
+        hot.run.snapshotState.stage !== 'ready' || !prewarmSettled) return;
+    const r = hot.run;
+    r.acceptDisplayedQuote(acceptedMinOut(freshQuote.reply.min_out_raw, quoteReq.slippage_bps));
     setRunning(true);
-    // 第 7 条的底线：报价底价再让一个滑点带（对齐 2026-09-18，理由见 acceptedMinOut）
-    const floor = acceptedMinOut(freshQuote.reply.min_out_raw, quoteReq.slippage_bps);
-    const r = SwapRun.start(depsFor(srcWallet.address), quoteReq, floor);
     runRef.current = r;
-    stageLogRef.current = new StageLog(() => performance.now());
+    stageLogRef.current = new StageLog(() => performance.now(), undefined, '用户点执行（复用 READY 交易）');
+    for (const line of stageLogRef.current.observe(r.snapshotState)) p.say(line);
     setTrace(stageLogRef.current.view());
     p.say(
-      `⚡ 执行 ${quoteReq.origin_chain}→${quoteReq.destination_chain} ${sideLabel(quoteReq.side)}，amount_in_raw=${quoteReq.amount_in_raw}` +
+      `⚡ 热路径执行 ${quoteReq.origin_chain}→${quoteReq.destination_chain} ${sideLabel(quoteReq.side)}，amount_in_raw=${quoteReq.amount_in_raw}` +
         ` · client_intent_id=${r.snapshotState.clientIntentID}`,
     );
-    finish(await r.run());
+    const result = await r.executePrepared();
+    const record = store.byIntent(result.clientIntentID);
+    // 签前失败时仍是活跃的未签 swap，保留引用，让“准备下一笔”先取消它。
+    // 已有 artifact 则交给持久化恢复入口；终态已经释放服务端资源，可直接清理。
+    if (result.stage === 'done' || record?.artifact) {
+      consumedPrepareKeyRef.current = hot.key;
+      if (preparedRef.current === hot) preparedRef.current = null;
+    }
+    finish(result);
   };
 
   // ── 在途 ──────────────────────────────────────────────────────────
@@ -499,6 +680,23 @@ export function SwapPanel(p: SwapPanelProps) {
   const walletForChain = (chain: string) => (chain === SOLANA ? p.solWallet : p.evmWallet);
 
   const resumeSwap = async (swapID: string, mode: 'resume' | 'follow' | 'cancel', snap?: SwapSnapshot) => {
+    const hot = preparedRef.current;
+    if (mode !== 'follow' && hot?.run.snapshotState.swapID === swapID) {
+      setRunning(true);
+      runRef.current = hot.run;
+      const verb = mode === 'cancel' ? '取消' : '恢复';
+      stageLogRef.current = new StageLog(() => performance.now(), undefined, `用户点${verb}`);
+      setTrace(stageLogRef.current.view());
+      p.say(`${verb}预构建 [trade_id ${swapID}]`);
+      const result = await (mode === 'cancel' ? hot.run.cancel() : hot.run.resume());
+      const record = store.byIntent(result.clientIntentID);
+      if (result.stage === 'done' || mode === 'resume' && !!record?.artifact) {
+        consumedPrepareKeyRef.current = hot.key;
+        if (preparedRef.current === hot) preparedRef.current = null;
+      }
+      finish(result);
+      return;
+    }
     const rec =
       store.bySwap(swapID) ??
       ({
@@ -543,7 +741,7 @@ export function SwapPanel(p: SwapPanelProps) {
     p.say(line, !!snap.execution.failure_cause);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [snap]);
-  const blocked = !p.gateReady
+  const baseBlocked = !p.gateReady
     ? p.gateBlocker
     : !routes
       ? '还没拿到 capabilities'
@@ -564,6 +762,15 @@ export function SwapPanel(p: SwapPanelProps) {
                 ? '报价中…'
                 : '等一份与当前输入对应的展示报价'
               : null;
+  const blocked = baseBlocked ?? (preparing
+    ? '正在后台生成完整可签交易'
+    : prepareError
+      ? `可签交易准备失败：${prepareError}`
+      : !preparedReady
+        ? '等待完整交易 READY'
+        : !prewarmSettled
+          ? 'Privy signer 预热中'
+          : null);
 
   const localRecord = run ? store.byIntent(run.clientIntentID) : undefined;
   const canCancelRun =
@@ -643,6 +850,18 @@ export function SwapPanel(p: SwapPanelProps) {
         <Badge kind={freshQuote ? 'ok' : quoteErr ? 'err' : 'off'}>
           {freshQuote ? `报价 ${ms(freshQuote.ms)}` : quoting ? '报价中' : quoteErr ? '报价失败' : '无报价'}
         </Badge>
+        <Badge kind={preparedReady ? 'ok' : prepareError ? 'err' : preparing ? 'live' : 'off'}>
+          {preparedReady ? `可签交易 READY ${ms(prepared?.timeline.create_ms)}` : preparing ? '预构建中' : prepareError ? '预构建失败' : '未预构建'}
+        </Badge>
+        {preparedReady && (
+          <Badge kind={prewarm.status === 'failed' ? 'warn' : prewarmSettled ? 'ok' : 'live'}>
+            {prewarmSettled
+              ? prewarm.status === 'failed'
+                ? `Privy 预热失败，回落正常签名${prewarm.ms == null ? '' : ` ${Math.round(prewarm.ms)}ms`}`
+                : `Privy 已预热${prewarm.ms == null ? '' : ` ${Math.round(prewarm.ms)}ms`}`
+              : 'Privy 预热中'}
+          </Badge>
+        )}
         <span className="hint tight" style={{flex: 1, minWidth: 0}}>
           {freshQuote && (
             <>
@@ -652,8 +871,19 @@ export function SwapPanel(p: SwapPanelProps) {
           )}
         </span>
         <Btn variant="primary" danger={dir !== 'buy'} busy={running} disabled={running || !!blocked} onClick={doRun}>
-          确认并执行
+          {preparing ? '预构建中' : !preparedReady ? '等待 READY' : !prewarmSettled ? 'Privy 预热中' : '确认并执行'}
         </Btn>
+        {(prepareError || run?.stage === 'done' || run?.stage === 'stopped') && !running && !preparing && (
+          <Btn size="sm" onClick={() => {
+            consumedPrepareKeyRef.current = '';
+            setPrepareError(null);
+            setRun(null);
+            setTrace(null);
+            setPrepareNonce((n) => n + 1);
+          }}>
+            准备下一笔同参数
+          </Btn>
+        )}
       </div>
       {quoteErr && !freshQuote && <p className="hint tight">{quoteErr}</p>}
       {freshQuote && freshQuote.reply.fees.length > 0 && (
@@ -769,6 +999,7 @@ export function SwapPanel(p: SwapPanelProps) {
       {activeRows.map(([id, s]) => {
         const rec = localRecs.find((r) => r.swap_id === id);
         const signedLocally = !!rec?.artifact;
+        const confirmedLocally = rec?.accepted_min_out_raw != null;
         const notReported = !s || s.execution.status === ExecutionStatus.NOT_REPORTED;
         const brief = s ? rowBrief(s.intent) : rec ? rowBrief(rec.intent) : null;
         return (
@@ -801,17 +1032,19 @@ export function SwapPanel(p: SwapPanelProps) {
             )}
             {/* 已上报的不再提：那只是本地还留着一份，没有要做的事。未上报的才要人去「恢复」 */}
             {signedLocally && !rec!.reported && <Badge kind="err">已签未上报</Badge>}
-            {rec ? (
+            {rec && (signedLocally || confirmedLocally) ? (
               <Btn size="sm" disabled={running} onClick={() => void resumeSwap(id, 'resume', s ?? undefined)}>
                 恢复
               </Btn>
+            ) : rec ? (
+              <Badge kind="off">待交易卡确认，不从恢复入口签名</Badge>
             ) : (
               <Btn size="sm" disabled={running} onClick={() => void resumeSwap(id, 'follow', s ?? undefined)} title="本地没有这笔的记录，只跟进不签">
                 跟进
               </Btn>
             )}
             {!signedLocally && notReported && s && (
-              <Btn size="sm" disabled={running} onClick={() => void resumeSwap(id, 'cancel', s)}>
+              <Btn size="sm" disabled={running || preparing} onClick={() => void resumeSwap(id, 'cancel', s)}>
                 取消
               </Btn>
             )}

@@ -205,6 +205,81 @@ describe('SwapRun 正常路径', () => {
     expect(s.timeline.create_ms).toBeGreaterThan(0);
     expect(d.store.list()).toEqual([]);
   });
+
+  it('输入阶段 prepare 到 READY 不签名；点击后复用同一笔完成签名与上报', async () => {
+    const {client, calls} = fakeClient({});
+    const {d, signed} = deps(client);
+    const run = SwapRun.start(d, INTENT, null);
+
+    const ready = await run.prepare();
+    expect(ready.stage).toBe('ready');
+    expect(ready.swapID).toBe('sw1');
+    expect(ready.timeline.create_ms).toBeGreaterThan(0);
+    expect(signed).toHaveLength(0);
+    expect(calls.create).toHaveLength(1);
+    expect(calls.execute).toHaveLength(0);
+    expect(d.store.list()).toHaveLength(1);
+
+    run.acceptDisplayedQuote('97');
+    expect(d.store.list()[0]?.accepted_min_out_raw).toBe('97');
+    const done = await run.executePrepared();
+    expect(done.stage).toBe('done');
+    expect(done.timeline.confirmAt).toBeDefined();
+    expect(signed).toHaveLength(1);
+    expect(calls.create).toHaveLength(1);
+    expect(calls.get).toBe(1); // 点击时只对账同一笔，不复用可能老化的 READY 快照
+    expect(calls.execute).toHaveLength(1);
+    expect(d.store.list()).toEqual([]);
+  });
+
+  it('并行返回的展示报价在点击前绑定到底线，恶化超过底线时不签名不上报', async () => {
+    const {client, calls} = fakeClient({});
+    const {d, signed} = deps(client);
+    const run = SwapRun.start(d, INTENT, null);
+
+    expect((await run.prepare()).stage).toBe('ready');
+    run.acceptDisplayedQuote('98'); // READY revision.min_out_raw=97
+    const stopped = await run.executePrepared();
+
+    expect(stopped.stage).toBe('stopped');
+    expect(stopped.stopReason).toContain('7-min-out');
+    expect(signed).toHaveLength(0);
+    expect(calls.execute).toHaveLength(0);
+  });
+
+  it('点击前发现同一笔 READY 已过期时 refresh 同一 swap，不创建第二笔', async () => {
+    const intent = {...INTENT, client_intent_id: 'uuid-1'};
+    const {client, calls} = fakeClient({
+      get: () => snap(intent, {prep: {status: 4, current_revision: '1', retry_after_ms: 0}}),
+      refresh: () => snap(intent, {prep: {status: 2, current_revision: '2', retry_after_ms: 30_000}}),
+    });
+    const {d, signed} = deps(client);
+    const run = SwapRun.start(d, INTENT, null);
+
+    expect((await run.prepare()).stage).toBe('ready');
+    run.acceptDisplayedQuote('97');
+    expect((await run.executePrepared()).stage).toBe('done');
+
+    expect(calls.create).toHaveLength(1);
+    expect(calls.get).toBe(1);
+    expect(calls.refresh).toBe(1);
+    expect(signed).toHaveLength(1);
+  });
+
+  it('点击对账发现服务端已有执行记录时只跟进，不重新签名', async () => {
+    const intent = {...INTENT, client_intent_id: 'uuid-1'};
+    const {client, calls} = fakeClient({get: () => snap(intent, {exec: 3})});
+    const {d, signed} = deps(client);
+    const run = SwapRun.start(d, INTENT, null);
+
+    expect((await run.prepare()).stage).toBe('ready');
+    run.acceptDisplayedQuote('97');
+    expect((await run.executePrepared()).stage).toBe('done');
+
+    expect(calls.get).toBe(1);
+    expect(signed).toHaveLength(0);
+    expect(calls.execute).toHaveLength(0);
+  });
 });
 
 describe('幂等重发', () => {
@@ -267,6 +342,19 @@ describe('幂等重发', () => {
 });
 
 describe('签完未上报 → 刷新 → 恢复', () => {
+  it('用户确认前自动预构建的本地记录只能跟进或取消，resume 不得签名', async () => {
+    const {client, calls} = fakeClient({});
+    const {d, signed} = deps(client);
+    const run = SwapRun.start(d, INTENT, null);
+    expect((await run.prepare()).stage).toBe('ready');
+
+    const resumed = await new SwapRun(d, d.store.list()[0]!).resume();
+    expect(resumed.stage).toBe('stopped');
+    expect(resumed.stopReason).toContain('用户确认前自动预构建');
+    expect(signed).toHaveLength(0);
+    expect(calls.execute).toHaveLength(0);
+  });
+
   it('故障注入停在「已落盘未上报」；新实例从存储恢复，只上报原产物、不重签', async () => {
     const storage = memoryStorage();
     const first = fakeClient({});

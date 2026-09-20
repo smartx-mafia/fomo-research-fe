@@ -100,6 +100,7 @@ export type Stage =
   | 'creating'
   | 'preparing'
   | 'refreshing'
+  | 'ready'
   | 'checking'
   | 'signing'
   | 'reporting'
@@ -109,6 +110,8 @@ export type Stage =
 
 /** 一笔的时间线（fastswap-app.md §9）。数字是单调时钟 ms，串是 UTC 墙钟。 */
 export type Timeline = {
+  /** 输入稳定后开始生成完整可签交易。与用户最终确认分开计时。 */
+  prepareAt?: number;
   confirmAt?: number;
   readyAt?: number;
   create_ms?: number;
@@ -223,8 +226,68 @@ export class SwapRun {
   /** 全流程。任何分支停下都落到 stage=stopped 并写明原因，不抛。 */
   async run(): Promise<RunState> {
     try {
-      this.emit({timeline: {...this.state.timeline, confirmAt: this.d.now()}});
+      const started = this.d.now();
+      this.emit({timeline: {...this.state.timeline, prepareAt: started, confirmAt: started}});
       const snap = this.record.swap_id ? await this.get() : await this.create();
+      await this.untilSignable(snap);
+      await this.signAndReport();
+      await this.poll();
+    } catch (e) {
+      this.fail(e);
+    } finally {
+      void this.flushTelemetry();
+    }
+    return this.state;
+  }
+
+  /**
+   * 输入阶段只做到 READY：建立不可变意图、生成完整交易、平台预签并持久化。
+   * 不调用钱包，不产生用户签名，也不触发 `/executions`。
+   */
+  async prepare(): Promise<RunState> {
+    try {
+      if (this.state.timeline.prepareAt === undefined) {
+        this.emit({timeline: {...this.state.timeline, prepareAt: this.d.now()}});
+      }
+      const snap = this.record.swap_id ? await this.get() : await this.create();
+      await this.untilSignable(snap);
+      this.emit({stage: 'ready'});
+    } catch (e) {
+      this.fail(e);
+      void this.flushTelemetry();
+    }
+    return this.state;
+  }
+
+  /**
+   * 展示报价与 Create 并行时，展示报价可能稍晚回来。用户点击前把其可接受底线
+   * 可靠写回同一笔本地恢复记录，随后签前第 7 条会用它核对 READY revision。
+   */
+  acceptDisplayedQuote(minOutRaw: string): void {
+    if (this.record.artifact || this.state.snapshot?.execution.status !== ExecutionStatus.NOT_REPORTED) {
+      throw new Stop('这笔已经产生签名或执行记录，不能再修改用户接受的报价底线');
+    }
+    this.save({accepted_min_out_raw: minOutRaw});
+  }
+
+  /**
+   * 用户确认后的热路径：复用 prepare() 留下的 swap，只签名、可靠落盘、上报并跟进。
+   * 若页面恢复时只有 swap_id，会先 GET 同一笔；绝不新建另一个 intent 绕过恢复。
+   */
+  async executePrepared(): Promise<RunState> {
+    try {
+      if (this.state.stage === 'stopped') return this.state;
+      this.emit({timeline: {...this.state.timeline, confirmAt: this.d.now()}});
+      if (!this.record.swap_id) throw new Stop('预构建尚未拿到 swap_id，不能进入签名热路径');
+      // 用户可能在 READY 后停留很久，另一标签页也可能 refresh 同一笔。点击时只 GET
+      // 同一个 swap 做一次轻量对账；不重新报价、不新建 intent。若已过期，下面仍按
+      // 原协议 refresh 同一笔，绝不签缓存里的旧 revision。
+      const snap = await this.get();
+      if (snap.execution.status !== ExecutionStatus.NOT_REPORTED) {
+        this.note(`点击对账发现服务端已有执行记录（execution=${snap.execution.status}）—— 只跟进，不重签`);
+        await this.poll();
+        return this.state;
+      }
       await this.untilSignable(snap);
       await this.signAndReport();
       await this.poll();
@@ -250,6 +313,9 @@ export class SwapRun {
         this.note(`服务端已有执行记录（execution=${snap.execution.status}）—— 只跟进，不签`);
         await this.poll();
         return this.state;
+      }
+      if (this.record.accepted_min_out_raw == null) {
+        throw new Stop('这笔是在用户确认前自动预构建的，没有展示报价底线 —— 回到交易卡重新确认，不在恢复入口签名');
       }
       await this.untilSignable(snap);
       await this.signAndReport();
@@ -384,7 +450,7 @@ export class SwapRun {
               timeline: {
                 ...this.state.timeline,
                 readyAt,
-                create_ms: readyAt - (this.state.timeline.confirmAt ?? readyAt),
+                create_ms: readyAt - (this.state.timeline.prepareAt ?? this.state.timeline.confirmAt ?? readyAt),
               },
             });
           }

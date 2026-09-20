@@ -420,6 +420,7 @@ select.inp { cursor: pointer; }
 .badge.ok { color: var(--accent); }
 .badge.off { color: var(--muted-fg); }
 .badge.err { color: var(--danger); }
+.badge.warn { color: var(--warn); }
 .badge.live { color: var(--info); }
 .badge.run { color: var(--warn); }
 
@@ -854,17 +855,18 @@ export function Field({
 }
 
 /**
- * 一枚状态徽章。五种颜色的**含义是固定的**：
+ * 一枚状态徽章。六种语气的**含义是固定的**：
  *
  *   off  灰 —— 还没发生（未上报、未见、待入账）
  *   run  黄 —— 正在进行（已上报、已观察、Relay 处理中）
  *   ok   绿 —— 这一档走完了（出口已接受、已确认、已成交、已入账）
  *   err  红 —— 出事了（拒绝、重组、退款、需人工核实）
+ *   warn 黄 —— 有异常但当前流程允许继续（例如预热失败后回落到正常签名）
  *   live 蓝 —— 页面自己在忙（重查中之类），与链上进度无关
  *
  * 颜色从不是唯一的区分手段：每一枚里都写着它是什么。
  */
-export function Badge({kind, children}: {kind: 'ok' | 'off' | 'err' | 'live' | 'run'; children: ReactNode}) {
+export function Badge({kind, children}: {kind: 'ok' | 'off' | 'err' | 'warn' | 'live' | 'run'; children: ReactNode}) {
   return <span className={`badge ${kind}`}>{children}</span>;
 }
 

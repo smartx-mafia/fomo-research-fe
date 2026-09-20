@@ -108,7 +108,7 @@ import {
 
 
 export function App() {
-  const {ready, authenticated, user, logout} = usePrivy();
+  const {ready, authenticated, user, logout, getAccessToken} = usePrivy();
   const {createWallet: createSolanaWallet} = useCreateSolanaWallet();
   const {createWallet: createEvmWallet} = useCreateEvmWallet();
   const {wallets} = useWallets();
@@ -1822,6 +1822,7 @@ export function App() {
                     solWallet={solWallet}
                     evmWallet={evmWallet}
                     walletIdOf={walletIdOf}
+                    getAccessToken={getAccessToken}
                     say={say}
                     onTerminal={onSwapTerminal}
                     prefill={sellPrefill}

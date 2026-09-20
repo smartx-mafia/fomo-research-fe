@@ -25,6 +25,7 @@ const STAGE_LABEL: Record<Stage, string> = {
   creating: '建单',
   preparing: '准备',
   refreshing: '刷新报价',
+  ready: '待确认',
   checking: '签前核对',
   signing: '签名',
   reporting: '上报',
