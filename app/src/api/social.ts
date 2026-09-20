@@ -300,7 +300,9 @@ export function getFollowCounts(bearer: string, userIdentifier?: string, signal?
 // ── 关注者持仓（social.md §5.3 + social-follow-holders.md）：「我关注的人里，谁持有这个币」──
 
 export type FollowHolderItem = {
-  user: SocialUserPublic;
+  /** Only populated for a SmartX user. External identities use holder. */
+  user?: SocialUserPublic;
+  holder?: unknown;
   /** 标的最小单位十进制串；人类可读量 = shares / 10^decimals（decimals 在 token/info 里）。 */
   shares: string;
   /** 还持有的这些花了多少（USD）；空串 = 无法折算，**不是 0**。 */
@@ -315,7 +317,9 @@ export type TokenFollowHoldersReply = {
   /** 标准 TokenInfo；**缺席 = token-data 无记录**（不会回 decimals:0 的空壳）。 */
   token?: {chain: string; address: string; symbol?: string; name?: string; decimals?: number};
   items?: FollowHolderItem[];
-  /** 持有者全量数，与分页无关。 */
+  coverage?: string[];
+  total_is_exact?: boolean;
+  /** 持有者身份总数，与分页无关；外部数据覆盖范围见 coverage。 */
   total?: number;
   next_cursor?: string;
 };

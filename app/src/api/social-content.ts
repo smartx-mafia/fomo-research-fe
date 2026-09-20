@@ -10,6 +10,7 @@
  * `undefined` for UI code.
  */
 import {call} from './envelope';
+import {normalizeHolder, type TokenHolder} from './token-holder-list';
 import {normalizePortfolioPosition, positionTargetID, type PortfolioPosition} from './portfolio';
 import {normalizeTokenInfo, tokenKey, type TokenInfo} from './token-metadata';
 
@@ -172,7 +173,8 @@ export type TokenOpinionPage = {
 };
 
 export type FollowedHolderItem = {
-  user: UserActor;
+  user?: UserActor;
+  holder?: TokenHolder;
   /** Base-unit token quantity. Keep it as an exact decimal string. */
   shares?: string;
   costUSD?: string;
@@ -560,8 +562,10 @@ function normalizeFollowedHolderData(value: unknown): FollowedHolderPage {
     items: (row.items ?? []).map((value, index) => {
       const item = record(value);
       if (!item) throw new SocialContentShapeError(`followed holders data.items[${index}] is not an object`);
+      const holder = record(item.holder)?.identity ? normalizeHolder(item.holder) : undefined;
       return {
-        user: normalizeActor(item.user),
+        ...(holder ? {holder} : {}),
+        ...(!holder || holder.identity.type === 'smartx_user' ? {user: normalizeActor(item.user)} : {}),
         shares: typeof item.shares === 'string' && item.shares !== '' ? item.shares : undefined,
         costUSD: typeof item.cost_usd === 'string' && item.cost_usd !== '' ? item.cost_usd : undefined,
         pnlPercent: typeof item.pnl_percent === 'string' && item.pnl_percent !== '' ? item.pnl_percent : undefined,
@@ -679,7 +683,7 @@ export async function listTokenOpinions(
   return normalizeTokenOpinionData(response.data);
 }
 
-/** Logged-in users' followed SmartX positions for one token. */
+/** All followed native users, external subjects and wallets for one token. */
 export async function listTokenFollowHolders(
   bearer: string,
   chain: string,
