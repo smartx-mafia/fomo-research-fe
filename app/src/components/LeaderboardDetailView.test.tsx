@@ -3,10 +3,11 @@ import React from 'react';
 import {afterEach, beforeEach, expect, it, vi} from 'vitest';
 import {cleanup, fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {SWRConfig} from 'swr';
-const api = vi.hoisted(() => ({platform: vi.fn(), portfolio: vi.fn(), wallet: vi.fn(), userTrades: vi.fn(), positionTrades: vi.fn()}));
+const api = vi.hoisted(() => ({platform: vi.fn(), portfolio: vi.fn(), wallet: vi.fn(), userTrades: vi.fn(), positionTrades: vi.fn(), detail: vi.fn()}));
 vi.mock('@/api/platform-holdings', () => ({getPlatformHoldings: api.platform}));
 vi.mock('@/api/platform-trades', async (original) => ({...await original<object>(), getPlatformUserTrades: api.userTrades, getPlatformUserPositionTrades: api.positionTrades}));
 vi.mock('@/api/user-portfolio', () => ({getUserPortfolio: api.portfolio}));
+vi.mock('@/api/smartmoney-detail', async (original) => ({...await original<object>(), getSmartMoneyDetail: api.detail}));
 vi.mock('./SmartMoneyProfile', async (original) => ({...await original<object>(), SmartMoneyProfile: (props: {chain: string; address: string; backHref: string}) => {api.wallet(props); return <p>Wallet {props.chain}</p>;}}));
 vi.mock('./SmartMoneyTokenFdv', () => ({SmartMoneyTokenFdv: () => <span>FDV</span>}));
 import {LeaderboardDetailView} from './LeaderboardDetailView';
@@ -18,6 +19,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   api.userTrades.mockResolvedValue({list: [], next_cursor: '', wallets: []});
   api.positionTrades.mockResolvedValue({list: [], coverage: 'complete'});
+  api.detail.mockResolvedValue({identity: {}, profile: {}, enabled: true, follower_count: 0});
 });
 afterEach(cleanup);
 
@@ -149,4 +151,36 @@ it('does not restart endlessly when the first trade page itself is rejected as i
   fireEvent.click(await screen.findByRole('button', {name: '交易 0'}));
   await screen.findByText(/交易加载失败/);
   expect(api.userTrades).toHaveBeenCalledTimes(1);
+});
+
+it('shows the smart money identity profile, x handle and followers from the detail endpoint', async () => {
+  api.platform.mockResolvedValue({open: [], closed: [], wallets: [], coverage: 'complete', stale: false, pnl_windows: []});
+  api.detail.mockResolvedValue({
+    identity: {type: 'user', user_id: 'subject:3'},
+    profile: {display_name: 'Point Farm', username: 'pointfarm', avatar_url: '', source_tags: [{code: 'FOMO', logo_url: ''}], x_handle: 'pointfarmcap'},
+    enabled: true,
+    follower_count: 6,
+  });
+  mount({type: 'external_user', platform: 'fomo', id: 'subject:3'});
+  await screen.findByText('Point Farm');
+  expect(api.detail).toHaveBeenCalledWith({identity_type: 'user', user_id: 'subject:3'});
+  expect(screen.getByRole('link', {name: '@pointfarmcap'}).getAttribute('href')).toBe('https://x.com/pointfarmcap');
+  expect(screen.getByText('关注者 6')).toBeTruthy();
+});
+
+it('loads the wallet identity header for GMGN wallets and flags disabled identities', async () => {
+  api.detail.mockResolvedValue({identity: {type: 'wallet', namespace: 'evm', address: '0xAbC'}, profile: {tags: ['GMGN']}, enabled: false, follower_count: 0});
+  mount({type: 'wallet', address: '0xAbC', namespace: 'evm', chains: ['base']});
+  await screen.findByText(/身份已停用/);
+  expect(api.detail).toHaveBeenCalledWith({identity_type: 'wallet', namespace: 'evm', wallet_address: '0xAbC'});
+});
+
+it('keeps holdings visible when the identity detail request fails', async () => {
+  const token = {token_address: 'mint', symbol: 'COIN', name: '', logo: '', balance: '1', usd_value: '5', realized_profit: '0', unrealized_profit: '0', chain: 'sol'};
+  api.platform.mockResolvedValue({open: [token], closed: [], wallets: [], coverage: 'complete', stale: false, pnl_windows: [{window: 'all', total_profit: '1', username: 'Alice'}]});
+  api.detail.mockRejectedValue(new Error('boom'));
+  mount({type: 'external_user', platform: 'fomo', id: 'subject:3'});
+  await screen.findByText('COIN');
+  expect(screen.getByText('Alice')).toBeTruthy();
+  expect(screen.getByText(/身份详情加载失败/)).toBeTruthy();
 });

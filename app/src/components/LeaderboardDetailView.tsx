@@ -10,9 +10,10 @@ import {ApiError} from '@/api/envelope';
 import {PortfolioDataError} from '@/api/portfolio';
 import type {LeaderboardDetailTarget} from '@/lib/leaderboard-detail';
 import {decimalSign, formatBaseUnitsExact, formatDecimalExact} from '@/lib/exact-decimal';
-import {chainLabel} from '@/lib/format';
+import {chainLabel, shortAddr} from '@/lib/format';
 import {PortfolioTokenIdentity} from './PortfolioTokenIdentity';
 import {SmartMoneyProfile, SmartMoneyHoldingsTable, PlatformTradesTable} from './SmartMoneyProfile';
+import {SmartMoneyDetailHeader} from './SmartMoneyDetailHeader';
 import {SmartMoneyPnlSummary} from './SmartMoneyPnlSummary';
 
 const backHref = '/leaderboard#unified';
@@ -70,7 +71,7 @@ function ExternalUserDetail({target}: {target: Extract<LeaderboardDetailTarget, 
   useEffect(() => { if (staleCursor) void setTradesSize(1); }, [staleCursor, setTradesSize]);
   return <div className="space-y-5">
     <a href={backHref} className="text-sm text-muted hover:text-accent">← 返回统一榜单</a>
-    <header className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-surface p-5"><div><span className="text-xs text-accent">{target.platform.toUpperCase()}</span><h1 className="mt-2 break-all text-xl font-semibold">{name}</h1><p className="mt-1 text-xs text-muted">{target.id} · 全链用户持仓与交易</p></div><button type="button" disabled={refreshing} onClick={refresh} className="text-sm text-accent disabled:opacity-50">{refreshing ? '刷新中…' : '刷新'}</button></header>
+    <SmartMoneyDetailHeader query={{identity_type: 'user', user_id: target.id}} fallbackName={name} subtitle={<>{target.id} · 全链用户持仓与交易</>} actions={<button type="button" disabled={refreshing} onClick={refresh} className="text-sm text-accent disabled:opacity-50">{refreshing ? '刷新中…' : '刷新'}</button>} />
     {holdings.error ? <DetailError error={holdings.error} retry={() => void holdings.mutate()} /> : null}
     {holdings.isLoading ? <p role="status" className="p-8 text-center text-muted">正在加载用户持仓…</p> : null}
     {data ? <>
@@ -102,7 +103,7 @@ function ExternalUserDetail({target}: {target: Extract<LeaderboardDetailTarget, 
 
 function WalletDetail({target}: {target: Extract<LeaderboardDetailTarget, {type: 'wallet'}>}) {
   const [chain, setChain] = useState(target.chains[0]);
-  return <div className="space-y-5"><p className="text-sm text-muted">榜单可能汇总多条链的收益；下方展示所选链的持仓与交易。</p><ChainFilter chains={target.chains} selected={chain} select={setChain} /><SmartMoneyProfile key={`${chain}:${target.address}`} chain={chain} address={target.address} backHref={backHref} /></div>;
+  return <div className="space-y-5"><SmartMoneyDetailHeader query={{identity_type: 'wallet', namespace: target.namespace, wallet_address: target.address}} fallbackName={shortAddr(target.address, 10, 8)} subtitle={<>GMGN 钱包 · {target.namespace}</>} /><p className="text-sm text-muted">榜单可能汇总多条链的收益；下方展示所选链的持仓与交易。</p><ChainFilter chains={target.chains} selected={chain} select={setChain} /><SmartMoneyProfile key={`${chain}:${target.address}`} chain={chain} address={target.address} backHref={backHref} /></div>;
 }
 
 function SmartXUserDetail({id}: {id: string}) {

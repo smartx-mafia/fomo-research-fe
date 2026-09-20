@@ -8,15 +8,19 @@
 
 | 榜单 `identity.type` | 详情组件 | 数据接口 | 范围 |
 |---|---|---|---|
-| `external_user` | `ExternalUserDetail` | `/v1/smartmoney/platforms/{platform}/users/{user_id}/holdings?chain=all`；`/v1/smartmoney/new-trades?subject_type=external_user&user_id=...`；`/v1/smartmoney/new-position-trades?subject_type=external_user&user_id=...&position_id=...` | FOMO / PUMP 用户的关联链钱包 |
-| `wallet` | `WalletDetail` → `SmartMoneyProfile` | `/v1/smartmoney/holdings?chain=...&address=...` | 当前选择的单链钱包 |
+| `external_user` | `ExternalUserDetail` | `/v1/smartmoney/detail?identity_type=user&user_id=...`（身份头部）；`/v1/smartmoney/platforms/{platform}/users/{user_id}/holdings?chain=all`；`/v1/smartmoney/new-trades?subject_type=external_user&user_id=...`；`/v1/smartmoney/new-position-trades?subject_type=external_user&user_id=...&position_id=...` | FOMO / PUMP 用户的关联链钱包 |
+| `wallet` | `WalletDetail` → `SmartMoneyProfile` | `/v1/smartmoney/detail?identity_type=wallet&namespace=...&wallet_address=...`（身份头部）；`/v1/smartmoney/holdings?chain=...&address=...` | 当前选择的单链钱包 |
 | `smartx_user` | `SmartXUserDetail` | `/v1/users/{identifier}/portfolio` | 指定本站用户的账本组合 |
 
 共同页面入口是 `/leaderboard/detail`，这是前端页面路由，不是后端 API。
 
+`external_user` 与 `wallet` 两类身份的页头由 `SmartMoneyDetailHeader` 统一渲染，数据来自 `/v1/smartmoney/detail`（Optional 鉴权，前端不传 bearer）：头像、`display_name`、来源标签（含 logo）、X 账号与关注者数；`enabled === false` 时提示身份已停用。回包的 `wallets` 列表不展示（钱包身份即其自身，外部用户的关联钱包以持仓接口的 `wallets` 覆盖信息为准）。身份请求失败只在页头内提示并重试，不阻塞下方持仓与交易；资料缺失时名称回退为持仓 `pnl_windows` 的用户名（外部用户）或短地址（钱包）。
+
 ## 2. 从榜单到详情页
 
 榜单读取 `/v1/leaderboard-new`，头像和名称通过 `leaderboardDetailHref(entry)` 生成同一个详情链接。
+
+该接口为 Optional 档：登录后请求会带本站 JWT，回包顶层新增 `viewer_rank`（当前用户名次，未上榜为 0）、`viewer_profit_usd`（当前用户窗口盈亏，空串不可用）与 `participant_count`（本期参与排名总人数，可能大于上限 100 的 `count`，目前仅 SmartX 维度非零），榜单页据此在表格上方展示「我的排名 / 我的盈亏 / 参与人数」摘要。带过期 token 会返回 `400000 SYS_UNAUTHENTICATED`，前端清掉失效会话后按匿名重拉，不把整榜当失败。
 
 ### FOMO / PUMP 用户
 
@@ -233,6 +237,7 @@ GET /v1/smartmoney/token-trades?chain={chain}&address={address}&token_address={t
 | `app/src/lib/leaderboard-detail.ts` | 详情链接生成、身份参数解析 |
 | `app/src/app/leaderboard/detail/page.tsx` | 静态详情壳页与参数入口 |
 | `app/src/components/LeaderboardDetailView.tsx` | 三类身份分流、外部用户持仓/交易双 Tab、链筛选及完整性提示 |
+| `app/src/api/smartmoney-detail.ts`、`app/src/components/SmartMoneyDetailHeader.tsx` | `/v1/smartmoney/detail` 身份详情 API 与统一页头 |
 | `app/src/api/platform-holdings.ts` | FOMO/PUMP 持仓 API 及回包类型 |
 | `app/src/api/platform-trades.ts` | FOMO/PUMP 用户级最近交易与单仓位交易历史 API |
 | `app/src/api/envelope.ts`、`app/src/config.ts` | 公共请求、业务信封与环境地址 |
