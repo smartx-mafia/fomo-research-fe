@@ -3,22 +3,23 @@ import React from 'react';
 import {afterEach, beforeEach, expect, it, vi} from 'vitest';
 import {cleanup, fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {SWRConfig} from 'swr';
-const {board} = vi.hoisted(() => ({board: vi.fn()}));
+const {board, sessionState, clearSiteMock} = vi.hoisted(() => ({board: vi.fn(), sessionState: {value: null as {jwt: string} | null}, clearSiteMock: vi.fn()}));
 vi.mock('@/api/leaderboard-new', async (original) => ({...await original<object>(), getUnifiedLeaderboardMeta: async () => ({windows: ['1d', '7d', 'all'], dimensions: ['ALL', 'SmartX', 'Global']}), getUnifiedLeaderboard: board}));
+vi.mock('@/session/storage', () => ({useSession: () => sessionState.value, readSite: () => sessionState.value, clearSite: clearSiteMock}));
 import {UnifiedLeaderboardView} from './UnifiedLeaderboardView';
 import {ApiError} from '@/api/envelope';
 
 const row = {rank: 1, identity: {type: 'external_user', id: 'subject:1'}, profile: {display_name: 'Alice', username: 'alice', avatar_url: '', x_handle: 'alice_x'}, platforms: ['FOMO'], source_tags: [{code: 'FOMO', logo_url: 'https://static.smartx.io/app/branding/smsource/fomo.png'}], dimension: 'Global', pnl_basis: 'window_realized_plus_current_unrealized', total_profit_usd: '9007199254740993.12', snapshot_at: 1789536543, chains: ['sol', 'base'], identity_revision: 'v1'};
 const reply = {window: '7d', dimension: 'ALL', updated_at: 1789536583, count: 1, list: [row], stale: false};
 function mount() {render(<SWRConfig value={{provider: () => new Map(), dedupingInterval: 0}}><UnifiedLeaderboardView /></SWRConfig>);}
-beforeEach(() => {board.mockReset();});
+beforeEach(() => {board.mockReset(); sessionState.value = null; clearSiteMock.mockReset();});
 afterEach(cleanup);
 
 it('loads defaults, renders exact amounts and seconds, and changes new filters', async () => {
   board.mockImplementation(async (query) => ({...reply, ...query}));
   mount();
   await screen.findByText('Alice');
-  expect(board).toHaveBeenCalledWith({window: '7d', dimension: 'ALL'});
+  expect(board).toHaveBeenCalledWith({window: '7d', dimension: 'ALL'}, undefined);
   expect(screen.getByText('$9,007,199,254,740,993.12')).toBeTruthy();
   expect(screen.getByText(new Date(row.snapshot_at * 1000).toLocaleString())).toBeTruthy();
   expect(screen.getByRole('link', {name: '@alice_x'}).getAttribute('href')).toBe('https://x.com/alice_x');
@@ -26,9 +27,9 @@ it('loads defaults, renders exact amounts and seconds, and changes new filters',
   expect(screen.getByRole('link', {name: '查看 Alice 的持仓'}).getAttribute('href')).toBe(screen.getByRole('link', {name: 'Alice'}).getAttribute('href'));
   expect(screen.getByText('FOMO').closest('span')?.querySelector('img')?.getAttribute('src')).toBe(row.source_tags[0].logo_url);
   fireEvent.click(screen.getByRole('button', {name: 'SmartX'}));
-  await waitFor(() => expect(board).toHaveBeenLastCalledWith({window: '7d', dimension: 'SmartX'}));
+  await waitFor(() => expect(board).toHaveBeenLastCalledWith({window: '7d', dimension: 'SmartX'}, undefined));
   fireEvent.click(screen.getByRole('button', {name: '24H'}));
-  await waitFor(() => expect(board).toHaveBeenLastCalledWith({window: '1d', dimension: 'SmartX'}));
+  await waitFor(() => expect(board).toHaveBeenLastCalledWith({window: '1d', dimension: 'SmartX'}, undefined));
 });
 
 it('preserves server order, zero and negative amounts, and warns about stale data', async () => {
@@ -60,4 +61,29 @@ it('shows successful empty results separately from service errors', async () => 
   expect(screen.getByText(/榜单暂不可用/)).toBeTruthy();
   expect(screen.getByText('Trace trace-test')).toBeTruthy();
   expect(screen.queryByText('该筛选组合暂无符合条件的用户或钱包。')).toBeNull();
+});
+
+it('shows viewer rank, pnl and participant count when the board returns them', async () => {
+  board.mockResolvedValue({...reply, dimension: 'SmartX', viewer_rank: 3, viewer_profit_usd: '4.03840757', participant_count: 49});
+  mount();
+  await screen.findByText('Alice');
+  const summary = screen.getByText(/共 49 位用户参与本期排名/);
+  expect(summary.textContent).toContain('我的排名 #3');
+  expect(summary.textContent).toContain('我的盈亏 $4.04');
+});
+
+it('hides the viewer summary when rank and participant count are zero or absent', async () => {
+  board.mockResolvedValue({...reply, viewer_rank: 0, viewer_profit_usd: '', participant_count: 0});
+  mount();
+  await screen.findByText('Alice');
+  expect(screen.queryByText(/参与本期排名/)).toBeNull();
+  expect(screen.queryByText(/我的排名/)).toBeNull();
+});
+
+it('clears a stale session on 400000 so the board refetches anonymously', async () => {
+  sessionState.value = {jwt: 'stale'};
+  board.mockRejectedValue(new ApiError('business', 400000, 'invalid token'));
+  mount();
+  await waitFor(() => expect(clearSiteMock).toHaveBeenCalled());
+  expect(board).toHaveBeenCalledWith({window: '7d', dimension: 'ALL'}, 'stale');
 });

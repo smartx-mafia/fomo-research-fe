@@ -2,11 +2,12 @@
 
 import {useState} from 'react';
 import useSWR from 'swr';
-import {getUnifiedLeaderboard, getUnifiedLeaderboardMeta, leaderboardIdentityKey, type LeaderboardSourceTag, type UnifiedLeaderboardEntry, type UnifiedLeaderboardQuery} from '@/api/leaderboard-new';
+import {getUnifiedLeaderboard, getUnifiedLeaderboardMeta, leaderboardIdentityKey, type LeaderboardSourceTag, type UnifiedLeaderboardEntry, type UnifiedLeaderboardQuery, type UnifiedLeaderboardReply} from '@/api/leaderboard-new';
 import {ApiError} from '@/api/envelope';
 import {decimalSign, formatDecimalExact} from '@/lib/exact-decimal';
 import {chainLabel, shortAddr} from '@/lib/format';
 import {leaderboardDetailHref} from '@/lib/leaderboard-detail';
+import {clearSite, readSite, useSession} from '@/session/storage';
 
 const windowName = (value: string) => ({'1d': '24H', '7d': '7D', '30d': '30D', all: '全部时间'}[value] ?? value);
 const dimensionName = (value: string) => value === 'ALL' ? '全部' : value;
@@ -60,6 +61,17 @@ function LoadError({error, retry, hasData = false}: {error: unknown; retry: () =
   </div>;
 }
 
+function ViewerSummary({reply}: {reply: UnifiedLeaderboardReply}) {
+  const rank = reply.viewer_rank ?? 0;
+  const participants = reply.participant_count ?? 0;
+  if (rank <= 0 && participants <= 0) return null;
+  const pnl = reply.viewer_profit_usd ?? '';
+  return <p role="status" className="rounded-lg border border-border bg-surface p-3 text-xs leading-relaxed text-muted">
+    {rank > 0 ? <>我的排名 <span className="font-mono font-semibold text-foreground">#{rank}</span>{pnl ? <> · 我的盈亏 <span className={`font-mono font-semibold ${decimalSign(pnl) === 1 ? 'text-up' : decimalSign(pnl) === -1 ? 'text-down' : 'text-muted'}`}>{money(pnl)}</span></> : null}{participants > 0 ? ' · ' : ''}</> : null}
+    {participants > 0 ? <>共 {participants} 位用户参与本期排名</> : null}
+  </p>;
+}
+
 export function UnifiedLeaderboardView() {
   const meta = useSWR('leaderboard-new-meta', getUnifiedLeaderboardMeta, {shouldRetryOnError: false});
   const [selection, setSelection] = useState<Partial<UnifiedLeaderboardQuery>>({});
@@ -67,8 +79,18 @@ export function UnifiedLeaderboardView() {
   const dimensions = meta.data?.dimensions ?? [];
   const window = selection.window && windows.includes(selection.window) ? selection.window : windows.includes('7d') ? '7d' : windows[0];
   const dimension = selection.dimension && dimensions.includes(selection.dimension) ? selection.dimension : dimensions.includes('ALL') ? 'ALL' : dimensions[0];
-  const board = useSWR(window && dimension ? ['leaderboard-new', window, dimension] : null,
-    ([, window, dimension]) => getUnifiedLeaderboard({window, dimension}),
+  const session = useSession();
+  const bearer = session?.jwt;
+  const board = useSWR(window && dimension ? ['leaderboard-new', window, dimension, bearer ?? ''] : null,
+    async ([, window, dimension, jwt]) => {
+      try {
+        return await getUnifiedLeaderboard({window, dimension}, jwt || undefined);
+      } catch (error) {
+        // Optional 档：过期 token 会拿到 400000；清掉失效会话，让会话变化触发匿名重拉，而不是把整榜当失败。
+        if (jwt && error instanceof ApiError && error.code === 400000 && readSite()?.jwt === jwt) clearSite();
+        throw error;
+      }
+    },
     {shouldRetryOnError: false, refreshInterval: 60_000, revalidateOnFocus: true});
   const retry = () => {
     if (board.error instanceof ApiError && board.error.code === 100109) {
@@ -95,6 +117,7 @@ export function UnifiedLeaderboardView() {
     </section> : null}
     <p className="rounded-lg border border-border bg-surface p-3 text-xs leading-relaxed text-muted">SmartX 统计本站组合盈亏；Global 统计关联钱包的窗口内已实现收益与当前浮盈。全部榜单混合展示两种口径，统计范围及公式不同。</p>
     {board.data?.stale ? <p role="status" className="rounded-lg border border-accent/40 bg-accent/5 p-3 text-sm text-accent">后台更新延迟，当前展示最近一次可用榜单。</p> : null}
+    {board.data ? <ViewerSummary reply={board.data} /> : null}
     {board.error ? <LoadError error={board.error} retry={retry} hasData={!!board.data} /> : null}
     <section className="overflow-hidden rounded-xl border border-border bg-surface">
       {board.isLoading ? <p role="status" className="p-10 text-center text-sm text-muted">正在加载统一榜单…</p> : null}
