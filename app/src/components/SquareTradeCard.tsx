@@ -72,6 +72,7 @@ function txHref(chain: string, hash: string): string {
   if (chain === 'bsc') return `https://bscscan.com/tx/${encodeURIComponent(hash)}`;
   if (chain === 'ethereum') return `https://etherscan.io/tx/${encodeURIComponent(hash)}`;
   if (chain === 'robinhood') return `https://robinhoodchain.blockscout.com/tx/${encodeURIComponent(hash)}`;
+  if (chain === 'arc') return `https://explorer.arc.io/tx/${encodeURIComponent(hash)}`;
   return '#';
 }
 

@@ -241,8 +241,8 @@ export function timestampMs(t: Timestamp | undefined): number {
  * 后端哪天把 `bsc` 写成 `bnb`，认号的那条路不受影响。
  */
 export type PositionAsset = {
-  chain: string; // bsc | solana | ethereum | base | robinhood
-  chain_id: number; // 56 = BSC，792703809 = Solana，1 = 以太坊主网
+  chain: string; // bsc | solana | ethereum | base | robinhood | arc
+  chain_id: number; // 56 = BSC，792703809 = Solana，1 = 以太坊主网，5042 = Arc
   kind: string; // erc20 | spl
   token_address: string; // 标的合约地址 / mint
 };

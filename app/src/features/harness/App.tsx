@@ -1599,7 +1599,7 @@ export function App() {
                 busy={busy}
                 onAuthorize={() => void doAuthorizeSigner(byIndex(evmWallets)[0]!.address, 'EVM')}
                 onRevoke={() => void doRevokeSigner(byIndex(evmWallets)[0]!.address, 'EVM')}
-                note="bsc / base / ethereum / robinhood 四条链共用这一只（同一个 id、同一个地址）"
+                note="bsc / base / ethereum / robinhood / arc 五条链共用这一只（同一个 id、同一个地址）"
               />
               {signers.missing !== null && <Note tone="warn">{signers.missing}</Note>}
               {authenticated && (!embedded || evmWallets.length === 0) && (
@@ -2107,7 +2107,7 @@ function WalletRow({
   onRevoke: () => void;
   /** 跟在地址后面的东西（Solana 那行是 USDC 余额）。没有就不占位。 */
   after?: ReactNode;
-  /** 这只钱包值得说一句的事（EVM 那只是"四条链共用"）。 */
+  /** 这只钱包值得说一句的事（EVM 那只是"五条链共用"）。 */
   note?: string;
 }) {
   if (!address) {

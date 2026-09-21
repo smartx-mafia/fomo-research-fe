@@ -99,6 +99,7 @@ function txHref(chain: string, hash: string): string | undefined {
   if (chain === "bsc") return `https://bscscan.com/tx/${encoded}`;
   if (chain === "ethereum") return `https://etherscan.io/tx/${encoded}`;
   if (chain === "robinhood") return `https://robinhoodchain.blockscout.com/tx/${encoded}`;
+  if (chain === "arc") return `https://explorer.arc.io/tx/${encoded}`;
   return undefined;
 }
 

@@ -13,9 +13,10 @@ import type {TokenRisk} from './token-risk';
 
 /**
  * 链标识（服务端词汇表，同时也是 /token/[chain]/[address] 的路径段）。
- * 2026-09 换源后 monad 已从合法链集合移除（错误码 100305）。
+ * 2026-09 换源后 monad 已从合法链集合移除（错误码 100305）；
+ * 同期加入 arc（Circle 的 L1，链号 5042，原生 gas 币是 USDC 而不是 ETH）。
  */
-export const CHAINS = ["bsc", "solana", "base", "robinhood", "ethereum"] as const;
+export const CHAINS = ["bsc", "solana", "base", "robinhood", "ethereum", "arc"] as const;
 export type Chain = (typeof CHAINS)[number];
 
 /**

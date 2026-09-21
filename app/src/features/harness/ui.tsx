@@ -477,6 +477,34 @@ pre.block {
   white-space: pre-wrap; word-break: break-all;
 }
 
+/* ---------- 选币面板 ---------- */
+.pick {
+  display: flex; flex-direction: column; gap: var(--s2);
+  border: 1px solid var(--border); border-radius: var(--r);
+  padding: var(--s3); margin-top: var(--s2);
+}
+.picklist {
+  list-style: none; margin: 0; padding: 0;
+  max-height: 260px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.pickrow {
+  width: 100%; display: grid;
+  grid-template-columns: minmax(64px, 1fr) auto auto auto;
+  gap: var(--s3); align-items: center; text-align: left;
+  background: transparent; border: 1px solid transparent; border-radius: var(--r-s);
+  padding: var(--s1) var(--s2); color: inherit; font: inherit; cursor: pointer;
+}
+.pickrow:hover { border-color: var(--accent); background: var(--card-2); }
+.pickrow:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pickrow .psym { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pickrow .pnum { font-size: 12px; color: var(--muted-fg); white-space: nowrap; }
+/* 窄屏只保留符号与地址：四列挤在 375px 上会把数字折成两行，反而更难扫。 */
+@media (max-width: 560px) {
+  .pickrow { grid-template-columns: 1fr auto; }
+  .pickrow .pnum { display: none; }
+}
+
 /* ---------- 响应式 ---------- */
 /* 375 / 768 / 1024 / 1440 是清单点名的四档。窄屏下按钮撑满，输入不缩 ——
    挤扁的输入框看得见却填不进东西。 */

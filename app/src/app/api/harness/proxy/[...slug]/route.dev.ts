@@ -83,6 +83,28 @@ const RULES: readonly ProxyRule[] = [
     stripOrigin: true,
   },
   {
+    // **链上池子榜（GeckoTerminal）。** 选币面板在后端五榜拿不到候选时的回退源。
+    //
+    // **为什么它也要经这里，而不是浏览器直连。** 那个域名是公开的、CORS 还开着
+    // `access-control-allow-origin: *`，看起来直连最省事 —— 但 2026-09-20 实测：
+    //
+    //     node 直连 api.geckoterminal.com            → `fetch failed`
+    //     NODE_USE_ENV_PROXY=1 node 同一发            → 200
+    //
+    // 也就是说本机出网要走代理。浏览器那侧同样连不上，而 fetch 抛出来的
+    // `Failed to fetch` 与「CORS 被拒」**长得一模一样** —— 照 CORS 去查会查错方向。
+    // 经这里之后请求由 dev server 发出，与其余几条后端调用同一个出网口径。
+    //
+    // ⚠ dev server 自己也得出得去：本机出网必须走代理时，用
+    //   `NODE_USE_ENV_PROXY=1 npm run dev` 启动（node ≥24 才认这个变量）。
+    //   没带它的话这一条会回 502，而 502 的正文里写着目标 URL 与失败原因。
+    name: "geckoterminal",
+    prefix: ["gecko"],
+    origin: () => process.env.GECKOTERMINAL_ORIGIN || "https://api.geckoterminal.com",
+    rewrite: (slug) => "/" + slug.slice(1).join("/"),
+    stripOrigin: true,
+  },
+  {
     // **本机 business。** 端口取自后端仓 configs/business.yaml 的 server.http.addr。
     name: "business",
     prefix: ["v1"],
@@ -123,6 +145,20 @@ const DROPPED_REQUEST_HEADERS = new Set([
   // 让 undici 自己协商压缩并解码，否则下面回给浏览器的 body 已解压、
   // 而 content-encoding 头还写着 gzip，浏览器会解码失败。
   "accept-encoding",
+  // **`x-forwarded-*` 说的是"本地这一跳"，不能带给对端。** Next 会自动给
+  // 进到 Route Handler 的请求加上它们，其中 `x-forwarded-host: localhost:3000`
+  // 原样转出去之后，按 Host 路由的对端会拿它去找站点 —— 找不到就回 404。
+  //
+  // 2026-09-20 实测（同一个 URL、同一个出网口径，只差这一个头）：
+  //     无额外头                          → 200
+  //     x-forwarded-proto + x-forwarded-for → 200
+  //     x-forwarded-host: localhost:3000  → 404（对端的 Rails 404 页面）
+  //
+  // 那个 404 长得像"这个接口不存在"，会让人去查路径拼对没拼对，而路径是对的。
+  "x-forwarded-host",
+  "x-forwarded-proto",
+  "x-forwarded-port",
+  "x-forwarded-for",
 ]);
 
 const DROPPED_RESPONSE_HEADERS = new Set([

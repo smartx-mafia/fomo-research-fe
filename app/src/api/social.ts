@@ -327,7 +327,7 @@ export type TokenFollowHoldersReply = {
 /**
  * GET /v1/social/token-follow-holders —— 单币的 关注者持有人列表，
  * 按 (shares DESC, identifier ASC) 分页（默认 20、上限 100）。
- * chain 是链 slug（bsc/solana/base/robinhood/ethereum 小写，**不是**聪明钱面的 sol）。
+ * chain 是链 slug（bsc/solana/base/robinhood/ethereum/arc 小写，**不是**聪明钱面的 sol）。
  * 没关注任何人/都不持有 → 200 + 空 items，不是错误。上游未实现 500098 / 未配置 500097。
  */
 export function getTokenFollowHolders(

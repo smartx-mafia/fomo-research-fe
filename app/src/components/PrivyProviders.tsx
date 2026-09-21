@@ -8,6 +8,7 @@ import {createSolanaRpc, createSolanaRpcSubscriptions} from '@solana/kit';
 import {Component, type ReactNode} from 'react';
 
 import {PRIVY_APP_ID, PRIVY_CLIENT_ID, SOLANA_RPC_URL, missingConfig} from '@/config';
+import {EVM_CHAINS} from '@/lib/evm-chains';
 
 /**
  * 把 Privy/登录组件的异常挡在页面之外（自 privy-login-demo 的 Boundary 迁移）。
@@ -54,6 +55,18 @@ export function PrivyProviders({children}: {children: ReactNode}) {
       appId={PRIVY_APP_ID}
       clientId={PRIVY_CLIENT_ID}
       config={{
+        // **这张表决定 SDK 肯不肯在某条链上签东西，而它的默认值里没有本域
+        // 后加的那两条链。**
+        //
+        // 不给这一项时 Privy 用内置的默认链表，`robinhood(4663)` 与
+        // `arc(5042)` 都不在里面 —— 那两条链上的卖出腿（EIP-712 /
+        // EIP-7702 授权）会被 SDK 在**本地**拒掉：链上什么都没发生，而
+        // 后端看起来一切正常。
+        //
+        // ⚠ 它是**替换**不是追加：一旦显式给出，Privy 只认这一张表，所以
+        // 本域全部 EVM 链都得列全。表在 `@/lib/evm-chains`（与 harness
+        // 共用同一份），守卫用例在 `harness/evmchains.test.ts`。
+        supportedChains: [...EVM_CHAINS],
         // 只做登录验证，不建钱包 —— 显式写出来而不是靠 dashboard 默认值。
         embeddedWallets: {
           // Trade confirmation is implemented by our explicit review step; signatures stay headless.
