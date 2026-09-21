@@ -589,6 +589,20 @@ export function SwapPanel(p: SwapPanelProps) {
       if (s.stage === 'done') {
         p.say(`[trade_id ${s.swapID}] 到终态：${outcomeLabel(s.snapshot?.settlement.outcome)}`);
         p.onTerminal();
+        // **成交之后清掉这一笔的输入，只清「完成」这一种终态。**
+        //
+        // 不清的话，下一笔的起点是上一笔的代币与金额 —— 而这个台子上最常见的
+        // 下一步恰恰是换一只币再试，于是要么手工全选删掉，要么在旧金额上改几位
+        // 数字（改错一位不报错，直接按旧金额下单，花的是真钱）。
+        //
+        // 其余终态（取消 / 过期未执行 / 失败未扣款 / 已退款）**不清**：那几种
+        // 多半要照着同样的输入再来一次，清掉等于逼人重填一遍。
+        //
+        // 链、方向、滑点是「设置」不是「这一笔」，一并清掉会让人每笔都重选一次。
+        if (s.snapshot?.settlement.outcome === Outcome.COMPLETED) {
+          setTokenAddr('');
+          setAmount('');
+        }
       } else if (s.stage === 'stopped') {
         p.say(`[trade_id ${s.swapID ?? '（未建单）'}] 停下：${s.stopReason}`, true);
       }
