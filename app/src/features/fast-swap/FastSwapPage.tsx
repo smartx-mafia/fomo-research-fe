@@ -48,7 +48,7 @@ const RECOMMENDED_WSOL = 'So11111111111111111111111111111111111111112';
 const PRIVY_PREWARM_SESSION_TIMEOUT_MS = 4000;
 
 function chainQuery(value: string | null): string {
-  const known: Record<string, string> = {solana: 'solana:mainnet', base: 'eip155:8453', ethereum: 'eip155:1', bsc: 'eip155:56', robinhood: 'eip155:4663'};
+  const known: Record<string, string> = {solana: 'solana:mainnet', base: 'eip155:8453', ethereum: 'eip155:1', bsc: 'eip155:56', robinhood: 'eip155:4663', arc: 'eip155:5042'};
   return value ? known[value.toLowerCase()] ?? value : '';
 }
 function metadataAssetAddress(chain: string | undefined, address: string): string {

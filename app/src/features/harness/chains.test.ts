@@ -8,15 +8,18 @@ import {CHAIN_IDS, CHAINS, SOLANA_CAIP, caipOf, chainOfCaip, chainOfID, isEVM, t
 //
 // 所以这张表是本仓的"加链清单"：加链先来这里加一行，再让它变绿。
 
-/** 本域五条链。加链时**先改这里**。 */
+/** 本域六条链。加链时**先改这里**。 */
 const EXPECTED: Record<Chain, {chainID: number; evm: boolean}> = {
   solana: {chainID: 792703809, evm: false},
   bsc: {chainID: 56, evm: true},
   robinhood: {chainID: 4663, evm: true},
   base: {chainID: 8453, evm: true},
   // EVM 1。**它与 Privy 的 chain_type="ethereum" 不是一回事** —— 后者指整个
-  // EVM 家族，四条 EVM 链共用同一把 embedded 钥匙。
+  // EVM 家族，五条 EVM 链共用同一把 embedded 钥匙。
   ethereum: {chainID: 1, evm: true},
+  // Arc（Circle 的 L1）。原生 gas 币是 USDC 而不是 ETH，但它照样是 EVM ——
+  // 落进 Solana 那一侧会让它去签一笔 ed25519 交易（见 chains.ts 的 isEVM）。
+  arc: {chainID: 5042, evm: true},
 };
 
 describe('链集合', () => {

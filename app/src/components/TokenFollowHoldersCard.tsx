@@ -25,11 +25,11 @@ import {decimalSign, formatBaseUnitsExact, formatDecimalExact} from '@/lib/exact
 const PAGE_LIMIT = 20;
 
 /** social-follow-holders.md §2：服务端认识的链 slug（全小写）。 */
-const KNOWN_CHAIN_SLUGS = new Set(['bsc', 'solana', 'base', 'robinhood', 'ethereum']);
+const KNOWN_CHAIN_SLUGS = new Set(['bsc', 'solana', 'base', 'robinhood', 'ethereum', 'arc']);
 
 /**
  * 代币详情面的链标识 → 社交面的链 slug（social-follow-holders.md §2：
- * `chain` 是 bsc/solana/base/robinhood/ethereum 小写，**不是**聪明钱面的 `sol`，
+ * `chain` 是 bsc/solana/base/robinhood/ethereum/arc 小写，**不是**聪明钱面的 `sol`，
  * 传错回 100119）。eth→ethereum、sol→solana 之外小写透传；
  * 归一不出已知 slug 返回 null，调用方整块不渲染。
  */

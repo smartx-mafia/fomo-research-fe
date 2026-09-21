@@ -7,7 +7,7 @@ export const TOKEN_META_STATUS_INVALID = 3;
 export const TOKEN_META_STATUS_NOT_FOUND = 4;
 export const TOKEN_META_STATUS_UNAVAILABLE = 5;
 
-const TOKEN_CHAINS = new Set(['bsc', 'solana', 'base', 'robinhood', 'ethereum']);
+const TOKEN_CHAINS = new Set(['bsc', 'solana', 'base', 'robinhood', 'ethereum', 'arc']);
 
 export type TokenRef = {chain: string; address: string};
 
@@ -80,7 +80,8 @@ export function tokenApiChain(chain: string): string | undefined {
       : caip === '8453' ? 'base'
         : caip === '4663' ? 'robinhood'
           : caip === '1' ? 'ethereum'
-            : caip;
+            : caip === '5042' ? 'arc'
+              : caip;
   return TOKEN_CHAINS.has(normalized) ? normalized : undefined;
 }
 

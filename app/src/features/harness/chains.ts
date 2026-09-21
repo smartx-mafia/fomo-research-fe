@@ -15,7 +15,7 @@
 //   · 漏了选择器 option  → 那条链在页面上根本选不到，而代码里样样都在。
 
 /** 本域交易的链。它是**路由声明**（标的在哪条链上），不是身份声明。 */
-export type Chain = 'solana' | 'bsc' | 'robinhood' | 'base' | 'ethereum';
+export type Chain = 'solana' | 'bsc' | 'robinhood' | 'base' | 'ethereum' | 'arc';
 
 /**
  * 链名 → 链号。**加链时先在这里加一行。**
@@ -23,7 +23,7 @@ export type Chain = 'solana' | 'bsc' | 'robinhood' | 'base' | 'ethereum';
  * 链号是数字不是字符串：最大 792703809，float64 装得下。
  *
  * ⚠ **`ethereum` 与 Privy 的 `chain_type="ethereum"` 不是一回事。** 后者指
- * 整个 EVM 家族 —— bsc / robinhood / base / ethereum 四条链共用同一把
+ * 整个 EVM 家族 —— bsc / robinhood / base / ethereum / arc 五条链共用同一把
  * embedded 钥匙、同一个地址，Privy 那侧只有 `ethereum` 与 `solana` 两个取值。
  * 这里的 `ethereum` 是本域的一条具体的链（EVM 1）。后端在
  * `privysecurity/chains.go` 上把这个同名陷阱写成了一整段注释：照抄 Privy 的
@@ -38,6 +38,23 @@ export const CHAIN_IDS = {
   robinhood: 4663,
   base: 8453,
   ethereum: 1,
+  /**
+   * Arc（Circle 的 L1，主网 2026-09 已在跑）。**它的原生 gas 币是 USDC，不是 ETH。**
+   *
+   * 这件事对本层没有影响，值得写下来是因为它看起来应该有影响：
+   *
+   *   · 本域的现金腿恒在 Solana USDC（Q15/ADR-0008），Arc 那侧的 gas 由结算方
+   *     出，页面既不估 gas 也不显示原生余额 —— 所以「原生币不是 ETH」在这里
+   *     一行代码都碰不到；
+   *   · 卖出腿签的 EIP-7702 授权 Arc 支持（链上实测支持 EIP-7702 / EIP-2935），
+   *     与另外四条 EVM 链走同一条路。
+   *
+   * 真要当心的是**别把 Arc 的原生 USDC 与它的 ERC-20 接口当成两个资产**：
+   * `0x3600000000000000000000000000000000000000` 是同一份余额的 6 位视图，
+   * 原生那一侧是 18 位，两者差 10¹²。本域的标的地址一律填 ERC-20 地址，
+   * 现金腿不在这条链上，所以这条陷阱目前也踩不到 —— 除非哪天把现金腿挪过来。
+   */
+  arc: 5042,
 } as const satisfies Record<Chain, number>;
 
 /** 链的显示顺序，也是选择器里的顺序。Solana 在前：本域的出资腿永远是它。 */

@@ -25,6 +25,7 @@ import {createSolanaRpc, createSolanaRpcSubscriptions} from '@solana/kit';
 
 import {ENABLE_HARNESS, SOLANA_RPC_URL} from '@/config';
 import {CURRENT_ENV} from '@/features/harness/envs.browser';
+import {HARNESS_EVM_CHAINS} from '@/features/harness/evmchains';
 
 /**
  * harness 侧的 layout —— 源仓库 `src/main.tsx` 的落点。
@@ -159,6 +160,19 @@ function renderHarness(children: ReactNode) {
         // （`useLoginWithEmail` / `useLoginWithOAuth`）。这一行仍然要写：
         // 它约束的是这个 app 允许哪些登录方式，与用不用 modal 无关。
         loginMethods: ['email', 'google', 'apple'],
+        // **这张表决定 SDK 肯不肯在某条链上签东西，而它的默认值里没有我们
+        // 后加的那两条链。**
+        //
+        // 不给这一项时 Privy 用内置的默认链表，`robinhood(4663)` 与
+        // `arc(5042)` 都不在里面 —— 于是卖出腿要签的 EIP-712 / EIP-7702
+        // 授权被 SDK 在**本地**拒掉，链上什么都没发生，而后端那侧看起来
+        // 一切正常（2026-09-20 的 Arc 卖出就卡在这儿：fastswap 的 evm
+        // 列表里 arc 已经在了，前端签不出来）。
+        //
+        // ⚠ 它是**替换**不是追加：一旦显式给出，Privy 只认这一张表，所以
+        // 本域全部 EVM 链都得列全。表与守卫用例在 `evmchains.ts` /
+        // `evmchains.test.ts`，加链时漏在那儿会红。
+        supportedChains: [...HARNESS_EVM_CHAINS],
         embeddedWallets: {
           // **这一行决定签名弹不弹窗，而它的默认值不在代码里。**
           //
