@@ -18,6 +18,7 @@ import {SwapApiError, createSwapClient, type HttpTiming} from './client';
 import {NO_FAULTS, SwapRun, type Faults, type RunState, type Signer} from './flow';
 import {createSwapStore, withSwapLock, type SwapRecord} from './store';
 import {StageLog, secs, type TraceView} from './stagelog';
+import {TokenPicker} from './TokenPicker';
 import {acceptedMinOut} from './verify';
 import {
   ExecutionStatus,
@@ -72,7 +73,7 @@ export type SwapPanelProps = {
  * 本页的链选项**从 `chains.ts` 派生**，不在这里另立一张表：两张表会各自演化，
  * 而漏改这一张的症状是"那条链在页面上根本选不到，代码里样样都在"。
  *
- * 五条链与后端 `fastswap/domain/chains.go` 的 chainRefs 一一对应。某条链此刻
+ * 六条链与后端 `fastswap/domain/chains.go` 的 chainRefs 一一对应。某条链此刻
  * 开没开是 capabilities 说了算（本机 `signer.allow_chain_ids` 只放行了 Solana
  * 与 BSC，其余三条会带着 `unavailable_reason` 回来，按钮点不亮并写出原因）。
  */
@@ -217,6 +218,8 @@ export function SwapPanel(p: SwapPanelProps) {
     (r) => r.origin_chain === shape.origin && r.destination_chain === shape.destination && r.side === shape.side,
   );
   const [tokenAddr, setTokenAddr] = useState('');
+  // 选币面板默认收着：它一展开就会去拉五个榜，而多数时候人手上已经有地址了。
+  const [picking, setPicking] = useState(false);
   const [amount, setAmount] = useState('');
   const [slippage, setSlippage] = useState(DEFAULT_SLIPPAGE_BPS);
 
@@ -241,7 +244,7 @@ export function SwapPanel(p: SwapPanelProps) {
   // 48cf3e09：目的链已经是 eip155:56，收款钱包 id 还填着 Solana 那个）。跨链买入的
   // 收款侧在标的链上，所以它要填 EVM 钱包 id；卖出时两者正好对调。
   //
-  // 四条 EVM 链（bsc / base / ethereum / robinhood）**共用同一个 Privy 钱包 id 与地址**，
+  // 五条 EVM 链（bsc / base / ethereum / robinhood / arc）**共用同一个 Privy 钱包 id 与地址**，
   // 所以这里按「是不是 Solana」挑就够，不能反过来拿 id 去区分链。
   const walletFor = (wire: string) => (wire === SOLANA ? p.solWallet : p.evmWallet);
   const srcWallet = walletFor(shape.origin);
@@ -622,6 +625,11 @@ export function SwapPanel(p: SwapPanelProps) {
           unit={chain === 'solana' ? 'Solana mint' : 'EVM 合约地址（0x…）'}
           value={tokenAddr}
           onChange={setTokenAddr}
+          after={
+            <Btn size="sm" variant="ghost" onClick={() => setPicking((v) => !v)} title="按链列出候选标的">
+              {picking ? '收起' : '选币'}
+            </Btn>
+          }
         />
         <Field
           label="amount_in_raw"
@@ -631,6 +639,18 @@ export function SwapPanel(p: SwapPanelProps) {
         />
         <Field label="slippage_bps" unit="服务端上限 300，超限拒单" value={slippage} onChange={setSlippage} />
       </div>
+      {/* 选中只填地址，**不动金额与滑点** —— 那两个是人这一次想试的东西，
+          被一次选币悄悄改掉的话，下一发报价是对着别的输入算的。 */}
+      {picking && (
+        <TokenPicker
+          chain={chain}
+          token={p.token}
+          onPick={(addr) => {
+            setTokenAddr(addr);
+            setPicking(false);
+          }}
+        />
+      )}
       <p className="hint tight">
         出资（{chainShort(shape.origin)}）<code className="code">{srcWallet?.address ?? '（无）'}</code> · id{' '}
         <code className="code">{srcWalletID ?? '（无）'}</code>
