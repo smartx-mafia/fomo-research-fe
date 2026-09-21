@@ -41,4 +41,11 @@ describe('token trade board contract', () => {
     expect(page.items[0]?.executionPriceUSD).toBeUndefined();
     expect(page.coverage).toEqual(['gmgn_not_configured']);
   });
+
+  it('keeps the executing wallet separate from the external profile supplying its name', () => {
+    const wallet = {type: 'wallet', namespace: 'solana', address: 'EVqxB3F6iUBeWsTpBFQqWwxpqUS8s4NrzgxBvQ2VRbTq'};
+    const subject = {type: 'external_user', id: 'subject:102'};
+    const page = normalizeTokenTradeBoard({items: [{side: 'buy', occurred_at: '1789616411', actor_type: 'smart_money', actor_id: wallet.address, actor: {identity: wallet, profile: {display_name: 'Jack', avatar_url: 'https://static.smartx.io/jack.png', sources: ['FOMO']}, profile_subject: subject, wallets: [wallet], related_identities: [wallet, subject], viewer: {state: 'available', following: true, followed_subjects: [wallet]}}}], coverage: []});
+    expect(page.items[0]).toMatchObject({actorID: wallet.address, actor: {identity: wallet, name: 'Jack', profileSubject: subject, wallets: [wallet], followingPrimary: true}});
+  });
 });

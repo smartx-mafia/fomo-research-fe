@@ -50,12 +50,14 @@ function exactQuantity(value?: string): string {
 }
 
 function actorName(row: TokenTradeBoardItem, board: TradeBoardTab): string {
+  if (row.actor) return row.actor.name;
   if (board === "smartx") return row.user?.nickname || row.user?.username || shortAddr(row.actorID, 6, 4);
   if (board === "smart-money") return row.smartMoney?.displayName || row.smartMoney?.handle || `Smart Money · ${shortAddr(row.actorID, 6, 4)}`;
   return shortAddr(row.sender, 6, 4);
 }
 
 function actorSubline(row: TokenTradeBoardItem, board: TradeBoardTab): string {
+  if (row.actor?.wallets.length) return row.actor.wallets.map((wallet) => wallet.address).join(' · ');
   if (board === "smartx") return row.user?.username ? `@${row.user.username}` : "SmartX user";
   if (board === "smart-money") {
     if (row.smartMoney?.handle) return `@${row.smartMoney.handle}`;
@@ -65,6 +67,7 @@ function actorSubline(row: TokenTradeBoardItem, board: TradeBoardTab): string {
 }
 
 function avatarURL(row: TokenTradeBoardItem, board: TradeBoardTab): string | undefined {
+  if (row.actor) return row.actor.avatarURL;
   return board === "smartx" ? row.user?.avatarURL : board === "smart-money" ? row.smartMoney?.avatarURL : undefined;
 }
 
@@ -117,6 +120,7 @@ function TradeRow({ row, board, chain }: { row: TokenTradeBoardItem; board: Trad
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <span className="truncate text-sm font-semibold text-foreground" title={name}>{name}</span>
             <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${sideClass(row.side)}`}>{sideLabel(row.side)}</span>
+            {row.actor?.following ? <span className="text-xs text-accent">{row.actor.followingPrimary ? 'Following' : row.actor.followedSubjects.some((id) => id.type === 'wallet') ? 'Following wallet' : 'Following related account'}</span> : null}
           </div>
           <p className="truncate text-xs text-muted" title={actorSubline(row, board)}>{actorSubline(row, board)}</p>
           <p className="truncate text-xs text-muted">
@@ -167,12 +171,12 @@ export default function TradesTab({ chain, address }: { chain: string; address: 
   const [board, setBoard] = useState<TradeBoardTab>("smartx");
   const [scope, setScope] = useState<TokenTradeScope>("all");
   const needsLogin = board !== "on-chain" && scope === "following" && !session;
-  const key = needsLogin ? null : ["token-trade-board", chain, address, board, scope, board === "on-chain" ? "" : scope === "following" ? session?.jwt ?? "" : "public"];
+  const key = needsLogin ? null : ["token-trade-board", chain, address, board, scope, board === "on-chain" ? "" : session?.jwt ?? "public"];
   const { data, error, isLoading, mutate } = useSWR<TokenTradeBoardPage>(
     key,
     () => board === "on-chain"
       ? fetchOnChainTradeBoard(chain, address, LIMIT)
-      : fetchTokenTradeBoard(board === "smartx" ? "platform" : "smart-money", chain, address, {scope, limit: LIMIT, bearer: scope === "following" ? session?.jwt : undefined}),
+      : fetchTokenTradeBoard(board === "smartx" ? "platform" : "smart-money", chain, address, {scope, limit: LIMIT, bearer: session?.jwt}),
     { refreshInterval: 30_000, revalidateOnFocus: true, dedupingInterval: 10_000, shouldRetryOnError: false },
   );
 

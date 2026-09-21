@@ -24,7 +24,7 @@ export function HolderRow({item, chain}: {item: TokenHolder; chain: string}) {
     <div className="min-w-0 flex-1">
       <div className="flex gap-2">{href ? <Link href={href} className="truncate hover:underline">{title}</Link> : title}{item.following ? <span className="text-xs text-accent">{item.followingPrimary ? 'Following' : item.followedSubjects?.some((id) => id.type === 'wallet') ? 'Following wallet' : 'Following related account'}</span> : null}</div>
       <p className="truncate text-xs text-muted">{item.sources.join(' · ') || (item.identity.type === 'wallet' ? 'Wallet' : item.identity.type === 'external_user' ? 'External user' : 'SmartX')} · {basisLabel[item.basis]}</p>
-      {item.walletAddress ? <p className="truncate text-xs text-muted" title={item.walletAddress}>{item.walletAddress}</p> : null}
+      {(item.wallets?.length ? item.wallets.map((w) => w.address!) : item.walletAddress ? [item.walletAddress] : []).map((address) => <p key={address} className="truncate text-xs text-muted" title={address}>{address}</p>)}
       {item.remark && !ownRemark ? <p className="truncate text-xs text-muted">Followed account note: {item.remark}</p> : null}
       <p className="text-xs text-muted">Held {formatDecimalExact(item.balance, 6)}{item.basis !== 'onchain' ? ` · Cost ${money(item.costUSD)}` : ''}</p>
       {item.freshness === 'stale' ? <p className="text-xs text-muted">Older position snapshot</p> : null}

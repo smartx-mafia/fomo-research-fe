@@ -69,6 +69,16 @@ describe('TradesTab token trade boards', () => {
     expect(fetchOnChainMock).toHaveBeenCalledWith('bsc', '0xabc', 50);
   });
 
+  it('renders the resolved profile together with the executing wallet', async () => {
+    const address = '0x000000000000000000000000000000000000000a';
+    fetchBoardMock.mockResolvedValue(page([{side: 'buy', occurredAt: 1789616411, actorType: 'smart_money', actorID: address, actor: {identity: {type: 'wallet', namespace: 'evm', address}, name: 'Jack', avatarURL: 'https://static.smartx.io/jack.png', wallets: [{type: 'wallet', namespace: 'evm', address}], following: true, followingPrimary: true, followedSubjects: [{type: 'wallet', namespace: 'evm', address}]}}]));
+    renderTab();
+    fireEvent.click(screen.getByRole('tab', {name: 'Smart Money'}));
+    expect(await screen.findByText('Jack')).toBeTruthy();
+    expect(screen.getByText(address)).toBeTruthy();
+    expect(document.querySelector('img')?.getAttribute('src')).toBe('https://static.smartx.io/jack.png');
+  });
+
   it('does not request following trades anonymously and presents coverage separately from errors', async () => {
     fetchBoardMock.mockImplementation((source: string) => Promise.resolve(source === 'smart-money' ? page([], ['gmgn_not_configured']) : page([])));
     renderTab();
@@ -90,6 +100,18 @@ describe('TradesTab token trade boards', () => {
     sessionMock.mockReturnValue({jwt: 'jwt-b', user: null, meta: null});
     view.rerender(<SWRConfig value={{provider: () => new Map()}}><TradesTab chain="bsc" address="0xabc" /></SWRConfig>);
     await waitFor(() => expect(fetchBoardMock).toHaveBeenCalledWith('platform', 'bsc', '0xabc', {scope: 'following', limit: 50, bearer: 'jwt-b'}));
+  });
+
+  it('isolates personalized All trade metadata when switching accounts and logging out', async () => {
+    sessionMock.mockReturnValue({jwt: 'jwt-a'});
+    const cache = new Map();
+    const element = () => <SWRConfig value={{provider: () => cache}}><TradesTab chain="bsc" address="0xabc" /></SWRConfig>;
+    const view = render(element());
+    await waitFor(() => expect(fetchBoardMock).toHaveBeenCalledWith('platform', 'bsc', '0xabc', {scope: 'all', limit: 50, bearer: 'jwt-a'}));
+    sessionMock.mockReturnValue({jwt: 'jwt-b'}); view.rerender(element());
+    await waitFor(() => expect(fetchBoardMock).toHaveBeenCalledWith('platform', 'bsc', '0xabc', {scope: 'all', limit: 50, bearer: 'jwt-b'}));
+    sessionMock.mockReturnValue(null); view.rerender(element());
+    await waitFor(() => expect(fetchBoardMock).toHaveBeenCalledWith('platform', 'bsc', '0xabc', {scope: 'all', limit: 50, bearer: undefined}));
   });
 
   it('hides an endpoint error, keeps the empty state out of the UI, and retries explicitly', async () => {

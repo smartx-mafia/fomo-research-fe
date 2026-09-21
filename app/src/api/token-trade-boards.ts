@@ -1,5 +1,6 @@
 import { call } from './envelope';
 import { normalizeTokenInfo, type TokenInfo } from './token-metadata';
+import {normalizeActor, type ActorView} from './actor';
 
 export type TokenTradeBoardSource = 'platform' | 'smart-money';
 export type TokenTradeScope = 'all' | 'following';
@@ -42,6 +43,7 @@ export type TokenTradeBoardItem = {
   actorID?: string;
   user?: TokenTradeUser;
   smartMoney?: TokenTradeSmartMoney;
+  actor?: ActorView;
   /** On-chain sender is only a display identity; never use it to infer platform ownership. */
   sender?: string;
 };
@@ -127,6 +129,7 @@ function normalizeBusinessTrade(value: unknown, index: number): TokenTradeBoardI
     actorID: nonEmptyString(row.actor_id),
     user: normalizeUser(row.user),
     smartMoney: normalizeSmartMoney(row.smart_money),
+    actor: record(row.actor)?.identity && record(record(row.actor)?.identity)?.type ? normalizeActor(row.actor) : undefined,
   };
 }
 
