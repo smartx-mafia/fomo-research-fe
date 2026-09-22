@@ -5,7 +5,7 @@ import useSWRInfinite from 'swr/infinite';
 import useSWR from 'swr';
 import {getUserClosedPositions, getUserPortfolioPosition} from '@/api/user-portfolio';
 import {ApiError} from '@/api/envelope';
-import {PortfolioDataError, type PortfolioClosedPage, type PortfolioCycleScope} from '@/api/portfolio';
+import {PortfolioDataError, type PortfolioClosedPage, type PortfolioCycleScope, type ProtoTimestamp} from '@/api/portfolio';
 import {TradeRow} from '@/components/PortfolioActivity';
 import {formatDecimalExact, decimalSign, marketValueFromBaseUnits} from '@/lib/exact-decimal';
 import {chainLabel, shortAddr} from '@/lib/format';
@@ -26,6 +26,12 @@ function usd(value?: string, digits = 2) {
   if (value === undefined) return '—';
   const formatted = formatDecimalExact(value, digits);
   return `$${formatted === '0' && decimalSign(value) !== 0 ? formatDecimalExact(value, 20) : formatted}`;
+}
+function time(value: ProtoTimestamp | undefined) {
+  if (!value) return '—';
+  const seconds = Number(value.seconds);
+  if (!Number.isFinite(seconds)) return '—';
+  return new Date(seconds * 1000 + (value.nanos ?? 0) / 1_000_000).toLocaleString();
 }
 function ReadError({error, retry, reset}: {error: Error; retry: () => void; reset: () => void}) {
   return <div role="alert" className="m-4 rounded border border-down/40 bg-down/5 p-3 text-sm text-down">
@@ -49,7 +55,7 @@ export function ClosedPortfolioPositions({bearer, userIdentifier, historyEpoch, 
     {data?.some((page) => page.completeness && page.completeness !== 'complete') ? <p role="status" className="px-4 py-2 text-xs text-accent">Closed history is incomplete.</p> : null}
     {isLoading ? <p role="status" className="p-6 text-sm text-muted">Loading closed positions…</p> : !error && rows.length === 0 && !data?.some((page) => page.completeness && page.completeness !== 'complete') ? <p className="p-6 text-sm text-muted">No closed holding cycles.</p> : null}
     {rows.length > 0 ? <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left text-xs">
-      <thead className="text-muted"><tr>{['Token', 'PnL', 'ROI', 'Total bought', 'Total sold', 'Avg buy / share', 'Avg sell / share', ''].map((label) => <th key={label} className="p-3">{label}</th>)}</tr></thead>
+      <thead className="text-muted"><tr>{['Token', 'PnL', 'ROI', 'Total bought', 'Total sold', 'Avg buy / share', 'Avg sell / share', 'Closed at', ''].map((label) => <th key={label} className="p-3">{label}</th>)}</tr></thead>
       <tbody>{rows.map((row) => <tr key={`${row.asset.chain_id}:${row.asset.kind}:${row.asset.token_address}:${row.cycle_key ?? row.opened_entry_id}`} className="border-t border-border align-top">
         <td className="p-3"><PortfolioTokenIdentity chain={row.asset.chain} address={row.asset.token_address} symbol={row.symbol} logo={row.logo} /></td>
         <td className={`p-3 text-right font-mono ${decimalSign(row.realized_pnl_usd) === 1 ? 'text-up' : decimalSign(row.realized_pnl_usd) === -1 ? 'text-down' : 'text-muted'}`}>{usd(row.realized_pnl_usd)}</td>
@@ -58,6 +64,7 @@ export function ClosedPortfolioPositions({bearer, userIdentifier, historyEpoch, 
         <td className="p-3 text-right font-mono">{usd(row.sell_value_usd)}</td>
         <td className="p-3 text-right font-mono">{usd(row.avg_buy_price_usd, 12)}</td>
         <td className="p-3 text-right font-mono">{usd(row.avg_sell_price_usd, 12)}</td>
+        <td className="p-3 whitespace-nowrap font-mono">{time(row.closed_at)}</td>
         <td className="p-3"><button type="button" disabled={!row.cycle_key} onClick={() => onOpenCycle({chain: row.asset.chain, asset: row.asset.token_address, cycle_key: row.cycle_key})} className="whitespace-nowrap text-accent underline">Cycle trades</button></td>
       </tr>)}</tbody>
     </table></div> : null}
