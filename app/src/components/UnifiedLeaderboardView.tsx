@@ -4,6 +4,8 @@ import {useState} from 'react';
 import useSWR from 'swr';
 import {getUnifiedLeaderboard, getUnifiedLeaderboardMeta, leaderboardIdentityKey, type LeaderboardSourceTag, type UnifiedLeaderboardEntry, type UnifiedLeaderboardQuery, type UnifiedLeaderboardReply} from '@/api/leaderboard-new';
 import {ApiError} from '@/api/envelope';
+import {setRemark} from '@/api/social';
+import {getLeaderboardRemarks, leaderboardRemarkTarget} from '@/lib/leaderboard-social';
 import {decimalSign, formatDecimalExact} from '@/lib/exact-decimal';
 import {chainLabel, shortAddr} from '@/lib/format';
 import {leaderboardDetailHref} from '@/lib/leaderboard-detail';
@@ -72,6 +74,43 @@ function ViewerSummary({reply}: {reply: UnifiedLeaderboardReply}) {
   </p>;
 }
 
+function RemarkEditor({remark, save}: {remark: string; save: (value: string) => Promise<void>}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState('');
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState('');
+  async function submit(value: string) {
+    if ([...value].length > 64 || /[\p{Cc}\p{Zl}\p{Zp}]/u.test(value)) {
+      setError('备注最多 64 个字符，不能包含换行或控制字符。');
+      return;
+    }
+    setPending(true);
+    setError('');
+    try {await save(value); setEditing(false);} catch (error) {
+      const messages: Record<number, string> = {
+        100112: '备注最多 64 个字符，不能包含换行或控制字符。',
+        200102: '该用户不存在。', 200104: '该聪明钱未被收录或暂不可用。',
+        400000: '登录已失效，请重新登录。', 430114: '请先完成邀请准入。',
+        430101: '当前账号暂不可用。', 430106: '备注已达 1000 条上限，请先清理不用的备注。',
+      };
+      setError(error instanceof ApiError ? messages[error.code] ?? '备注保存失败，请重试。' : '备注保存失败，请重试。');
+    } finally {setPending(false);}
+  }
+  if (!editing) return <div className="mt-1 flex items-center gap-2 text-xs">
+    {remark ? <span className="max-w-[200px] truncate text-accent" title={remark}>{remark}</span> : null}
+    <button type="button" className="text-muted hover:text-accent" onClick={() => {setDraft(remark); setError(''); setEditing(true);}}>{remark ? '编辑备注' : '添加备注'}</button>
+  </div>;
+  return <form className="mt-2 space-y-1 text-xs" onSubmit={(event) => {event.preventDefault(); if (!pending) void submit(draft);}}>
+    <input aria-label="备注" autoFocus value={draft} disabled={pending} onChange={(event) => setDraft(event.target.value)} placeholder="仅自己可见，最多 64 个字符" className="w-full rounded border border-border bg-surface px-2 py-1 text-foreground" />
+    <div className="flex gap-3">
+      <button type="submit" disabled={pending} className="text-accent disabled:opacity-50">{pending ? '保存中…' : '保存'}</button>
+      {remark ? <button type="button" disabled={pending} onClick={() => void submit('')} className="text-muted">清除备注</button> : null}
+      <button type="button" disabled={pending} onClick={() => setEditing(false)} className="text-muted">取消</button>
+    </div>
+    {error ? <p role="alert" className="text-down">{error}</p> : null}
+  </form>;
+}
+
 export function UnifiedLeaderboardView() {
   const meta = useSWR('leaderboard-new-meta', getUnifiedLeaderboardMeta, {shouldRetryOnError: false});
   const [selection, setSelection] = useState<Partial<UnifiedLeaderboardQuery>>({});
@@ -92,7 +131,12 @@ export function UnifiedLeaderboardView() {
       }
     },
     {shouldRetryOnError: false, refreshInterval: 60_000, revalidateOnFocus: true});
+  const identities = board.data?.list.map((entry) => entry.identity) ?? [];
+  const remarks = useSWR(bearer && identities.length ? ['leaderboard-remarks', bearer, identities] as const : null,
+    ([, jwt, targets]) => getLeaderboardRemarks(jwt, targets),
+    {shouldRetryOnError: false, refreshInterval: 60_000, revalidateOnFocus: true});
   const retry = () => {
+    if (bearer && identities.length) void remarks.mutate();
     if (board.error instanceof ApiError && board.error.code === 100109) {
       void meta.mutate();
     } else {
@@ -119,6 +163,7 @@ export function UnifiedLeaderboardView() {
     {board.data?.stale ? <p role="status" className="rounded-lg border border-accent/40 bg-accent/5 p-3 text-sm text-accent">后台更新延迟，当前展示最近一次可用榜单。</p> : null}
     {board.data ? <ViewerSummary reply={board.data} /> : null}
     {board.error ? <LoadError error={board.error} retry={retry} hasData={!!board.data} /> : null}
+    {bearer && remarks.error ? <p role="alert" className="text-sm text-down">备注加载失败。<button type="button" className="ml-2 underline" onClick={() => void remarks.mutate()}>重新加载备注</button></p> : null}
     <section className="overflow-hidden rounded-xl border border-border bg-surface">
       {board.isLoading ? <p role="status" className="p-10 text-center text-sm text-muted">正在加载 leaderboard…</p> : null}
       {board.data && !board.data.list.length ? <p className="p-10 text-center text-sm text-muted">该筛选组合暂无符合条件的用户或钱包。</p> : null}
@@ -127,7 +172,14 @@ export function UnifiedLeaderboardView() {
           <thead className="text-xs text-muted"><tr><th className="px-4 py-3">排名</th><th className="px-3 py-3">用户 / 钱包</th><th className="px-3 py-3">覆盖链</th><th className="px-3 py-3 text-right">总盈亏（USD） ↓</th><th className="px-4 py-3 text-right">数据观测时间</th></tr></thead>
           <tbody>{board.data.list.map((entry) => <tr key={leaderboardIdentityKey(entry.identity)} className="border-t border-border hover:bg-surface-2/60">
             <td className="px-4 py-4"><span className={`inline-flex h-6 min-w-6 items-center justify-center rounded-md px-1 font-mono text-xs font-bold ${entry.rank <= 3 ? 'bg-accent/15 text-accent' : 'text-muted'}`}>{entry.rank}</span></td>
-            <td className="px-3 py-4"><IdentityCell entry={entry} /></td>
+            <td className="px-3 py-4"><IdentityCell entry={entry} />
+              {bearer && remarks.data ? <RemarkEditor key={bearer} remark={remarks.data[leaderboardIdentityKey(entry.identity)] ?? ''} save={async (value) => {
+                await remarks.mutate(async (current) => {
+                  const {data} = await setRemark(bearer, leaderboardRemarkTarget(entry.identity), value);
+                  return {...current, [leaderboardIdentityKey(entry.identity)]: data.remark ?? ''};
+                }, {revalidate: false});
+              }} /> : null}
+            </td>
             <td className="px-3 py-4"><div className="flex max-w-[200px] flex-wrap gap-1 text-xs text-muted">{entry.chains.length ? entry.chains.map((chain) => <span key={chain} className="rounded border border-border px-1.5 py-0.5">{chain === 'sol' ? 'Solana' : chainLabel(chain)}</span>) : entry.identity.type === 'smartx_user' ? '本站组合' : '—'}</div></td>
             <td className="px-3 py-4 text-right"><p className={`whitespace-nowrap font-mono font-semibold ${decimalSign(entry.total_profit_usd) === 1 ? 'text-up' : decimalSign(entry.total_profit_usd) === -1 ? 'text-down' : 'text-muted'}`}>{money(entry.total_profit_usd)}</p><p className="mt-1 text-[10px] text-muted">{basisName(entry.pnl_basis)}</p></td>
             <td className="px-4 py-4 text-right text-xs text-muted" title="参与该成绩的数据中最旧的观测时间">{timestamp(entry.snapshot_at)}</td>

@@ -2,6 +2,12 @@
 import {call} from './envelope';
 
 export type SocialTargetType = 'user' | 'smart_money';
+export type SmartMoneyIdentity =
+  | {type: 'user'; user_id: string}
+  | {type: 'wallet'; namespace: string; address: string};
+export type RemarkTarget =
+  | {target_type: 'user'; target_id: string}
+  | {target_type: 'smart_money'; identity: SmartMoneyIdentity};
 
 export type FollowMutationReply = {
   /** protojson 省略 false；读取时统一使用 !!following。 */
@@ -27,11 +33,12 @@ export type SmartMoneyRelation = {
 export type RelationsBatchReply = {
   users?: UserRelation[];
   smart_money?: SmartMoneyRelation[];
+  identities?: {identity: SmartMoneyIdentity; following?: boolean; remark?: string}[];
 };
 
 export function getRelations(
   bearer: string,
-  targets: {userIdentifiers: string[]; addresses: string[]},
+  targets: {userIdentifiers: string[]; addresses: string[]; identities?: SmartMoneyIdentity[]},
   signal?: AbortSignal,
 ) {
   return call<RelationsBatchReply>('/v1/social/relations/batch', {
@@ -41,7 +48,14 @@ export function getRelations(
     body: {
       ...(targets.userIdentifiers.length > 0 ? {user_identifiers: targets.userIdentifiers} : {}),
       ...(targets.addresses.length > 0 ? {addresses: targets.addresses} : {}),
+      ...(targets.identities?.length ? {identities: targets.identities} : {}),
     },
+  });
+}
+
+export function setRemark(bearer: string, target: RemarkTarget, remark: string) {
+  return call<{remark?: string; changed?: boolean}>('/v1/social/remarks', {
+    method: 'POST', bearer, body: {...target, remark},
   });
 }
 

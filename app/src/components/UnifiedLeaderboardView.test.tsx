@@ -4,6 +4,8 @@ import {afterEach, beforeEach, expect, it, vi} from 'vitest';
 import {cleanup, fireEvent, render, screen, waitFor} from '@testing-library/react';
 import {SWRConfig} from 'swr';
 const {board, sessionState, clearSiteMock} = vi.hoisted(() => ({board: vi.fn(), sessionState: {value: null as {jwt: string} | null}, clearSiteMock: vi.fn()}));
+const {relations, saveRemark} = vi.hoisted(() => ({relations: vi.fn(), saveRemark: vi.fn()}));
+vi.mock('@/api/social', () => ({getRelations: relations, setRemark: saveRemark}));
 vi.mock('@/api/leaderboard-new', async (original) => ({...await original<object>(), getUnifiedLeaderboardMeta: async () => ({windows: ['1d', '7d', 'all'], dimensions: ['ALL', 'SmartX', 'Global']}), getUnifiedLeaderboard: board}));
 vi.mock('@/session/storage', () => ({useSession: () => sessionState.value, readSite: () => sessionState.value, clearSite: clearSiteMock}));
 import {UnifiedLeaderboardView} from './UnifiedLeaderboardView';
@@ -12,7 +14,7 @@ import {ApiError} from '@/api/envelope';
 const row = {rank: 1, identity: {type: 'external_user', id: 'subject:1'}, profile: {display_name: 'Alice', username: 'alice', avatar_url: '', x_handle: 'alice_x'}, platforms: ['FOMO'], source_tags: [{code: 'FOMO', logo_url: 'https://static.smartx.io/app/branding/smsource/fomo.png'}], dimension: 'Global', pnl_basis: 'window_realized_plus_current_unrealized', total_profit_usd: '9007199254740993.12', snapshot_at: 1789536543, chains: ['sol', 'base'], identity_revision: 'v1'};
 const reply = {window: '7d', dimension: 'ALL', updated_at: 1789536583, count: 1, list: [row], stale: false};
 function mount() {render(<SWRConfig value={{provider: () => new Map(), dedupingInterval: 0}}><UnifiedLeaderboardView /></SWRConfig>);}
-beforeEach(() => {board.mockReset(); sessionState.value = null; clearSiteMock.mockReset();});
+beforeEach(() => {board.mockReset(); sessionState.value = null; clearSiteMock.mockReset(); relations.mockReset(); saveRemark.mockReset();});
 afterEach(cleanup);
 
 it('loads defaults, renders exact amounts and seconds, and changes new filters', async () => {
@@ -86,4 +88,50 @@ it('clears a stale session on 400000 so the board refetches anonymously', async 
   mount();
   await waitFor(() => expect(clearSiteMock).toHaveBeenCalled());
   expect(board).toHaveBeenCalledWith({window: '7d', dimension: 'ALL'}, 'stale');
+});
+
+it('loads, edits and clears a private external-user remark', async () => {
+  sessionState.value = {jwt: 'jwt'};
+  board.mockResolvedValue(reply);
+  relations.mockResolvedValue({data: {identities: [{remark: '聪明钱'}]}});
+  saveRemark.mockImplementation(async (_jwt, _target, remark) => ({data: {remark}}));
+  mount();
+  await screen.findByText('聪明钱');
+  fireEvent.click(screen.getByRole('button', {name: '编辑备注'}));
+  fireEvent.change(screen.getByRole('textbox', {name: '备注'}), {target: {value: '重点关注'}});
+  fireEvent.click(screen.getByRole('button', {name: '保存'}));
+  await screen.findByText('重点关注');
+  expect(saveRemark).toHaveBeenLastCalledWith('jwt', {target_type: 'smart_money', identity: {type: 'user', user_id: 'subject:1'}}, '重点关注');
+  expect(screen.getByRole('link', {name: 'Alice'})).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', {name: '编辑备注'}));
+  fireEvent.click(screen.getByRole('button', {name: '清除备注'}));
+  await screen.findByRole('button', {name: '添加备注'});
+  expect(saveRemark).toHaveBeenLastCalledWith('jwt', {target_type: 'smart_money', identity: {type: 'user', user_id: 'subject:1'}}, '');
+  expect(screen.queryByText('重点关注')).toBeNull();
+});
+
+it('validates Unicode length and keeps the draft after a failed save', async () => {
+  sessionState.value = {jwt: 'jwt'};
+  board.mockResolvedValue(reply);
+  relations.mockResolvedValue({data: {identities: [{remark: ''}]}});
+  saveRemark.mockRejectedValue(new ApiError('business', 430106, 'limit'));
+  mount();
+  fireEvent.click(await screen.findByRole('button', {name: '添加备注'}));
+  const input = screen.getByRole('textbox', {name: '备注'});
+  fireEvent.change(input, {target: {value: '😀'.repeat(65)}});
+  fireEvent.click(screen.getByRole('button', {name: '保存'}));
+  await screen.findByText('备注最多 64 个字符，不能包含换行或控制字符。');
+  expect(saveRemark).not.toHaveBeenCalled();
+  fireEvent.change(input, {target: {value: '😀'.repeat(64)}});
+  fireEvent.click(screen.getByRole('button', {name: '保存'}));
+  await screen.findByText('备注已达 1000 条上限，请先清理不用的备注。');
+  expect((input as HTMLInputElement).value).toBe('😀'.repeat(64));
+});
+
+it('does not fetch or expose private remarks anonymously', async () => {
+  board.mockResolvedValue(reply);
+  mount();
+  await screen.findByText('Alice');
+  expect(relations).not.toHaveBeenCalled();
+  expect(screen.queryByRole('button', {name: '添加备注'})).toBeNull();
 });
