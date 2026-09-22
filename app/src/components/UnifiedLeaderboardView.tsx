@@ -102,7 +102,7 @@ export function UnifiedLeaderboardView() {
 
   return <div className="space-y-5">
     <header className="flex flex-wrap items-end justify-between gap-4">
-      <div><h1 className="text-2xl font-semibold tracking-tight">统一榜单</h1><p className="mt-1 text-sm text-muted">汇集 SmartX 用户、FOMO / PUMP 用户与 GMGN 钱包，按美元盈亏排名。</p></div>
+      <div><h1 className="text-2xl font-semibold tracking-tight">leaderboard</h1><p className="mt-1 text-sm text-muted">汇集 SmartX 用户、FOMO / PUMP 用户与 GMGN 钱包，按美元盈亏排名。</p></div>
       <div className="flex flex-wrap items-center gap-3 text-xs text-muted">
         {board.data?.updated_at ? <span>构榜时间 {timestamp(board.data.updated_at)}</span> : null}
         <button type="button" disabled={board.isValidating || !window || !dimension} onClick={retry} className="rounded-md border border-border px-3 py-2 text-accent disabled:opacity-50">{board.isValidating ? '刷新中…' : '刷新'}</button>
@@ -110,7 +110,7 @@ export function UnifiedLeaderboardView() {
     </header>
     {meta.error ? <LoadError error={meta.error} retry={() => void meta.mutate()} /> : null}
     {meta.isLoading ? <p className="p-4 text-sm text-muted">正在加载筛选项…</p> : null}
-    {meta.data ? <section aria-label="统一榜单筛选" className="flex flex-wrap gap-5">
+    {meta.data ? <section aria-label="leaderboard filters" className="flex flex-wrap gap-5">
       <Filter label="范围" values={dimensions} active={dimension} display={dimensionName} select={(dimension) => setSelection((value) => ({...value, dimension}))} />
       <Filter label="时间窗" values={windows} active={window} display={windowName} select={(window) => setSelection((value) => ({...value, window}))} />
       {!windows.length || !dimensions.length ? <p className="text-sm text-muted">暂无可用筛选项。</p> : null}
@@ -120,7 +120,7 @@ export function UnifiedLeaderboardView() {
     {board.data ? <ViewerSummary reply={board.data} /> : null}
     {board.error ? <LoadError error={board.error} retry={retry} hasData={!!board.data} /> : null}
     <section className="overflow-hidden rounded-xl border border-border bg-surface">
-      {board.isLoading ? <p role="status" className="p-10 text-center text-sm text-muted">正在加载统一榜单…</p> : null}
+      {board.isLoading ? <p role="status" className="p-10 text-center text-sm text-muted">正在加载 leaderboard…</p> : null}
       {board.data && !board.data.list.length ? <p className="p-10 text-center text-sm text-muted">该筛选组合暂无符合条件的用户或钱包。</p> : null}
       {board.data && board.data.list.length > 0 ? <>
         <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm">

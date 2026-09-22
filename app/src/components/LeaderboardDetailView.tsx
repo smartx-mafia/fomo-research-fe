@@ -16,7 +16,7 @@ import {SmartMoneyProfile, SmartMoneyHoldingsTable, PlatformTradesTable} from '.
 import {SmartMoneyDetailHeader} from './SmartMoneyDetailHeader';
 import {SmartMoneyPnlSummary} from './SmartMoneyPnlSummary';
 
-const backHref = '/leaderboard#unified';
+const backHref = '/leaderboard#leaderboard';
 const chainName = (chain: string) => chain === 'all' ? '全部链' : chain === 'sol' ? 'Solana' : chainLabel(chain);
 const usd = (value?: string) => value === undefined || value === '' ? '—' : `${decimalSign(value) === -1 ? '-' : ''}$${formatDecimalExact(value, 2).replace(/^-/, '')}`;
 const time = (value: number) => value > 0 ? new Date(value * 1000).toLocaleString() : '—';
@@ -70,7 +70,7 @@ function ExternalUserDetail({target}: {target: Extract<LeaderboardDetailTarget, 
   const setTradesSize = trades.setSize;
   useEffect(() => { if (staleCursor) void setTradesSize(1); }, [staleCursor, setTradesSize]);
   return <div className="space-y-5">
-    <a href={backHref} className="text-sm text-muted hover:text-accent">← 返回统一榜单</a>
+    <a href={backHref} className="text-sm text-muted hover:text-accent">← 返回 leaderboard</a>
     <SmartMoneyDetailHeader query={{identity_type: 'user', user_id: target.id}} fallbackName={name} subtitle={<>{target.id} · 全链用户持仓与交易</>} actions={<button type="button" disabled={refreshing} onClick={refresh} className="text-sm text-accent disabled:opacity-50">{refreshing ? '刷新中…' : '刷新'}</button>} />
     {holdings.error ? <DetailError error={holdings.error} retry={() => void holdings.mutate()} /> : null}
     {holdings.isLoading ? <p role="status" className="p-8 text-center text-muted">正在加载用户持仓…</p> : null}
