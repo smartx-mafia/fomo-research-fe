@@ -2,20 +2,24 @@
 
 import { Suspense } from "react";
 import { SmartMoneyProfile } from "@/components/SmartMoneyProfile";
-import { useDetailRouteParams } from "@/hooks/useDetailRouteParams";
+import {SmartMoneyIdentityProfile} from '@/components/SmartMoneyIdentityProfile';
+import {useSmartMoneyIdentityRoute} from '@/hooks/useSmartMoneyIdentityRoute';
 
 /**
  * /smart-money 壳页：静态导出下 /smart-money/:chain/:address 没有构建产物，
- * 由 public/_redirects 重写到这里（开发环境由 next.config rewrites 对齐），
- * 浏览器地址保留原路径，参数由客户端解析（见 useDetailRouteParams）。
+ * 由 public/_redirects 重写到这里（开发环境由 next.config rewrites 对齐）；
+ * 老地址路径和新的 subject_id / namespace 查询路由都由客户端解析。
  */
 function SmartMoneyGate() {
-  const params = useDetailRouteParams("/smart-money");
-  if (params.status === "ready") {
-    return <SmartMoneyProfile chain={params.chain} address={params.address} />;
+  const route = useSmartMoneyIdentityRoute();
+  if (route.status === 'subject' || route.status === 'wallet') {
+    return <SmartMoneyIdentityProfile route={route} />;
   }
-  if (params.status === "invalid") {
-    return <p className="p-6 text-sm text-muted-foreground">缺少 chain / address 参数</p>;
+  if (route.status === 'legacy') {
+    return <SmartMoneyProfile chain={route.chain} address={route.address} />;
+  }
+  if (route.status === "invalid") {
+    return <p className="p-6 text-sm text-muted-foreground">聪明钱身份参数无效或不完整</p>;
   }
   return null;
 }
