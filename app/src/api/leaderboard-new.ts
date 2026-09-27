@@ -1,4 +1,5 @@
 import {call} from './envelope';
+import {assertProviderSnapshotMeta, type SourceMeta} from './smartmoney-source';
 import {isExternalSubjectId} from '@/lib/smartmoney-identity';
 
 export type UnifiedLeaderboardWindow = '1d' | '7d' | '30d' | 'all';
@@ -28,6 +29,7 @@ export type UnifiedLeaderboardReply = {
   stale: boolean;
   count: number;
   list: UnifiedLeaderboardEntry[];
+  meta: SourceMeta;
 };
 
 const windows = new Set<UnifiedLeaderboardWindow>(['1d', '7d', '30d', 'all']);
@@ -56,17 +58,20 @@ export async function getUnifiedLeaderboardMeta(signal?: AbortSignal): Promise<U
 
 export async function getUnifiedLeaderboard(window: UnifiedLeaderboardWindow, bearer?: string, signal?: AbortSignal): Promise<UnifiedLeaderboardReply> {
   const params = new URLSearchParams({window, dimension: 'Global'});
-  const response = await call<UnifiedLeaderboardReply>(`/v1/leaderboard-new?${params}`, {
+  const response = await call<{meta: SourceMeta; snapshot: Omit<UnifiedLeaderboardReply, 'meta'>}>(`/v2/smartmoney/leaderboard?${params}`, {
     signal,
     bearer,
     preserveInt64Fields: ['updated_at', 'snapshot_at'],
   });
-  const data = response.data;
+  assertProviderSnapshotMeta(response.data.meta);
+  if (response.data.meta.coverage !== 'ranked_selection') throw new Error('Unified Global leaderboard lacks ranked-selection coverage.');
+  const data = response.data.snapshot;
   if (data.window !== window || data.dimension !== 'Global' || !Array.isArray(data.list)) throw new Error('Unified Global leaderboard returned an invalid response.');
   const list = data.list.map((entry) => {
     validateIdentity(entry.identity);
+    if (entry.dimension !== 'Global') throw new Error('Unified Global leaderboard returned a row outside Global.');
     if (typeof entry.total_profit_usd !== 'string') throw new Error('Unified leaderboard returned a non-decimal PnL value.');
     return {...entry, profile: entry.profile ?? {}, platforms: entry.platforms ?? [], chains: entry.chains ?? [], source_tags: entry.source_tags ?? []};
   });
-  return {...data, list, count: data.count ?? list.length};
+  return {...data, meta: response.data.meta, list, count: data.count ?? list.length};
 }
