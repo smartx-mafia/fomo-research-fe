@@ -96,28 +96,24 @@ export function PortfolioPnlChart({pnl, loading, refreshing, stale, observedAt, 
     const timer = setInterval(() => setNowMs(Date.now()), 30_000);
     return () => clearInterval(timer);
   }, []);
-  const [mode, setMode] = useState<'pnl' | 'balance'>('pnl');
   const [period, setPeriod] = useState<PnlPeriod>('24H');
   const balanceWindow = period === '24H' ? balanceSummary?.d1 : period === '7D' ? balanceSummary?.d7 : period === '30D' ? balanceSummary?.d30 : balanceSummary?.all;
   const balance: PortfolioBalanceCurve | undefined = balanceWindow ? {points: balanceWindow.curve, now_usd: balanceWindow.amount_usd, as_of: observedAt ? new Date(Number(observedAt.seconds) * 1000).toISOString() : undefined, simulated: balanceWindow.simulated} : undefined;
-  const pnlSelection = pnlWindow(pnl, period);
-  const window: WindowPnl | undefined = mode === 'pnl' ? pnlSelection.window : balanceWindow ? {...balanceWindow, curve: balanceWindow.curve.map((p) => ({at: p.at, pnl_usd: p.balance_usd}))} : undefined;
-  const amount = mode === 'pnl' ? pnlSelection.amount : balanceWindow?.amount_usd;
+  const {window, amount} = pnlWindow(pnl, period);
 
   return <section aria-label="Portfolio PnL" className="min-w-0 rounded-lg border border-border bg-surface p-4 sm:p-5">
-    <div className="mb-3 flex gap-2" role="group" aria-label="Chart metric"><button type="button" aria-pressed={mode === 'pnl'} onClick={() => setMode('pnl')} className="rounded border border-border px-3 py-1 text-xs">PnL</button><button type="button" aria-pressed={mode === 'balance'} onClick={() => setMode('balance')} className="rounded border border-border px-3 py-1 text-xs">Total assets</button></div>
     <header className="flex flex-wrap items-center justify-between gap-3"><h2 className="font-semibold text-foreground">PnL performance</h2>
       <div className="flex items-center gap-3"><div role="group" aria-label="PnL period" className="flex rounded-lg bg-background p-1">{PNL_PERIODS.map((value) => <button key={value} type="button" aria-pressed={value === period} onClick={() => setPeriod(value)} className={`rounded-md px-3 py-1.5 text-xs font-medium ${value === period ? 'bg-accent/15 text-accent' : 'text-muted hover:text-foreground'}`}>{value}</button>)}</div>
         <button type="button" onClick={onRefresh} disabled={refreshing || loading} className="text-xs text-accent disabled:opacity-50">{refreshing ? 'Refreshing…' : 'Refresh PnL'}</button>
       </div>
     </header>
     <p className={`mt-4 font-mono text-2xl font-semibold ${decimalSign(amount) === -1 ? 'text-down' : decimalSign(amount) === 1 ? 'text-up' : 'text-foreground'}`} data-testid="pnl-total">{loading ? 'Loading…' : usd(amount)}</p>
-    <p className="mt-1 text-xs text-muted">{mode === 'balance' ? 'Absolute total assets · cash and positions' : period === 'All' ? 'Cumulative trading PnL · excludes cash' : `Trading PnL since ${formatPnlTime(window?.baseline_as_of)} · excludes cash`}</p>
+    <p className="mt-1 text-xs text-muted">{period === 'All' ? 'Cumulative trading PnL · excludes cash' : `Trading PnL since ${formatPnlTime(window?.baseline_as_of)} · excludes cash`}</p>
     {observedAt ? <p className="mt-1 text-xs text-muted">PnL snapshot: {formatPnlTime(new Date(Number(observedAt.seconds) * 1000).toISOString())}</p> : null}
     {window?.simulated ? <p className="mt-2 text-xs text-accent">Includes simulated data</p> : null}
     {stale ? <p role="status" className="mt-2 text-xs text-accent">Refresh failed. Showing the last available PnL snapshot.</p> : null}
     {loading ? <div role="status" className="flex min-h-64 items-center justify-center text-sm text-muted">Loading PnL history…</div> :
-      <PnlPlot metric={mode === 'balance' ? 'Total assets' : 'PnL'} key={`${mode}:${period}:${observedAt?.seconds ?? ''}:${observedAt?.nanos ?? 0}`} period={period} window={window} nowMs={nowMs} balance={balance} balanceLoading={loading} />}
+      <PnlPlot key={`${period}:${observedAt?.seconds ?? ''}:${observedAt?.nanos ?? 0}`} period={period} window={window} nowMs={nowMs} balance={balance} balanceLoading={loading} />}
     <p className="mt-3 text-[11px] text-muted">Oldest to newest, with NOW at the right. UTC+08:00. 24H = 24 hourly snapshots + NOW, 7D = 42 four-hour snapshots + NOW, 30D = 30 daily snapshots + NOW; All includes every daily sample. All points fit the chart; dense labels are spaced for readability. Missing values show —.</p>
   </section>;
 }

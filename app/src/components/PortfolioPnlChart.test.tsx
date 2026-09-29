@@ -15,19 +15,20 @@ const pnl: PortfolioPnl = {
 };
 const props = {pnl, loading: false, refreshing: false, stale: false, onRefresh: vi.fn()};
 describe('Portfolio PnL chart', () => {
-  it('shows balance history independently when current assets and PnL are unavailable', () => {
+  it('does not draw total assets when PnL is unavailable', () => {
     render(<PortfolioPnlChart {...props} pnl={undefined} balance={{d1: {curve: [{at: '2026-09-09T00:00:00Z', balance_usd: '123.45'}], simulated: false}}} />);
-    fireEvent.click(screen.getByRole('button', {name: 'Total assets'}));
-    expect(screen.getByRole('img')).toBeTruthy();
-    fireEvent.change(screen.getByRole('slider', {name: 'PnL sample'}), {target: {value: '22'}});
-    expect(screen.getByTestId('pnl-assets').textContent).toBe('$123.45');
+    expect(screen.queryByRole('button', {name: 'Total assets'})).toBeNull();
+    expect(screen.queryByRole('img')).toBeNull();
     expect(screen.getByTestId('pnl-total').textContent).toBe('—');
   });
   it('uses the overview balance windows without fetching a separate curve', () => {
     render(<PortfolioPnlChart {...props} balance={{d1: {curve: [{at: '2026-09-09T00:00:00Z', balance_usd: '123.45'}], amount_usd: '999', simulated: false}}} />);
     expect(screen.getByTestId('pnl-assets').textContent).toBe('$999');
+    expect(screen.getByTestId('pnl-sample').textContent).toBe('$5');
+    expect(screen.getAllByTestId('pnl-segment')).toHaveLength(1);
     fireEvent.change(screen.getByRole('slider', {name: 'PnL sample'}), {target: {value: '22'}});
     expect(screen.getByTestId('pnl-assets').textContent).toBe('$123.45');
+    expect(screen.getByTestId('pnl-sample').textContent).toBe('$-2');
     fireEvent.click(screen.getByRole('button', {name: '7D'}));
     expect(screen.getByTestId('pnl-assets').textContent).toBe('—');
     expect(balanceMock).not.toHaveBeenCalled();
