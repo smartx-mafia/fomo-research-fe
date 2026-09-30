@@ -232,16 +232,16 @@ function CheckPanel({
             </div>
           )}
           <div className="mt-3 flex gap-2">
-            <button
-              className={ghostBtn}
-              onClick={() => onUseAsDraft({locale, term, evidence: result.sample_opinion_ids.join(',')})}
-            >
-              {result.sample_opinion_ids.length > 0 ? '以这些观点为证据去加入 →' : '去加入 →'}
+            {/* 证据**不预填**：把命中的观点 id 一键全填成证据，排除之后作者数恒为 0 —— 等于一键绕过
+                作者闸（2026-09-30 端到端实测）。证据要由运营逐条确认是同一波刷屏后手填。 */}
+            <button className={ghostBtn} onClick={() => onUseAsDraft({locale, term, evidence: ''})}>
+              去加入 →
             </button>
           </div>
           {result.sample_opinion_ids.length > 0 && (
             <p className="mt-2 text-xs text-muted">
-              证据观点连同其作者不计入作者闸：只在确认它们是同一波刷屏时使用，泛用词不要这样绕过。
+              若逐条核实过上面的观点确是同一波刷屏，可把其中几条填进新增表单的「证据观点 id」：证据观点连同其作者不计入作者闸。
+              泛用词不要这样绕过 —— 全部填进去作者数就恒为 0。
             </p>
           )}
         </Card>
