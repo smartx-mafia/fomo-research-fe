@@ -78,12 +78,10 @@ import {
   Info,
   Copy,
   KV,
-  Log,
   Mono,
   Note,
   Popover,
   Tabs,
-  type Step,
 } from './ui';
 
 // 这个页面是 **Fast Swap v2（`/v2/swaps`）的浏览器端参考实现**（2026-09-17 起，v1 `/v1/meme/trades` 已删）：
@@ -224,13 +222,13 @@ export function App() {
   const [meOpen, setMeOpen] = useState(false);
 
 
-  const [log, setLog] = useState<Step[]>([]);
+  // 页面上的「过程」卡片已去掉（2026-09-30 机主定：主区占满整宽）。每一步仍写进浏览器控制台
+  // （带时刻，失败用 warn），排障时在 DevTools 里按 [harness] 过滤 —— 线索不丢，只是换了地方。
   const say = useCallback((text: string, bad = false) => {
-    setLog((l) => [...l, {at: new Date().toLocaleTimeString(), text, bad}]);
+    const line = `[harness] ${new Date().toLocaleTimeString()} ${text}`;
+    if (bad) console.warn(line);
+    else console.info(line);
   }, []);
-  // 日志会长到几百行（一个下午的联调）。清空是为了把**这一笔**摘出来 ——
-  // 报障时截一屏就够，不用请人从两百行里数出哪一段是刚才那次。
-  const clearLog = useCallback(() => setLog([]), []);
 
 
   // **只认 Privy 托管的 embedded 钱包。** 用户自己连上来的外部钱包
@@ -264,7 +262,7 @@ export function App() {
   // 字符正好是肉眼最不会去比对的部分。
   const [pane, setPane] = useState<'trade' | 'transfer'>('trade');
 
-  // 联调台：下单 / 观点 / 敏感词。三个台共用顶栏的环境开关、Privy 登录、持仓与「过程」日志 ——
+  // 联调台：下单 / 观点 / 敏感词。三个台共用顶栏的环境开关、Privy 登录、持仓与日志（浏览器控制台 [harness]）——
   // 验「后台加词 → 发帖被拦 → 下线 → 放行」要的正是同一个账号、同一个环境、同一条日志。
   // 记在 localStorage：刷新（含切环境的整页刷新）后回到原来那个台。
   const [desk, setDeskState] = useState<Desk>(readDesk);
@@ -1238,22 +1236,6 @@ export function App() {
     </div>
   );
 
-  // 两个联调台共用同一份日志，切来切去不会把线索弄丢。
-  const logCard = (
-    <Card
-      title="过程"
-      right={
-        <>
-          <span className="hint tight">{log.length} 行</span>
-          <Btn size="sm" variant="ghost" disabled={log.length === 0} onClick={clearLog}>
-            清空
-          </Btn>
-        </>
-      }
-    >
-      <Log items={log} />
-    </Card>
-  );
 
   const probesOk = probes ? probes.envelope.ok && probes.route.ok : null;
 
@@ -1396,7 +1378,7 @@ export function App() {
 
           {/* 后端自检从前是第 0 张卡片，中间当过一枚开抽屉的芯片 —— 两者都太重。
               它是**一个按钮**：点一下就跑，跑完自己变成结论。两个探针的原文由
-              doSelfCheck 打进「过程」日志（那一栏一直在屏幕上），失败时另有一块
+              doSelfCheck 写进浏览器控制台（[harness]），失败时另有一块
               标注顶到工作栏最上面，所以这里不需要第二个落点。
               和登出并排：这一格是"动作"，左边那些芯片是"状态"。 */}
           <Btn
@@ -1406,7 +1388,7 @@ export function App() {
             disabled={probing}
             title={
               probes
-                ? `探针1 匿名 GET /v1/user/info：${probes.envelope.text}\n探针2 POST /v1/auth/login 是否存在：${probes.route.text}\n（详情见「过程」日志）`
+                ? `探针1 匿名 GET /v1/user/info：${probes.envelope.text}\n探针2 POST /v1/auth/login 是否存在：${probes.route.text}\n（详情见浏览器控制台 [harness]）`
                 : '两个探针都期望"失败" —— 后端按契约拒绝，拒绝本身证明代理通、信封层活着'
             }
             onClick={() => void doSelfCheck()}
@@ -1543,7 +1525,7 @@ export function App() {
                 </p>
                 <p className="hint tight">
                   邮箱那条走的是 headless 的 <code className="code">useLoginWithEmail</code>，
-                  没有 Privy 的 modal —— 每一步都进得了「过程」日志，而这个 harness 存在的
+                  没有 Privy 的 modal —— 每一步都写进浏览器控制台（[harness]），而这个 harness 存在的
                   意义就是把每一步摊开。
                 </p>
               </Info>
@@ -1793,8 +1775,13 @@ export function App() {
             把真正的改动淹掉 —— 而「能与归档仓库逐文件对照」正是原样搬的全部
             价值。要看真实差异请用 `diff -w`。 */}
           <div className="cols">
-            {/* ============ 左：做事的 ============ */}
+            {/* ============ 主区（占满整宽；右侧「过程」栏 2026-09-30 去掉） ============ */}
             <div>
+              {/* 最近一次业务失败的展开面板：六位码的含义、该重试还是该重新发起、trace_id 与我们
+                  发出的 x-request-id 一不一致。从前在右栏顶上，右栏去掉后摆到主区最上面 ——
+                  出了事它就是要先读的。 */}
+              {lastErr && <ErrorPanel err={lastErr} linkedTypes={linkedTypes} />}
+
               {/* 自检没过时，两条探针的原文顶到最上面。**只在没过时出现** ——
                   通过的自检没有任何后续动作，那句"两个探针都通过"占着版面只是
                   在复述顶栏那个按钮已经说完的话。当前后端由 BUSINESS_ORIGIN
@@ -2119,15 +2106,6 @@ export function App() {
               </div>
             </div>
 
-            {/* ============ 右：看结果的 ============ */}
-            <div className="rail">
-              {/* 最近一次业务失败的展开面板。**日志那一行放不下排障要的东西** ——
-                  六位码的含义、该重试还是该重新发起、trace_id 与我们发出的
-                  x-request-id 一不一致。摆在这一栏最上面：出了事它就是要先读的。 */}
-              {lastErr && <ErrorPanel err={lastErr} linkedTypes={linkedTypes} />}
-
-              {logCard}
-            </div>
           </div>
       </main>
     </>
