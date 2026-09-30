@@ -9,7 +9,7 @@
  */
 import {useCallback, useEffect, useState, type CSSProperties} from 'react';
 
-import {configureAdmin, describeError, getToken, login, setToken} from '@/api/admin-moderation';
+import {changePassword, configureAdmin, describeError, getToken, isPasswordChangeRequired, login, setToken} from '@/api/admin-moderation';
 import {ApiError} from '@/api/envelope';
 import {ModerationPanels} from '@/features/moderation/ModerationConsole';
 
@@ -32,6 +32,10 @@ export function ModerationDesk({
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
   const [notice, setNotice] = useState('');
+  // 首次登录 / 口令被重置：会话已签发，但改口令之前服务端只放行改口令本身（其余 400704）。
+  const [mustChange, setMustChange] = useState(false);
+  const [newPw, setNewPw] = useState('');
+  const [newPw2, setNewPw2] = useState('');
 
   useEffect(() => setAuthed(Boolean(getToken())), []);
 
@@ -39,6 +43,10 @@ export function ModerationDesk({
     (e: unknown) => {
       // 会话失效：客户端已清 token，这里切回登录。
       if (e instanceof ApiError && e.code === 400700) setAuthed(false);
+      if (isPasswordChangeRequired(e)) {
+        setAuthed(false);
+        setMustChange(true);
+      }
       const text = describeError(e);
       setErr(text);
       setNotice('');
@@ -59,10 +67,49 @@ export function ModerationDesk({
     setBusy(true);
     setErr('');
     try {
-      await login(username, password);
+      const r = await login(username, password);
+      if (r.mustChangePassword) {
+        // 口令先留在内存里当「当前口令」，改完即清。
+        setMustChange(true);
+        say(`敏感词台：已登录（${CURRENT_ENV.label}），首次登录须先改口令`);
+        return;
+      }
       setPassword('');
       setAuthed(true);
       say(`敏感词台：已登录管理后台（${CURRENT_ENV.label}）`);
+    } catch (e) {
+      onError(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // 与服务端 session.ValidatePassword 同一口径：≥ 12 位、同时含字母与数字、≤ 72 字节。
+  const pwProblem =
+    newPw.length < 12
+      ? '至少 12 位'
+      : !/[A-Za-z]/.test(newPw) || !/[0-9]/.test(newPw)
+        ? '要同时含字母与数字'
+        : new TextEncoder().encode(newPw).length > 72
+          ? '不超过 72 字节'
+          : newPw === password
+            ? '不能与当前口令相同'
+            : newPw !== newPw2
+              ? '两次输入不一致'
+              : '';
+
+  const doChange = async () => {
+    setBusy(true);
+    setErr('');
+    try {
+      await changePassword(password, newPw);
+      setPassword('');
+      setNewPw('');
+      setNewPw2('');
+      setMustChange(false);
+      setAuthed(true);
+      setNotice('口令已修改，已进入管理后台');
+      say(`敏感词台：口令已修改（${CURRENT_ENV.label}）`);
     } catch (e) {
       onError(e);
     } finally {
@@ -95,7 +142,44 @@ export function ModerationDesk({
       {err && <Note tone="err">{err}</Note>}
       {notice && <Note tone="ok">{notice}</Note>}
 
-      {!authed ? (
+      {!authed && mustChange ? (
+        <>
+          <Note tone="warn">
+            这个账号<b>首次登录</b>（或口令被他人重置）：服务端要求先改口令，改之前除了改口令什么都会回{' '}
+            <code className="code">400704 password change required</code>。
+          </Note>
+          <div className="form">
+            <div className="f">
+              <label htmlFor="mod-old">当前口令<span className="u">刚才登录用的那个</span></label>
+              <input id="mod-old" className="inp" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            </div>
+            <div className="f">
+              <label htmlFor="mod-new">新口令<span className="u">≥ 12 位，同时含字母与数字</span></label>
+              <input id="mod-new" className="inp" type="password" autoComplete="new-password" value={newPw} onChange={(e) => setNewPw(e.target.value)} />
+            </div>
+            <div className="f">
+              <label htmlFor="mod-new2">再输一次新口令</label>
+              <div className="with">
+                <input
+                  id="mod-new2"
+                  className="inp"
+                  type="password"
+                  autoComplete="new-password"
+                  value={newPw2}
+                  onChange={(e) => setNewPw2(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && password && !pwProblem) void doChange();
+                  }}
+                />
+                <Btn size="sm" variant="primary" busy={busy} disabled={busy || !password || Boolean(pwProblem)} onClick={() => void doChange()}>
+                  改口令并进入
+                </Btn>
+              </div>
+            </div>
+          </div>
+          {newPw && pwProblem && <p className="hint tight">新口令：{pwProblem}</p>}
+        </>
+      ) : !authed ? (
         <>
           <Note tone="info">
             管理后台是<b>另一套身份</b>（管理员账号，不是顶栏那次 Privy 登录）。当前环境「{CURRENT_ENV.label}」，请求走{' '}
