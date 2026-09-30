@@ -44,6 +44,8 @@ import {runSelfCheck, type SelfCheckResult} from './selfcheck';
 import {clearToken, loadToken, saveToken} from './tokencache';
 import {signerStatusLabel, useWalletSigners, type SignerStatus} from './signers';
 import {SwapPanel, type SellPrefill} from './fastswap/SwapPanel';
+import {OpinionDesk} from './OpinionDesk';
+import {ModerationDesk} from './ModerationDesk';
 import {caipOf, chainOfID} from './chains';
 import {codeInfo} from './codes';
 import {readiness} from './identity';
@@ -106,6 +108,24 @@ import {
 // 一个（见 App 里那个 effect）。所以既没有陈旧的 token，也不需要一个徽章去
 // 解释它。这段注释留着是为了说明**为什么少了那个显示**，不是为了纪念。
 
+
+type Desk = 'trade' | 'opinion' | 'moderation';
+const DESKS: readonly {k: Desk; label: string}[] = [
+  {k: 'trade', label: '下单'},
+  {k: 'opinion', label: '观点'},
+  {k: 'moderation', label: '敏感词'},
+];
+const DESK_KEY = 'harness.desk';
+
+function readDesk(): Desk {
+  try {
+    const v = localStorage.getItem(DESK_KEY);
+    if (v === 'trade' || v === 'opinion' || v === 'moderation') return v;
+  } catch {
+    /* 读不到 = 默认下单台 */
+  }
+  return 'trade';
+}
 
 export function App() {
   const {ready, authenticated, user, logout, getAccessToken} = usePrivy();
@@ -243,6 +263,28 @@ export function App() {
   // 全文显示（不截断）—— 截断显示是转错地址最常见的来路：中间那几十个
   // 字符正好是肉眼最不会去比对的部分。
   const [pane, setPane] = useState<'trade' | 'transfer'>('trade');
+
+  // 联调台：下单 / 观点 / 敏感词。三个台共用顶栏的环境开关、Privy 登录、持仓与「过程」日志 ——
+  // 验「后台加词 → 发帖被拦 → 下线 → 放行」要的正是同一个账号、同一个环境、同一条日志。
+  // 记在 localStorage：刷新（含切环境的整页刷新）后回到原来那个台。
+  const [desk, setDeskState] = useState<Desk>(readDesk);
+  const setDesk = useCallback((d: Desk) => {
+    setDeskState(d);
+    try {
+      localStorage.setItem(DESK_KEY, d);
+    } catch {
+      /* 无痕窗口：只是记不住，不影响切换 */
+    }
+  }, []);
+  // 「观点」台被拦 / 只试判 → 带到「敏感词」台的正文。nonce 让同一段正文再点一次也生效。
+  const [modPrefill, setModPrefill] = useState<{text: string; nonce: number} | null>(null);
+  const checkInModeration = useCallback(
+    (text: string) => {
+      setModPrefill({text, nonce: Date.now()});
+      setDesk('moderation');
+    },
+    [setDesk],
+  );
   // 持仓「填充卖出数据」交给 Swap 卡的那一份。nonce 让同一行点第二次也生效。
   const [sellPrefill, setSellPrefill] = useState<SellPrefill | null>(null);
   const [xDest, setXDest] = useState('AR3DWmCyV17KRqbaKtEMKwgi1hQWFmNSUDTojMhuEafc');
@@ -1263,8 +1305,12 @@ export function App() {
           </div>
         </span>
 
-        {/* 这里从前是「签名实跑 / X 绑定」两档的联调台切换。X 绑定台不迁移
-            （migration-spec §5.7），只剩一档的分段控件是纯噪音，整块删掉。 */}
+        {/* 联调台切换（2026-09-30 恢复：从前的「签名实跑 / X 绑定」两档删掉之后只剩一档，
+            现在是下单 / 观点 / 敏感词三档）。摆在环境开关旁边：两者都是「这一屏在做哪件事」。 */}
+        <span className="envsw">
+          <span className="k">联调台</span>
+          <Tabs value={desk} onChange={setDesk} label="联调台" items={DESKS} />
+        </span>
 
         <span className="chips push">
           {/* 存着的那一档没生效时，**必须说出来**。静默退回默认档的表现是
@@ -1783,6 +1829,25 @@ export function App() {
 
               {/* 这条不折叠、不收进抽屉 —— 它是这个页面唯一一句
                   "读晚了就来不及"的话。 */}
+              {/* ---------------- 观点 / 敏感词台 ---------------- */}
+              {/* 用 hidden 不用条件渲染：切走再切回来，写了一半的正文、登录过的后台会话都还在。 */}
+              <div hidden={desk !== 'opinion'}>
+                <OpinionDesk
+                  token={token}
+                  positions={positions}
+                  busy={busy}
+                  guard={guard}
+                  say={say}
+                  onFetchPositions={() => void doPositions()}
+                  onCheckText={checkInModeration}
+                />
+              </div>
+              <div hidden={desk !== 'moderation'}>
+                <ModerationDesk prefill={modPrefill} say={say} />
+              </div>
+
+              {/* ---------------- 下单台（原有内容） ---------------- */}
+              <div hidden={desk !== 'trade'}>
               <div className="alert" role="note">
                 <IconWarn size={16} />
                 <div>
@@ -2051,6 +2116,7 @@ export function App() {
                   </p>
                 </Info>
               </Card>
+              </div>
             </div>
 
             {/* ============ 右：看结果的 ============ */}

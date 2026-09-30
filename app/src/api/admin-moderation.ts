@@ -11,8 +11,21 @@
  */
 import {ApiError} from '@/api/envelope';
 
-const PREFIX = '/admin/api/v1';
+const ADMIN_PATH = '/admin/api/v1';
 const TOKEN_KEY = 'smartx.admin.token';
+
+// 环境：前缀（'' 本机 / '/test-env' 测试服）与会话键。harness 的顶栏环境开关在挂载时调用
+// configureAdmin；`/dev/moderation` 不调，保持本机默认（会话键也与旧版相同）。
+//
+// **会话按环境分开存**：两个环境是两套 sx_admin、两套管理员账号。共用一个键的话，切到测试服
+// 会拿本机 token 去请求 → 400700「会话失效」，顺手把本机那份也清掉。
+let prefix = '';
+let tokenKey = TOKEN_KEY;
+
+export function configureAdmin(env: {prefix: string; sessionKey: string}): void {
+  prefix = env.prefix;
+  tokenKey = env.sessionKey === 'local' ? TOKEN_KEY : `${TOKEN_KEY}.${env.sessionKey}`;
+}
 
 /** 会话失效：过期、登出、改口令、被停用都会触发。 */
 export const SESSION_INVALID = 400700;
@@ -64,6 +77,22 @@ export type Preview = {
   insufficient_sample: boolean;
 };
 
+/** 正文试判（契约 admin.md §10.1 `POST /moderation/check`）。 */
+export type TextCheck = {
+  blocked: boolean;
+  rule_id: string;
+  stage: string; // exact | gap；放行为空
+  rule_source: string; // embedded | dynamic；放行为空
+  rule_set_version: string;
+  normalized_text: string;
+  matched_text: string;
+  rule_locale: string;
+  rule_match_type: string;
+  rule_term: string;
+  allow_suppressed: number;
+  cloud_evaluated: boolean;
+};
+
 export type AddResult = {changed: boolean; message: string; rule_id: string; insufficient_sample: boolean};
 export type ActionReply = {changed: boolean; message: string};
 
@@ -91,12 +120,12 @@ function storage(): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> {
 
 /** 会话只放 sessionStorage：关掉标签页就没了 —— 这枚 token 能改全站审查词库。 */
 export function getToken(): string {
-  return storage().getItem(TOKEN_KEY) ?? '';
+  return storage().getItem(tokenKey) ?? '';
 }
 
 export function setToken(token: string): void {
-  if (token) storage().setItem(TOKEN_KEY, token);
-  else storage().removeItem(TOKEN_KEY);
+  if (token) storage().setItem(tokenKey, token);
+  else storage().removeItem(tokenKey);
 }
 
 type Envelope<T> = {
@@ -122,7 +151,7 @@ export async function adminCall<T>(
   if (init.body !== undefined) headers['Content-Type'] = 'application/json';
   let res: Response;
   try {
-    res = await fetcher(PREFIX + path, {
+    res = await fetcher(prefix + ADMIN_PATH + path, {
       method: init.method ?? 'GET',
       headers,
       body: init.body === undefined ? undefined : JSON.stringify(init.body),
@@ -178,6 +207,10 @@ export const addRule = (
 export const retireRule = (ruleID: string, reason: string, f?: Fetcher) =>
   adminCall<ActionReply>(`/moderation/rules/${encodeURIComponent(ruleID)}/retire`, {method: 'POST', body: {reason}}, f);
 
+/** 正文原样发给后端：规整只在后端一处做，前端再规整一遍会让试判与发帖对同一段文字给出不同结论。 */
+export const checkText = (text: string, f?: Fetcher) =>
+  adminCall<TextCheck>('/moderation/check', {method: 'POST', body: {text}}, f);
+
 // ---- 拒绝原因 → 给运营的话（契约 admin.md §10.2 的「建议运营动作」列）----
 
 /**
@@ -219,6 +252,11 @@ export function describeError(e: unknown): string {
   if (e.kind === 'transport') return `请求没到后台信封层（HTTP ${e.code}）。${e.rawBody ?? ''}`.trim();
   const reason = typeof e.metadata?.reason === 'string' ? e.metadata.reason : '';
   let text = (reason && REASON_TEXT[reason]) || '';
+  // 正文试判的空 / 超长与词条同名（too_long），按字段分开说：套用词条那句「最多 64 字」是错的。
+  if (e.metadata?.field === 'text') {
+    if (reason === 'empty') text = '正文为空（去掉空白与零宽字符后什么都不剩）';
+    if (reason === 'too_long') text = '正文超长：发帖上限是加权 280（中文、日文假名、韩文按 2 计）';
+  }
   if (reason === 'moderation_write_quota' && e.metadata?.retry_after_ms) {
     text += `，约 ${Math.ceil(Number(e.metadata.retry_after_ms) / 60000)} 分钟后可再提交`;
   }

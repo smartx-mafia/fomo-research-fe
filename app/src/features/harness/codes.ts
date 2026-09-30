@@ -19,6 +19,22 @@ export type CodeInfo = {
 };
 
 export const CODES: Record<number, CodeInfo> = {
+  // ── 社交域：观点（「观点」台会撞到的）────────────────────────────────
+  600100: {
+    text: '观点没通过发布审查（本地词库或云二审拦下）',
+    advice: '看 metadata.rule_id：dyn-* 是运营动态规则（「敏感词」台可下线），其余是内嵌词库（随发版）。改正文后换新幂等键重提 —— 同键重试回放的是首次结论。',
+    retryable: false,
+  },
+  200100: {text: '这个仓位上还没有观点', advice: '正常状态：直接发一条新观点。', retryable: false},
+  200103: {
+    text: '仓位不存在或不属于你',
+    advice: '外部转入的仓位（opened_entry_id=0）与周期未就绪的仓位不能写观点；先「拉取」持仓确认。',
+    retryable: false,
+  },
+  100100: {text: '正文为空或超长（加权 280，中日韩按 2 计）', advice: '改正文后重提。', retryable: false},
+  420100: {text: '幂等键已被另一段内容用过', advice: '页面每次提交都会换新键；仍出现说明重放了旧请求。', retryable: false},
+  420101: {text: '观点已被改过（base_version_id 过期）', advice: '点「读取」拿最新版本再改。', retryable: false},
+  430103: {text: '这个仓位上已经有观点了', advice: '点「读取」切到编辑那一条。', retryable: false},
   // ── 用户域 ────────────────────────────────────────────────────────
   100107: {
     text: '登录方式不支持，或与 Privy 上真实的绑定不一致',

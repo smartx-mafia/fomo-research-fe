@@ -105,6 +105,16 @@ const RULES: readonly ProxyRule[] = [
     stripOrigin: true,
   },
   {
+    // **测试环境管理后台**（下单页「敏感词」台切到测试环境后用）。前缀由 admin-moderation.ts 的
+    // configureAdmin 加。默认指 sm-admin-test-api（后端仓 deploy/nginx/smartx-admin-api.conf），
+    // 要改就配 TEST_ADMIN_ORIGIN。摘 Origin 的理由同下一条。
+    name: "test-env admin",
+    prefix: ["test-env", "admin", "api", "v1"],
+    origin: () => process.env.TEST_ADMIN_ORIGIN || "https://sm-admin-test-api.smartx.io",
+    rewrite: (slug) => "/" + slug.slice(1).join("/"),
+    stripOrigin: true,
+  },
+  {
     // **管理后台 sx_admin**（`/dev/moderation` 内容审查控制台用）。端口取自后端仓
     // configs/admin.example.yaml 的 admin.public.addr。必须摘 Origin：sx_admin 的
     // `allowed_origins` 零值同样是「拒绝一切带 Origin 的请求」，回裸 403，看起来像没登录。

@@ -17,6 +17,8 @@ type Envelope<T> = {
   data?: T;
   /** 失败时才有，是错误原因的枚举名，如 `BIZ_IDENTITY_TOKEN_INVALID`。 */
   error?: string;
+  /** 业务失败的领域细节（如审查拦截的 rule_id）。 */
+  metadata?: Record<string, unknown>;
   trace_id?: string;
 };
 
@@ -54,6 +56,11 @@ export class ApiError extends Error {
   readonly sentRequestID?: string;
   /** transport 类保留响应体前若干字符，用来一眼认出 HTML 错误页。 */
   readonly rawBody?: string;
+  /**
+   * 信封的 metadata（只有业务失败才有）。审查拦截（600100）的 `rule_id` 只在这里 ——
+   * 丢掉它，「被哪条规则拦了」就无从得知，只剩一句 opinion blocked。
+   */
+  readonly metadata?: Record<string, unknown>;
 
   constructor(
     kind: FailureKind,
@@ -64,6 +71,7 @@ export class ApiError extends Error {
       reason?: string;
       sentRequestID?: string;
       rawBody?: string;
+      metadata?: Record<string, unknown>;
     } = {},
   ) {
     super(`${code} ${msg}${extra.traceID ? ` (trace_id=${extra.traceID})` : ''}`);
@@ -74,6 +82,7 @@ export class ApiError extends Error {
     this.reason = extra.reason;
     this.sentRequestID = extra.sentRequestID;
     this.rawBody = extra.rawBody;
+    this.metadata = extra.metadata;
   }
 }
 
@@ -175,6 +184,7 @@ async function call<T>(token: string | null, path: string, init?: RequestInit): 
         traceID: env.trace_id,
         reason: env.error,
         sentRequestID,
+        metadata: env.metadata,
       });
     }
     if (env.data === undefined) {

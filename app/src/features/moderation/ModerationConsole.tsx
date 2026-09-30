@@ -7,8 +7,11 @@
  * （noblack 是 AGPL-3.0，只借鉴布局与交互，不搬代码）。与 noblack 的语义差别，都是后端的硬约束：
  * - **没有「改」**：事件表只追加。改错了 = 下线那条再加一条（新 ID）；
  * - **没有「删」只有「下线」**：下线只让规则失效，历史拦截的归因照样能复原；
- * - **检测页是「词条试算」而不是「整段文本检测」**：后端只提供「这个词加进去会怎样」的试算，
- *   结论与提交时同一套校验（语料、作者闸、重复、上限）。
+ * - **两种「检测」**：「正文试判」答一段正文此刻发帖会不会被拦、命中哪条、为什么（与发帖同一份
+ *   快照，只读、不计指标、不调云二审）；「词条试算」答一个词加进去会怎样（与提交同一套校验）。
+ *
+ * `ModerationPanels`（页签 + 四个面板）单独导出：`/dev/moderation` 与下单页「敏感词」台共用这一份，
+ * 登录与环境由各自的外壳管。
  *
  * 接口：后端仓 docs/contracts/admin.md §10。所有失败走 describeError（拒绝原因 → 建议动作）。
  */
@@ -17,6 +20,7 @@ import {
   LOCALES,
   REASON_TEXT,
   addRule,
+  checkText,
   describeError,
   getStatus,
   getToken,
@@ -29,20 +33,18 @@ import {
   type ModerationStatus,
   type Preview,
   type RuleList,
+  type TextCheck,
 } from '@/api/admin-moderation';
 import {ApiError} from '@/api/envelope';
 
-type Tab = 'check' | 'words' | 'stats';
+type Tab = 'text' | 'check' | 'words' | 'stats';
 type Toast = {kind: 'ok' | 'err'; text: string} | null;
 
 const PAGE_SIZE = 50;
 
 export default function ModerationConsole() {
   const [authed, setAuthed] = useState(false);
-  const [tab, setTab] = useState<Tab>('check');
   const [toast, setToast] = useState<Toast>(null);
-  // 试算页「用这些样本作为证据加入」→ 预填词库页的新增表单。
-  const [draft, setDraft] = useState<{locale: string; term: string; evidence: string} | null>(null);
 
   useEffect(() => setAuthed(Boolean(getToken())), []);
   useEffect(() => {
@@ -74,9 +76,38 @@ export default function ModerationConsole() {
           退出
         </button>
       </div>
+      <ModerationPanels onError={fail} onOk={ok} />
+      <ToastView toast={toast} />
+    </div>
+  );
+}
+
+/**
+ * 页签 + 四个面板（不含登录与页面外壳）。`prefill` 每换一次 nonce 就切到「正文试判」并填进正文
+ * —— 下单页「观点」台被拦时一键带过来复现。
+ */
+export function ModerationPanels({
+  onError,
+  onOk,
+  prefill,
+}: {
+  onError: (e: unknown) => void;
+  onOk: (text: string) => void;
+  prefill?: {text: string; nonce: number} | null;
+}) {
+  const [tab, setTab] = useState<Tab>('text');
+  // 试算页「去加入」→ 预填词库页的新增表单。
+  const [draft, setDraft] = useState<{locale: string; term: string; evidence: string} | null>(null);
+  useEffect(() => {
+    if (prefill) setTab('text');
+  }, [prefill]);
+
+  return (
+    <>
       <div className="mb-4 flex gap-1 border-b border-border">
         {(
           [
+            ['text', '🧪 正文试判'],
             ['check', '🔍 词条试算'],
             ['words', '📚 词库管理'],
             ['stats', '📊 统计'],
@@ -84,6 +115,7 @@ export default function ModerationConsole() {
         ).map(([key, label]) => (
           <button
             key={key}
+            type="button"
             onClick={() => setTab(key)}
             className={`-mb-px border-b-2 px-4 py-2 ${tab === key ? 'border-accent text-foreground' : 'border-transparent text-muted hover:text-foreground'}`}
           >
@@ -91,19 +123,124 @@ export default function ModerationConsole() {
           </button>
         ))}
       </div>
+      {/* 正文试判用 hidden 而不是卸载：切去词库页加完词再切回来，正文还在，直接再判一次。 */}
+      <div hidden={tab !== 'text'}>
+        <TextCheckPanel onError={onError} prefill={prefill} />
+      </div>
       {tab === 'check' && (
         <CheckPanel
-          onError={fail}
+          onError={onError}
           onUseAsDraft={(d) => {
             setDraft(d);
             setTab('words');
           }}
         />
       )}
-      {tab === 'words' && <WordsPanel draft={draft} onError={fail} onOk={ok} />}
-      {tab === 'stats' && <StatsPanel onError={fail} />}
-      <ToastView toast={toast} />
+      {tab === 'words' && <WordsPanel draft={draft} onError={onError} onOk={onOk} />}
+      {tab === 'stats' && <StatsPanel onError={onError} />}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+const STAGE_TEXT: Record<string, string> = {exact: '原样命中（exact）', gap: '字间插了一个符号（gap）'};
+const SOURCE_TEXT: Record<string, string> = {embedded: '内嵌词库（随发版）', dynamic: '运营动态规则'};
+
+function TextCheckPanel({onError, prefill}: {onError: (e: unknown) => void; prefill?: {text: string; nonce: number} | null}) {
+  const [text, setText] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState<TextCheck | null>(null);
+
+  const run = useCallback(
+    async (body: string) => {
+      setBusy(true);
+      setResult(null);
+      try {
+        setResult(await checkText(body));
+      } catch (err) {
+        onError(err);
+      } finally {
+        setBusy(false);
+      }
+    },
+    [onError],
+  );
+
+  // 从「观点」台带过来的正文：填进去并立刻判一次（那一刻的问题就是「为什么被拦」）。
+  useEffect(() => {
+    if (!prefill) return;
+    setText(prefill.text);
+    void run(prefill.text);
+  }, [prefill, run]);
+
+  return (
+    <div className="flex flex-col gap-4">
+      <Card title="正文试判">
+        <p className="mb-3 text-xs text-muted">
+          贴一段正文，看它<b>此刻发帖</b>会不会被本地词库拦下、命中哪条规则、为什么。与发帖同一道正文规整、同一份规则快照（应答的那个副本）；只读，不写表、不计拦截统计、不调云二审。
+        </p>
+        <form
+          onSubmit={(e: FormEvent) => {
+            e.preventDefault();
+            void run(text);
+          }}
+          className="flex flex-col gap-3"
+        >
+          <textarea
+            className={`${inputCls} min-h-28`}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder="要判的正文，原样粘贴（不用自己去空格、转半角）"
+          />
+          <div>
+            <button className={primaryBtn} disabled={busy || !text.trim()}>
+              {busy ? '试判中…' : '试判'}
+            </button>
+          </div>
+        </form>
+      </Card>
+      {result && (
+        <Card title={result.blocked ? '⛔ 发帖会被拦' : '✅ 发帖会放行（本地词库）'}>
+          {result.blocked && (
+            <div className="mb-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+              <StatBox label="命中规则" value={result.rule_id} />
+              <StatBox label="规则来源" value={SOURCE_TEXT[result.rule_source] ?? result.rule_source} />
+              <StatBox label="命中方式" value={STAGE_TEXT[result.stage] ?? result.stage} />
+              <StatBox
+                label="规则词条"
+                value={result.rule_term}
+                hint={`${result.rule_locale} · ${result.rule_match_type === 'word' ? '整词' : '包含'}`}
+              />
+            </div>
+          )}
+          <div className="mb-2 text-xs text-muted">规整后的正文（审查实际扫描的就是它）：</div>
+          <p className="mb-3 whitespace-pre-wrap break-all rounded bg-surface-2 p-3 font-mono text-xs">
+            <Highlighted text={result.normalized_text} mark={result.blocked ? result.matched_text : ''} />
+          </p>
+          <ul className="list-disc pl-5 text-xs text-muted">
+            <li>词库版本 {result.rule_set_version}（多副本时刚加 / 刚下线的规则最迟 30 秒追平）</li>
+            {result.allow_suppressed > 0 && <li>有 {result.allow_suppressed} 个候选命中被内嵌白名单豁免（例如「시발점」里的「시발」）</li>}
+            {result.rule_source === 'dynamic' && <li>这是运营加的规则：误杀可在「📚 词库管理」按 {result.rule_id} 下线</li>}
+            {result.rule_source === 'embedded' && <li>内嵌规则后台不能下线；误杀请提给研发，随发版修</li>}
+            <li>未经云二审：放行只代表本地词库不拦</li>
+          </ul>
+        </Card>
+      )}
     </div>
+  );
+}
+
+/** 把命中片段在规整后的正文里标出来（只标第一次出现 —— 引擎归因的也只是一处）。 */
+function Highlighted({text, mark}: {text: string; mark: string}) {
+  const i = mark ? text.indexOf(mark) : -1;
+  if (i < 0) return <>{text}</>;
+  return (
+    <>
+      {text.slice(0, i)}
+      <mark className="rounded bg-down/20 px-0.5 text-down">{mark}</mark>
+      {text.slice(i + mark.length)}
+    </>
   );
 }
 

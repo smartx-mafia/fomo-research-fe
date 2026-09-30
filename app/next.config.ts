@@ -111,6 +111,8 @@ const nextConfig: NextConfig = {
       { source: "/v1/:path*", destination: "/api/harness/proxy/v1/:path*" },
       // 管理后台（/dev/moderation 用），目标源见 route.dev.ts 的 "admin" 规则（ADMIN_ORIGIN）。
       { source: "/admin/api/v1/:path*", destination: "/api/harness/proxy/admin/api/v1/:path*" },
+      // 测试环境管理后台（下单页「敏感词」台），目标源见 route.dev.ts 的 "test-env admin"（TEST_ADMIN_ORIGIN）。
+      { source: "/test-env/admin/api/v1/:path*", destination: "/api/harness/proxy/test-env/admin/api/v1/:path*" },
       // 选币面板的回退源（GeckoTerminal）。不直连的理由见 route.dev.ts 里
       // "geckoterminal" 那条规则：本机出网要走代理，而浏览器直连失败时抛的
       // `Failed to fetch` 与 CORS 被拒长得一样，会把人带偏。

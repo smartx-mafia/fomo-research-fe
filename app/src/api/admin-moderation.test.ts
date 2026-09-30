@@ -1,6 +1,6 @@
 import {beforeEach, describe, expect, it} from 'vitest';
 import {ApiError} from '@/api/envelope';
-import {addRule, adminCall, describeError, getToken, listRules, setToken} from '@/api/admin-moderation';
+import {addRule, adminCall, checkText, configureAdmin, describeError, getToken, listRules, setToken} from '@/api/admin-moderation';
 
 function fakeFetch(body: unknown, status = 200) {
   const calls: {url: string; init: RequestInit}[] = [];
@@ -11,7 +11,10 @@ function fakeFetch(body: unknown, status = 200) {
   return {f, calls};
 }
 
-beforeEach(() => setToken(''));
+beforeEach(() => {
+  configureAdmin({prefix: '', sessionKey: 'local'});
+  setToken('');
+});
 
 describe('admin moderation client', () => {
   it('HTTP 200 不等于成功：code != 200 抛业务错误并带上 metadata', async () => {
@@ -54,5 +57,34 @@ describe('admin moderation client', () => {
   it('频控给出多久后可再提交', () => {
     const e = new ApiError('business', 420000, 'rate', 'SYS_RATE_LIMITED', undefined, undefined, undefined, {reason: 'moderation_write_quota', retry_after_ms: '90000'});
     expect(describeError(e)).toContain('约 2 分钟后');
+  });
+
+  it('切到测试环境：请求带 /test-env 前缀，会话与本机分开存（两边是两套管理员）', async () => {
+    setToken('local-tok');
+    configureAdmin({prefix: '/test-env', sessionKey: 'test'});
+    expect(getToken()).toBe('');
+    setToken('test-tok');
+    const {f, calls} = fakeFetch({code: 200, msg: 'ok', data: {blocked: false}});
+    await checkText('今天行情不错', f);
+    expect(calls[0].url).toBe('/test-env/admin/api/v1/moderation/check');
+    expect((calls[0].init.headers as Record<string, string>).Authorization).toBe('Bearer test-tok');
+    configureAdmin({prefix: '', sessionKey: 'local'});
+    expect(getToken()).toBe('local-tok');
+  });
+
+  it('正文试判：POST 原文，不在前端做任何规整（规整只在后端一处）', async () => {
+    const {f, calls} = fakeFetch({code: 200, msg: 'ok', data: {blocked: true, rule_id: 'dyn-3', stage: 'gap'}});
+    const r = await checkText('  真是下  贱啊 ', f);
+    expect(calls[0].init.method).toBe('POST');
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({text: '  真是下  贱啊 '});
+    expect(r.rule_id).toBe('dyn-3');
+  });
+
+  it('正文的空 / 超长按正文说，不套用「词条最多 64 字」', () => {
+    const tooLong = new ApiError('business', 100136, 'x', 'BIZ_ADMIN_OPS_INVALID_ARGUMENT', 't', undefined, undefined, {field: 'text', reason: 'too_long'});
+    expect(describeError(tooLong)).toContain('正文超长');
+    expect(describeError(tooLong)).not.toContain('64');
+    const empty = new ApiError('business', 100136, 'x', 'BIZ_ADMIN_OPS_INVALID_ARGUMENT', 't', undefined, undefined, {field: 'text', reason: 'empty'});
+    expect(describeError(empty)).toContain('正文为空');
   });
 });
