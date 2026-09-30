@@ -105,6 +105,16 @@ const RULES: readonly ProxyRule[] = [
     stripOrigin: true,
   },
   {
+    // **管理后台 sx_admin**（`/dev/moderation` 内容审查控制台用）。端口取自后端仓
+    // configs/admin.example.yaml 的 admin.public.addr。必须摘 Origin：sx_admin 的
+    // `allowed_origins` 零值同样是「拒绝一切带 Origin 的请求」，回裸 403，看起来像没登录。
+    name: "admin",
+    prefix: ["admin", "api", "v1"],
+    origin: () => process.env.ADMIN_ORIGIN || "http://127.0.0.1:18500",
+    rewrite: (slug) => "/" + slug.join("/"),
+    stripOrigin: true,
+  },
+  {
     // **本机 business。** 端口取自后端仓 configs/business.yaml 的 server.http.addr。
     name: "business",
     prefix: ["v1"],
