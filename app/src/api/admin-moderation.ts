@@ -179,9 +179,34 @@ export async function adminCall<T>(
 
 // ---- 接口 ----
 
-export async function login(username: string, password: string, fetcher?: Fetcher): Promise<void> {
-  const d = await adminCall<{token: string}>('/auth/login', {method: 'POST', body: {username, password}, token: ''}, fetcher);
+type LoginReply = {token: string; me?: {admin?: {must_change_password?: boolean}}};
+
+/**
+ * 登录。`mustChangePassword=true`（新建账号、被他人重置口令）时会话已签发，但服务端在改口令之前
+ * 只放行 Me / Logout / ChangePassword —— 其余一律 400704 password change required。
+ */
+export async function login(username: string, password: string, fetcher?: Fetcher): Promise<{mustChangePassword: boolean}> {
+  const d = await adminCall<LoginReply>('/auth/login', {method: 'POST', body: {username, password}, token: ''}, fetcher);
   setToken(d.token);
+  return {mustChangePassword: Boolean(d.me?.admin?.must_change_password)};
+}
+
+/** 改口令（新口令至少 12 位、同时含字母与数字）。回包带新会话：旧会话随改口令一起失效。 */
+export async function changePassword(oldPassword: string, newPassword: string, fetcher?: Fetcher): Promise<void> {
+  const d = await adminCall<LoginReply>(
+    '/auth/password',
+    {method: 'POST', body: {old_password: oldPassword, new_password: newPassword}},
+    fetcher,
+  );
+  setToken(d.token);
+}
+
+/**
+ * 400704 有两种：缺权限点（metadata.permission）与「必须先改口令」。只有后者该切到改口令表单 ——
+ * 把缺权限也当成要改口令，运营会改完口令发现还是 400704。
+ */
+export function isPasswordChangeRequired(e: unknown): boolean {
+  return e instanceof ApiError && e.code === 400704 && /password change required/i.test(e.message);
 }
 
 export const getStatus = (f?: Fetcher) => adminCall<ModerationStatus>('/moderation/status', {}, f);
@@ -261,6 +286,7 @@ export function describeError(e: unknown): string {
     text += `，约 ${Math.ceil(Number(e.metadata.retry_after_ms) / 60000)} 分钟后可再提交`;
   }
   if (e.code === SESSION_INVALID) text = '会话已失效，请重新登录';
+  if (isPasswordChangeRequired(e)) text = '首次登录（或口令被重置）须先改口令';
   const head = text || e.message;
   return `${head}（${e.code}${reason ? ` / ${reason}` : ''}${e.traceID ? ` · trace ${e.traceID}` : ''}）`;
 }

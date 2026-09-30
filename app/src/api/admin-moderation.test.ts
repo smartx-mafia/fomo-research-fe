@@ -1,6 +1,6 @@
 import {beforeEach, describe, expect, it} from 'vitest';
 import {ApiError} from '@/api/envelope';
-import {addRule, adminCall, checkText, configureAdmin, describeError, getToken, listRules, setToken} from '@/api/admin-moderation';
+import {addRule, adminCall, changePassword, checkText, configureAdmin, describeError, getToken, isPasswordChangeRequired, listRules, login, setToken} from '@/api/admin-moderation';
 
 function fakeFetch(body: unknown, status = 200) {
   const calls: {url: string; init: RequestInit}[] = [];
@@ -86,5 +86,31 @@ describe('admin moderation client', () => {
     expect(describeError(tooLong)).not.toContain('64');
     const empty = new ApiError('business', 100136, 'x', 'BIZ_ADMIN_OPS_INVALID_ARGUMENT', 't', undefined, undefined, {field: 'text', reason: 'empty'});
     expect(describeError(empty)).toContain('正文为空');
+  });
+
+  it('首次登录：回包 must_change_password=true 时如实告诉调用方（此时除了改口令什么都会 400704）', async () => {
+    const {f} = fakeFetch({code: 200, msg: 'ok', data: {token: 't1', me: {admin: {must_change_password: true}}}});
+    expect(await login('u', 'p', f)).toEqual({mustChangePassword: true});
+    expect(getToken()).toBe('t1');
+    const {f: f2} = fakeFetch({code: 200, msg: 'ok', data: {token: 't2', me: {admin: {must_change_password: false}}}});
+    expect(await login('u', 'p', f2)).toEqual({mustChangePassword: false});
+  });
+
+  it('改口令：带旧 / 新口令 POST /auth/password，并换上回包里的新会话', async () => {
+    setToken('old');
+    const {f, calls} = fakeFetch({code: 200, msg: 'ok', data: {token: 'fresh', me: {admin: {must_change_password: false}}}});
+    await changePassword('Old-pass-1234', 'New-pass-5678', f);
+    expect(calls[0].url).toBe('/admin/api/v1/auth/password');
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({old_password: 'Old-pass-1234', new_password: 'New-pass-5678'});
+    expect((calls[0].init.headers as Record<string, string>).Authorization).toBe('Bearer old');
+    expect(getToken()).toBe('fresh');
+  });
+
+  it('400704 分两种：缺权限点不是「要改口令」，只有 password change required 才是', () => {
+    const must = new ApiError('business', 400704, 'password change required', 'ADMIN_FORBIDDEN');
+    const perm = new ApiError('business', 400704, 'forbidden', 'ADMIN_FORBIDDEN', undefined, undefined, undefined, {permission: 'moderation:write'});
+    expect(isPasswordChangeRequired(must)).toBe(true);
+    expect(isPasswordChangeRequired(perm)).toBe(false);
+    expect(describeError(must)).toContain('先改口令');
   });
 });
