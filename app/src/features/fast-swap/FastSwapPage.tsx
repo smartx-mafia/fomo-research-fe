@@ -11,6 +11,7 @@ import {Card, CardContent, CardDescription, CardHeader, CardTitle} from '@/compo
 import {TokenAvatar} from '@/components/TokenAvatar';
 import {SOLANA_RPC_URL} from '@/config';
 import {useSession} from '@/session/storage';
+import {getSlippageMode} from '@/api/settings';
 
 import {
   cancelSwap, createSwap, FastSwapApiError, getCapabilities, getLatestFastSwapTrace, getSwap, getSwapAvailability,
@@ -20,7 +21,7 @@ import {
 import {formatUnits, shortAddress} from './amount';
 import {
   AccountingStatus, ChainLegStatus, ExecutionStatus, FastFillStatus, FeePolicy, isReady, isTerminal, serverAllowsSigning,
-  newerSnapshot, Outcome, PreparationStatus, RelayStatus, Side, SigningKind, BroadcastMode,
+  newerSnapshot, Outcome, PreparationStatus, RelayStatus, Side, SigningKind, BroadcastMode, SlippageMode,
   type CreateIntent, type SwapRoute, type SwapSnapshot,
 } from './contract';
 import {clearPendingExecutionIfMatch, readPendingExecution, writePendingExecution, type PendingExecution} from './pending-execution';
@@ -28,7 +29,7 @@ import {decideCreateRecovery} from './idempotency';
 import {clearRecovery, readRecovery, writeRecovery, type FastSwapRecovery} from './recovery';
 import {signEvmRevision, signSolanaRevision, verifySolanaChainState} from './signing';
 import {watchSwap} from './stream';
-import {draftKey, signingDeadline, unsignedQuote, validDraft, type QuoteDraft} from './auto-quote';
+import {draftKey, draftMatchesIntent, signingDeadline, unsignedQuote, validDraft, type QuoteDraft} from './auto-quote';
 import {useAutoQuote} from './useAutoQuote';
 import {solanaRevisionExpired} from './signing';
 import {
@@ -245,6 +246,8 @@ export default function FastSwapPage() {
   const [destinationAsset, setDestinationAsset] = useState(() => params.get('address') ?? params.get('destination_asset') ?? RECOMMENDED_WSOL);
   const [amountRaw, setAmountRaw] = useState(() => params.get('amount_raw') ?? '');
   const [slippage, setSlippage] = useState(() => params.get('slippage_bps') ?? '300');
+  const [slippageMode, setSlippageMode] = useState<number>(SlippageMode.AUTO);
+  const [slippageSettingsLoaded, setSlippageSettingsLoaded] = useState(false);
   const [snapshotState, setSnapshot] = useState<SwapSnapshot>();
   const [activeState, setActive] = useState<SwapSnapshot[]>([]);
   const [busy, setBusy] = useState<'loading' | 'preparing' | 'signing' | 'reporting' | 'refreshing' | 'cancelling' | null>('loading');
@@ -517,6 +520,22 @@ export default function FastSwapPage() {
   }, [actor, applySnapshot, params, session?.jwt]);
 
   useEffect(() => {
+    if (!session?.jwt) { setSlippageSettingsLoaded(false); return; }
+    const controller = new AbortController();
+    setSlippageSettingsLoaded(false);
+    getSlippageMode(session.jwt, controller.signal)
+      .then(({data}) => {
+        setSlippageMode(data.slippage_mode === SlippageMode.MANUAL ? SlippageMode.MANUAL : SlippageMode.AUTO);
+        setSlippage(String(data.slippage_bps));
+        setSlippageSettingsLoaded(true);
+      })
+      .catch((reason) => {
+        if (!controller.signal.aborted) setError(`无法读取账户滑点模式，已停止报价。${errorText(reason)}`);
+      });
+    return () => controller.abort();
+  }, [session?.jwt]);
+
+  useEffect(() => {
     if (!session?.jwt || !snapshot || isTerminal(snapshot)) return;
     const expectedSwapID = snapshot.swap_id;
     eventVersionRef.current = snapshot.event_version;
@@ -558,7 +577,7 @@ export default function FastSwapPage() {
     if (!selectedRoute.enabled || !selectedRoute.sponsorship_available || !supportsRoute(selectedRoute)) { setError(selectedRoute.unavailable_reason ?? '这条路线当前未开通，或客户端不支持其签名/广播模式。'); return; }
     if (!/^\d+$/.test(amountRaw) || BigInt(amountRaw) <= BigInt(0) || !sourceAsset.trim() || !destinationAsset.trim()) { setError('请填写源资产、目标资产和正整数原子金额。'); return; }
     const slippageBps = Number(slippage);
-    if (!Number.isSafeInteger(slippageBps) || slippageBps < 1 || slippageBps > 10_000) { setError('滑点必须是 1–10000 的整数基点。'); return; }
+    if (slippageMode === SlippageMode.MANUAL && (!Number.isSafeInteger(slippageBps) || slippageBps < 1 || slippageBps > 10_000)) { setError('滑点必须是 1–10000 的整数基点。'); return; }
     const existing = readRecovery(actor);
     if (existing && !existing.swap_id) {
       if (existing.execution_idempotency_key) { setError('存在未决签名执行，不能创建新意图。'); return; }
@@ -610,7 +629,7 @@ export default function FastSwapPage() {
     const clientIntentID = uuid(); const createKey = uuid();
     startTimingRun(clientIntentID, actor);
     setEvidenceRunID(clientIntentID);
-    const intent: CreateIntent = {client_intent_id: clientIntentID, origin_chain: selectedRoute.origin_chain, destination_chain: selectedRoute.destination_chain, origin_asset: sourceAsset.trim(), destination_asset: destinationAsset.trim(), amount_in_raw: amountRaw, slippage_bps: slippageBps, side: selectedRoute.side, source_wallet_id: sourceWallet.id, destination_wallet_id: destinationWallet.id, fee_policy: FeePolicy.PLATFORM_SPONSORED};
+    const intent: CreateIntent = {client_intent_id: clientIntentID, origin_chain: selectedRoute.origin_chain, destination_chain: selectedRoute.destination_chain, origin_asset: sourceAsset.trim(), destination_asset: destinationAsset.trim(), amount_in_raw: amountRaw, slippage_mode: slippageMode, slippage_bps: slippageMode === SlippageMode.AUTO ? 0 : slippageBps, side: selectedRoute.side, source_wallet_id: sourceWallet.id, destination_wallet_id: destinationWallet.id, fee_policy: FeePolicy.PLATFORM_SPONSORED};
     const recovery: FastSwapRecovery = {actor, client_intent_id: clientIntentID, create_idempotency_key: createKey, execution_idempotency_key: null, swap_id: null, revision: null, intent, updated_at: new Date().toISOString()};
     if (!writeRecovery(recovery)) { setError('浏览器无法保存恢复信息，因此没有发送请求。请允许本地存储后重试。'); return; }
     const bearer = session.jwt; const started = performance.now(); setBusy('preparing'); setError(undefined); setPendingExecution(undefined);
@@ -977,11 +996,11 @@ export default function FastSwapPage() {
   const draft: QuoteDraft | undefined = selectedRoute && sourceWallet && destinationWallet ? {
     origin_chain:selectedRoute.origin_chain, destination_chain:selectedRoute.destination_chain,
     origin_asset:sourceAsset.trim(), destination_asset:destinationAsset.trim(), amount_in_raw:amountRaw,
-    slippage_bps:slippage.trim() ? Number(slippage) : 0, side:selectedRoute.side,
+    slippage_mode:slippageMode, slippage_bps:slippageMode === SlippageMode.AUTO ? 0 : (slippage.trim() ? Number(slippage) : 0), side:selectedRoute.side,
     source_wallet_id:sourceWallet.id, destination_wallet_id:destinationWallet.id, fee_policy:FeePolicy.PLATFORM_SPONSORED,
   } : undefined;
   const inputKey = draft && validDraft(draft) && selectedRoute?.enabled && selectedRoute.sponsorship_available && supportsRoute(selectedRoute) ? draftKey(draft) : null;
-  const matchesInput = Boolean(inputKey && snapshot && draftKey(snapshot.intent) === inputKey);
+  const matchesInput = Boolean(inputKey && snapshot && draft && draftMatchesIntent(draft, snapshot.intent));
   const ready = Boolean(snapshot && matchesInput && serverAllowsSigning(snapshot) && !isTerminal(snapshot));
   const clockReady = readyClock.current.key === `${snapshot?.swap_id}:${snapshot?.preparation.current_revision}`;
   const safeRemaining = ready && clockReady ? Math.max(0, readyUntil - now) : 0;
@@ -994,7 +1013,7 @@ export default function FastSwapPage() {
   const outputDecimals = snapshot?.revision.assets.destination.decimals ?? 0;
   const sourceDecimals = snapshot?.revision.assets.origin.decimals ?? 0;
   const hasSession = Boolean(session?.jwt && actor && privyReady && authenticated && user);
-  const quoteOperationsAllowed = hasSession && pendingLoaded && !pendingExecution && !unresolvedArtifact &&
+  const quoteOperationsAllowed = hasSession && slippageSettingsLoaded && pendingLoaded && !pendingExecution && !unresolvedArtifact &&
     busy !== 'loading' && busy !== 'signing' && busy !== 'reporting' && !executionLockRef.current;
   const autoQuote = useAutoQuote({
     scope:currentAuthScope, enabled:autoRequested && quoteOperationsAllowed,
@@ -1110,7 +1129,8 @@ export default function FastSwapPage() {
               <label className={labelClass}><span className="flex items-center gap-2"><TokenAvatar chain={selectedRoute?.origin_chain ?? ''} address={sourceMetadataAddress} size={28} /><span>源资产地址</span></span><input className={inputClass} value={sourceAsset} onChange={(event) => editIntent(() => setSourceAsset(event.target.value))} disabled={inputsLocked} placeholder="mint / 0x contract" /></label>
               <label className={labelClass}><span className="flex items-center gap-2"><TokenAvatar chain={selectedRoute?.destination_chain ?? ''} address={destinationMetadataAddress} size={28} /><span>目标资产地址</span></span><input className={inputClass} value={destinationAsset} onChange={(event) => editIntent(() => setDestinationAsset(event.target.value))} disabled={inputsLocked} placeholder="mint / 0x contract" /></label>
               <label className={labelClass}>投入原子金额<input className={inputClass} inputMode="numeric" value={amountRaw} onChange={(event) => editIntent(() => setAmountRaw(event.target.value))} disabled={inputsLocked} placeholder="输入金额后自动获取报价，如 2000000 = 2 USDC" /></label>
-              <label className={labelClass}>滑点（bps）<input className={inputClass} inputMode="numeric" value={slippage} onChange={(event) => editIntent(() => setSlippage(event.target.value))} disabled={inputsLocked} /></label>
+              <label className={labelClass}>滑点模式<input className={inputClass} value={slippageMode === SlippageMode.AUTO ? 'Auto · 按代币推荐' : 'Manual · 手动设置'} disabled /></label>
+              <label className={labelClass}>手动滑点（bps）<input className={inputClass} inputMode="numeric" value={slippage} onChange={(event) => editIntent(() => setSlippage(event.target.value))} disabled={inputsLocked || slippageMode === SlippageMode.AUTO} /></label>
             </div>
             <p className="rounded border border-accent/30 bg-accent/5 p-2 text-xs text-muted">推荐首笔联调：Solana USDC → wSOL、side=swap、5 USDC（amount_raw=5000000）。跨链固定费用更高，Robinhood 小额交易通常无法覆盖约 $0.867 的执行费。</p>
             <div className="grid gap-2 text-xs text-muted sm:grid-cols-2">
@@ -1135,6 +1155,7 @@ export default function FastSwapPage() {
               <Metric label="投入" value={`${formatUnits(snapshot.intent.amount_in_raw, sourceDecimals)} (${snapshot.intent.amount_in_raw} raw)`} />
               <Metric label="预计收到" value={`${formatUnits(snapshot.revision.expected_out_raw || null, outputDecimals)} (${snapshot.revision.expected_out_raw || '—'} raw)`} />
               <Metric label="最低收到" value={`${formatUnits(snapshot.revision.min_out_raw || null, outputDecimals)} (${snapshot.revision.min_out_raw || '—'} raw)`} />
+              <Metric label="实际滑点" value={`${snapshot.intent.slippage_bps} bps`} />
             </div>
             {snapshot.revision.fees.length ? <div className="space-y-1 text-xs text-muted">{snapshot.revision.fees.map((fee, index) => <div key={`${fee.kind}:${fee.asset}:${index}`} className="flex justify-between"><span>费用类型 {fee.kind} · {shortAddress(fee.asset)}</span><span className="font-mono">{fee.amount_raw} raw · {fee.payer === 2 ? '平台支付' : '用户支付'}</span></div>)}</div> : null}
             <div className="flex items-center justify-between rounded-lg border border-border bg-surface-2 p-3 text-sm"><span className="flex items-center gap-2"><Clock3 className="h-4 w-4 text-accent" />安全签名窗口</span><span className="font-mono tabular">{ready ? `${Math.ceil(safeRemaining / 1000)}s` : '不可签'}</span></div>

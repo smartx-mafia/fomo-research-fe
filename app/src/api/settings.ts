@@ -32,7 +32,12 @@ export type TradingSettings = {
   slippage_bps: number;
   /** 用户明确设过滑点。缺席 = 上面是服务端默认 3%。 */
   explicit?: boolean;
+  /** 1=AUTO（默认），2=MANUAL。 */
+  slippage_mode: SlippageMode;
 };
+
+export const SlippageMode = {AUTO: 1, MANUAL: 2} as const;
+export type SlippageMode = (typeof SlippageMode)[keyof typeof SlippageMode];
 
 export const CURRENCIES = ['USD', 'USDC', 'USDT', 'CNY'] as const;
 export type Currency = (typeof CURRENCIES)[number];
@@ -54,9 +59,19 @@ export function getTradingSettings(bearer: string, signal?: AbortSignal) {
   return call<TradingSettings>('/v1/settings/trading', {bearer, signal});
 }
 
+/** GET /v1/settings/trading/slippage-mode —— 重装或清缓存后恢复账户模式。 */
+export function getSlippageMode(bearer: string, signal?: AbortSignal) {
+  return call<TradingSettings>('/v1/settings/trading/slippage-mode', {bearer, signal});
+}
+
 /** POST /v1/settings/trading/slippage —— 十进制串（"0.02" = 2%）。回整页。 */
 export function setSlippage(bearer: string, value: string) {
   return call<TradingSettings>('/v1/settings/trading/slippage', {method: 'POST', bearer, body: {value}});
+}
+
+/** POST /v1/settings/trading/slippage-mode —— 回整页；切换不清除手动值。 */
+export function setSlippageMode(bearer: string, mode: SlippageMode) {
+  return call<TradingSettings>('/v1/settings/trading/slippage-mode', {method: 'POST', bearer, body: {mode}});
 }
 
 /** POST /v1/settings/trading/confirmation —— 回整页。 */

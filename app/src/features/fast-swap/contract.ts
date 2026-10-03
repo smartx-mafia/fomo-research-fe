@@ -15,6 +15,7 @@ export const FastFillStatus = {DISABLED: 1, ELIGIBLE: 2, REQUESTED: 3, ACCEPTED:
 export const SwapEventType = {PREPARATION_UPDATED: 1, EXECUTION_UPDATED: 2, SETTLEMENT_UPDATED: 3, AVAILABILITY_UPDATED: 4} as const;
 export const SigningKind = {SOLANA_TRANSACTION: 1, EVM_CALIBUR: 2, EVM_PERMIT: 3} as const;
 export const BroadcastMode = {GATEWAY: 1, JITO_DIRECT: 2} as const;
+export const SlippageMode = {AUTO: 1, MANUAL: 2} as const;
 export const EvmSigningMethod = {ETH_SIGN_TYPED_DATA_V4: 1, EIP7702_AUTHORIZATION: 2} as const;
 
 export type CreateIntent = {
@@ -25,6 +26,7 @@ export type CreateIntent = {
   destination_asset: string;
   amount_in_raw: string;
   slippage_bps: number;
+  slippage_mode?: number;
   side: number;
   source_wallet_id: string;
   destination_wallet_id: string;
@@ -209,6 +211,9 @@ export function parseCreateIntent(value: unknown, label = 'intent'): CreateInten
     destination_asset: string(v.destination_asset, `${label}.destination_asset`),
     amount_in_raw: decimal(v.amount_in_raw, `${label}.amount_in_raw`, false),
     slippage_bps: integer(v.slippage_bps, `${label}.slippage_bps`),
+    slippage_mode: v.slippage_mode === undefined || v.slippage_mode === null
+      ? undefined
+      : integer(v.slippage_mode, `${label}.slippage_mode`),
     side: integer(v.side, `${label}.side`),
     source_wallet_id: string(v.source_wallet_id, `${label}.source_wallet_id`),
     destination_wallet_id: string(v.destination_wallet_id, `${label}.destination_wallet_id`),
