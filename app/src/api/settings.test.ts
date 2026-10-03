@@ -12,6 +12,7 @@ import {
   getProfile,
   getSecuritySettings,
   getTradingSettings,
+  getSlippageMode,
   importProfileFromX,
   listPushDevices,
   recordKeyExport,
@@ -36,6 +37,7 @@ describe('settings four pages', () => {
   it('GET pages hit their canonical paths with bearer', async () => {
     const pages: Array<[string, () => unknown]> = [
       ['/v1/settings/trading', () => getTradingSettings('jwt')],
+      ['/v1/settings/trading/slippage-mode', () => getSlippageMode('jwt')],
       ['/v1/settings/security', () => getSecuritySettings('jwt')],
       ['/v1/settings/notifications', () => getNotificationSettings('jwt')],
       ['/v1/settings/preferences', () => getPreferences('jwt')],

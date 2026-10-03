@@ -8,7 +8,9 @@ import {
   getTradingSettings,
   setCurrency,
   setSlippage,
+  setSlippageMode,
   setTradeConfirmation,
+  SlippageMode,
   validateSlippage,
   type TradingSettings,
 } from '@/api/settings';
@@ -32,8 +34,8 @@ const SLIPPAGE_PRESETS = [
 ];
 
 /**
- * Trading 页（settings-integration.md §5）。展示用 default_slippage、
- * 下单用 slippage_bps（显式传给交易接口，不依赖服务端兜底）。
+ * Trading 页（settings-integration.md §5）。AUTO 由服务端按币取推荐值；
+ * MANUAL 使用并保留 default_slippage / slippage_bps。
  */
 export function TradingSettingsView() {
   const session = useSession();
@@ -81,7 +83,7 @@ export function TradingSettingsView() {
       <header className="space-y-1">
         <h1 className="text-xl font-semibold tracking-tight">Trading</h1>
         <p className="text-muted-foreground text-sm">
-          展示用 default_slippage、下单用 slippage_bps（已是万分之一整数）。
+          Auto 按代币推荐值下单；Manual 使用并保留手动滑点。
         </p>
       </header>
 
@@ -103,13 +105,18 @@ export function TradingSettingsView() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
+          <div className="flex gap-2">
+            <Button size="sm" variant={settings?.slippage_mode === SlippageMode.AUTO ? 'default' : 'outline'} disabled={busy || !settings} onClick={() => apply(() => setSlippageMode(jwt, SlippageMode.AUTO))}>Auto</Button>
+            <Button size="sm" variant={settings?.slippage_mode === SlippageMode.MANUAL ? 'default' : 'outline'} disabled={busy || !settings} onClick={() => apply(() => setSlippageMode(jwt, SlippageMode.MANUAL))}>Manual</Button>
+          </div>
+          <p className="text-muted-foreground text-[11px]">Auto 使用当前代币推荐滑点；切换模式不会清除上次手动值。</p>
           <div className="flex flex-wrap items-center gap-2">
             {SLIPPAGE_PRESETS.map((p) => (
               <Button
                 key={p.value}
                 size="sm"
                 variant={settings?.default_slippage === p.value ? 'default' : 'outline'}
-                disabled={busy}
+                disabled={busy || settings?.slippage_mode !== SlippageMode.MANUAL}
                 onClick={() => apply(() => setSlippage(jwt, p.value))}
               >
                 {p.label}
@@ -136,7 +143,7 @@ export function TradingSettingsView() {
                 autoComplete="off"
                 spellCheck={false}
               />
-              <Button size="sm" disabled={busy || !!customInvalid} onClick={() => apply(() => setSlippage(jwt, custom.trim()))}>
+              <Button size="sm" disabled={busy || !!customInvalid || settings?.slippage_mode !== SlippageMode.MANUAL} onClick={() => apply(() => setSlippage(jwt, custom.trim()))}>
                 保存自定义滑点
               </Button>
               {customInvalid && <span className="text-xs text-red-500">{customInvalid}</span>}

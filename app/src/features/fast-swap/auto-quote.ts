@@ -6,13 +6,20 @@ export type QuoteDraft = Omit<CreateIntent, 'client_intent_id'>;
 export function draftKey(draft: QuoteDraft | CreateIntent): string {
   const asset = (chain: string, address: string) => chain.startsWith('eip155:') ? address.toLowerCase() : address;
   return JSON.stringify([draft.origin_chain, draft.destination_chain, asset(draft.origin_chain,draft.origin_asset),
-    asset(draft.destination_chain,draft.destination_asset), draft.amount_in_raw, draft.slippage_bps,
+    asset(draft.destination_chain,draft.destination_asset), draft.amount_in_raw, draft.slippage_mode ?? 2, draft.slippage_bps,
     draft.side, draft.source_wallet_id, draft.destination_wallet_id, draft.fee_policy]);
+}
+
+/** AUTO 的实际滑点由服务端固化并回传，不能拿它和请求中的占位值比较。 */
+export function draftMatchesIntent(draft: QuoteDraft, intent: CreateIntent): boolean {
+  if (draft.slippage_mode !== 1) return draftKey(draft) === draftKey(intent);
+  return draftKey({...draft, slippage_mode: undefined, slippage_bps: intent.slippage_bps}) ===
+    draftKey({...intent, slippage_mode: undefined});
 }
 
 export function validDraft(draft: QuoteDraft): boolean {
   if (!/^\d+$/.test(draft.amount_in_raw) || BigInt(draft.amount_in_raw) <= BigInt(0) ||
-      !Number.isSafeInteger(draft.slippage_bps) || draft.slippage_bps < 1 || draft.slippage_bps > 10000 ||
+      (draft.slippage_mode !== 1 && (!Number.isSafeInteger(draft.slippage_bps) || draft.slippage_bps < 1 || draft.slippage_bps > 10000)) ||
       !draft.source_wallet_id || !draft.destination_wallet_id) return false;
   const validAsset = (chain: string, address: string) => {
     if (/^eip155:\d+$/.test(chain)) return /^0x[0-9a-f]{40}$/i.test(address);
