@@ -232,6 +232,25 @@ describe('SwapRun 正常路径', () => {
     expect(d.store.list()).toEqual([]);
   });
 
+  it('风险确认后用同一个 intent 与幂等键重新准备，不换 ID 绕过确认绑定', async () => {
+    const {client, calls} = fakeClient({
+      create: (intent, n) => n === 1 ? bizError(430310, 'change_input') : snap(intent),
+    });
+    const {d} = deps(client);
+    const run = SwapRun.start(d, INTENT, null);
+
+    const rejected = await run.prepare();
+    expect(rejected.stage).toBe('stopped');
+    expect((rejected.error as SwapApiError).code).toBe(430310);
+
+    // UI 在两次 prepare 之间以 fastswap:<client_intent_id> 完成明确风险确认。
+    const ready = await run.prepare();
+    expect(ready.stage).toBe('ready');
+    expect(calls.create).toHaveLength(2);
+    expect(calls.create[1]![0].client_intent_id).toBe(calls.create[0]![0].client_intent_id);
+    expect(calls.create[1]![1]).toBe(calls.create[0]![1]);
+  });
+
   it('并行返回的展示报价在点击前绑定到底线，恶化超过底线时不签名不上报', async () => {
     const {client, calls} = fakeClient({});
     const {d, signed} = deps(client);
