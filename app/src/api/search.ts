@@ -104,6 +104,7 @@ function normalizeAccount(raw: unknown): SearchAccountEntry | null {
 export function normalizeSearchData(raw: unknown): SearchData {
   const data = (raw ?? {}) as Record<string, unknown>;
   const scope = data.scope === 1 || data.scope === 4 ? data.scope : undefined;
+  // TOKEN 顺序是服务端契约的一部分（市值降序）；只做逐项归一化，不在客户端重排。
   const tokens = Array.isArray(data.tokens)
     ? data.tokens.map(normalizeToken).filter((item): item is SearchItem => item !== null)
     : undefined;
