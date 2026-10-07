@@ -177,6 +177,7 @@ export interface HolderPage {
  * market 缺席是诚实的答案（暂无该币行情/穿透配额打满），不要渲染成价格 0。
  * 最新契约的 market 是 TokenMarket 全字段镜像，risk 也只在 market 内出现；
  * 搜索结果顶层不复制 risk，避免同一事实出现两个权威位置。
+ * tokens 由服务端按市值降序返回；前端必须原样保序，不能自行按匹配度或成交量重排。
  */
 export interface SearchItem {
   chain: string;

@@ -3,6 +3,21 @@ import {describe, expect, it} from 'vitest';
 import {normalizeSearchData} from './search';
 
 describe('token search risk compatibility', () => {
+  it('preserves the backend market-cap descending order', () => {
+    const data = normalizeSearchData({scope: 1, tokens: [
+      {chain: 'bitcoin', address: 'btc', symbol: 'BTC', market: {market_cap: 1_900_000_000_000}},
+      {chain: 'ethereum', address: '0xbtc', symbol: 'BTC', market: {market_cap: 500_000_000}},
+      {chain: 'base', address: '0xsmall', symbol: 'BTC', market: {market_cap: 2_000_000}},
+    ]});
+
+    expect(data.tokens?.map((token) => token.address)).toEqual(['btc', '0xbtc', '0xsmall']);
+    expect(data.tokens?.map((token) => token.market?.market_cap)).toEqual([
+      1_900_000_000_000,
+      500_000_000,
+      2_000_000,
+    ]);
+  });
+
   it('keeps risky results visible and reads risk only from the TokenMarket mirror', () => {
     const data = normalizeSearchData({scope: 1, tokens: [{
       chain: 'base',
