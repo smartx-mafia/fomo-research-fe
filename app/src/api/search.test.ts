@@ -5,12 +5,22 @@ import {normalizeSearchData} from './search';
 describe('token search risk compatibility', () => {
   it('preserves the backend market-cap descending order', () => {
     const data = normalizeSearchData({scope: 1, tokens: [
-      {chain: 'bitcoin', address: 'btc', symbol: 'BTC', market: {market_cap: 1_900_000_000_000}},
+      {
+        chain: 'solana',
+        address: 'cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij',
+        symbol: 'BTC',
+        name: 'Bitcoin',
+        market: {market_cap: 1_900_000_000_000},
+      },
       {chain: 'ethereum', address: '0xbtc', symbol: 'BTC', market: {market_cap: 500_000_000}},
       {chain: 'base', address: '0xsmall', symbol: 'BTC', market: {market_cap: 2_000_000}},
     ]});
 
-    expect(data.tokens?.map((token) => token.address)).toEqual(['btc', '0xbtc', '0xsmall']);
+    expect(data.tokens?.map((token) => token.address)).toEqual([
+      'cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij',
+      '0xbtc',
+      '0xsmall',
+    ]);
     expect(data.tokens?.map((token) => token.market?.market_cap)).toEqual([
       1_900_000_000_000,
       500_000_000,
