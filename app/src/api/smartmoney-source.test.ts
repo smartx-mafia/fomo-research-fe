@@ -66,14 +66,3 @@ describe('provider snapshot source reads', () => {
     await expect(getSourcePositions({type: 'user', userId: 'subject:1'})).rejects.toThrow('does not match');
   });
 });
-
-it('retains FOMO publication metadata and exact authoritative totals independently of decomposition', async () => {
-  const accounting = {generation_id: 'g', publication_revision: '9007199254740993', total_status: 'source_available', decomposition_status: 'partial', other_account_baseline: '162090.99953871226', stale: true};
-  const data = {meta: {...meta, source: 'fomo', data_provider: 'fomo_profile_ledger', accounting}, windows: [{window: 'all', total_profit_usd: '399268.43760006993517281991', realized_profit_usd: '', unrealized_profit_usd: '237167.04626135767517281991', accounting}], daily_windows: []};
-  callMock.mockResolvedValueOnce({data});
-  const result = await getSourcePnL({type: 'user', userId: 'subject:119'});
-  expect(result).toBe(data);
-  expect(result.windows[0].total_profit_usd).toBe('399268.43760006993517281991');
-  expect(result.meta.accounting?.publication_revision).toBe('9007199254740993');
-  expect(result.windows[0].realized_profit_usd).toBe('');
-});

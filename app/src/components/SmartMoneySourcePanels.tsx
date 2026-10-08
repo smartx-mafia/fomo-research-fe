@@ -9,7 +9,6 @@ import {
   getSourcePositions,
   sourceRefreshMs,
   sourceSurfaceReady,
-  type FomoAccounting,
   type SourceAction,
   type SourceIdentity,
   type SourceMeta,
@@ -49,23 +48,11 @@ function coverageName(raw: SourceMeta['coverage']): string {
   return {complete: '完整', partial: '部分', unknown: '未知', ranked_selection: '仅榜单筛选范围'}[raw] ?? raw;
 }
 
-function FomoStatus({accounting}: {accounting?: FomoAccounting}) {
-  if (!accounting) return null;
-  return <div className="mt-2 space-y-1 text-xs text-muted" data-testid="fomo-accounting-status">
-    <p>{accounting.method === 'source_snapshot' ? 'FOMO 个人页起点' : accounting.method === 'event_replay' ? 'FOMO 起点＋本代事件增量' : 'FOMO 发布状态未知'} · 观测时间：{accounting.as_of || '未知'}</p>
-    {accounting.total_status === 'unavailable' ? <p>本范围的账户总收益暂不可用。</p> : null}
-    {accounting.balance_as_of ? <p>余额观测时间：{accounting.balance_as_of}（独立于绩效更新）</p> : null}
-    {accounting.window_status === 'warming_up' ? <p>完整周期尚未覆盖，接入以来收益 {money(accounting.since_baseline_total)}；开始时间 {accounting.effective_from || '待确认'}</p> : null}
-    {accounting.decomposition_status === 'partial' ? <p>账户总额与历史分项分别展示；尚未分配到币的金额不计入已实现小计。</p> : null}
-    {accounting.stale || accounting.continuation_status === 'pending_replay' ? <p className="text-amber-500">当前展示保留时点的数据，最新结果待核对。</p> : null}
-  </div>;
-}
 function Provenance({meta}: {meta: SourceMeta}) {
   return <div className="mt-2 text-xs leading-5 text-muted">
     <p>身份来源：{sourceName(meta.source)} · 数据提供方：{sourceName(meta.data_provider)} · 观测时间：{meta.as_of || '未知'}
-      {' · '}覆盖状态：{coverageName(meta.coverage)} · {meta.accounting ? '来源基线与本代计算，未经链上账本核验' : '供应商快照，未经链上账本核验'}</p>
-    <FomoStatus accounting={meta.accounting} />
-    {!meta.accounting && (meta.coverage !== 'complete' || !meta.as_of) ?
+      {' · '}覆盖状态：{coverageName(meta.coverage)} · 供应商快照，未经链上账本核验</p>
+    {meta.coverage !== 'complete' || !meta.as_of ?
       <p className="text-amber-500">观测时间或覆盖范围不完整；下方记录不能代表全部仓位、成交或收益。</p> : null}
   </div>;
 }
@@ -86,15 +73,12 @@ function PositionRows({title, rows, coverage}: {title: string; rows: SourcePosit
         <div className="min-w-0">
           <p className="font-medium">{position.symbol || position.name || value(position.token_address)}</p>
           <p className="break-all font-mono text-xs text-muted">{value(position.chain)} · {value(position.token_address)}</p>
-          <p className="text-xs text-muted">{position.position_quantity ? '盈亏仓位数量' : '数量'} {value(position.position_quantity || position.balance)}</p>
-          {position.balance_quantity ? <p className="text-xs text-muted">余额数量 {value(position.balance_quantity)} · 余额估值 {money(position.balance_market_value)}</p> : null}
+          <p className="text-xs text-muted">数量 {value(position.balance)}</p>
         </div>
         <div className="text-right text-xs text-muted">
-          <p>{position.position_quantity ? '盈亏仓位估值' : '估值'} {money(position.usd_value)}</p>
+          <p>估值 {money(position.usd_value)}</p>
           <p>成本 {money(position.accu_cost || position.cost)}</p>
-          <p>仓位收益 {money(position.total_profit)}</p>
-          {position.position_pnl_basis ? <p>导入轮次已实现 {money(position.current_round_realized)} · 接入以来已实现 {money(position.realized_since_baseline)}</p> : <p>已实现 {money(position.realized_profit)}</p>}
-          <p>未实现 {money(position.unrealized_profit)}</p>
+          <p>已实现 {money(position.realized_profit)} · 未实现 {money(position.unrealized_profit)}</p>
         </div>
       </div>)}</div>}
   </div>;
@@ -154,7 +138,7 @@ export function SmartMoneySourcePanels({route}: {route: IdentityRoute}) {
 
   return <div className="space-y-4">
     <div role="note" className="rounded-lg border border-accent/25 bg-accent/5 px-4 py-3 text-xs leading-5 text-muted">
-      持仓与盈亏以服务端发布为准。FOMO 账户总额、盈亏仓位与余额分别展示；未知分项不补零。
+      以下是现有供应商快照，不是已验证链上账本或完整用户 PnL。各接口的观测时间和覆盖范围独立。
     </div>
     {route.status === 'wallet' && route.namespace === 'evm' && availableEvm.length > 0 ?
       <div className="flex flex-wrap items-center gap-2 text-sm"><span className="text-muted">链</span>{availableEvm.map((candidate) =>
@@ -191,7 +175,7 @@ export function SmartMoneySourcePanels({route}: {route: IdentityRoute}) {
     </section> : null}
 
     {pnlReady ? <section className="rounded-xl border border-border bg-surface p-5">
-      <h2 className="font-semibold">收益窗口</h2>
+      <h2 className="font-semibold">供应商 PnL 窗口</h2>
       {pnl.error ? <PanelError retry={() => void pnl.mutate()} /> : null}
       {!pnl.data && !pnl.error ? <p className="mt-3 text-sm text-muted">正在加载收益…</p> : null}
       {pnl.data ? <><Provenance meta={pnl.data.meta} />
@@ -200,9 +184,7 @@ export function SmartMoneySourcePanels({route}: {route: IdentityRoute}) {
             <div key={entry.window} className="rounded-lg border border-border/70 p-3 text-sm">
               <p className="font-medium">{entry.window}</p>
               <p className="mt-2">总收益 {money(entry.total_profit_usd)}</p>
-              <p className="text-xs text-muted">{entry.window === 'all' ? '完整历史已实现' : '期间已实现'} {money(entry.realized_profit_usd)} · {entry.accounting && entry.window !== 'all' ? '未实现变化' : '当前未实现'} {money(entry.unrealized_profit_usd)}</p>
-              <FomoStatus accounting={entry.accounting} />
-              {entry.window === 'all' && entry.accounting ? <div className="mt-2 text-xs text-muted"><p>导入轮次已实现 {money(entry.accounting.current_round_realized)} · 接入以来已实现 {money(entry.accounting.realized_since_baseline)}</p><p>FOMO 账户其他起点金额 {money(entry.accounting.other_account_baseline)}（归属未拆分，不是历史已实现） · 合约起点 {money(entry.accounting.perpetual_baseline)}</p><p>转账调整 {money(entry.accounting.transfer_adjustment)} · 费用币处置 {money(entry.accounting.fee_disposal)} · 费用 {money(entry.accounting.expenses)}</p><p>合约增量 {money(entry.accounting.perpetual_delta)} · 其他增量 {money(entry.accounting.other_delta)}</p></div> : null}
+              <p className="text-xs text-muted">已实现 {money(entry.realized_profit_usd)} · 未实现 {money(entry.unrealized_profit_usd)}</p>
               <p className="text-xs text-muted">已实现成本 {money(entry.realized_cost_usd)}</p>
               <p className="text-xs text-muted">买入 {value(entry.buy_count)} · 卖出 {value(entry.sell_count)}</p>
               <p className="mt-1 text-xs text-muted">覆盖状态：{entry.coverage ? coverageName(entry.coverage as SourceMeta['coverage']) : '未知'} · 观测时间：{entry.as_of || '未知'}</p>

@@ -4,21 +4,7 @@ export type SourceIdentity =
   | {type: 'user'; userId: string}
   | {type: 'wallet'; namespace: 'evm' | 'solana'; address: string};
 
-export type FomoAccounting = {
-  generation_id?: string; publication_revision?: string; method?: string;
-  policy_version?: string; ranking_basis_id?: string;
-  economic_reconciliation_status?: string; quote_status?: string;
-  total_status?: string; decomposition_status?: string; continuation_status?: string;
-  window_status?: string; as_of?: string; balance_as_of?: string; effective_from?: string;
-  current_round_realized?: string; realized_since_baseline?: string; current_unrealized?: string;
-  other_account_baseline?: string; perpetual_baseline?: string; perpetual_delta?: string;
-  other_delta?: string; transfer_adjustment?: string; fee_disposal?: string; expenses?: string;
-  since_baseline_total?: string; source_account_equity?: string; other_equity?: string;
-  stale?: boolean; reasons?: string[];
-};
-
 export type SourceMeta = {
-  accounting?: FomoAccounting;
   source: string;
   data_mode: 'provider_snapshot';
   data_provider: string;
@@ -42,12 +28,6 @@ export type SourcePosition = {
   symbol?: string;
   name?: string;
   balance?: string;
-  position_quantity?: string; balance_quantity?: string; quantity_gap?: string;
-  balance_market_value?: string; balance_equity_value?: string;
-  current_round_realized?: string; realized_since_baseline?: string;
-  position_pnl_basis?: string; cost_basis_kind?: string;
-  current_round_total?: string; raw_current_round_realized?: string;
-  source_network_id?: string; source_round_id?: string; round_status?: string;
   usd_value?: string;
   cost?: string;
   accu_cost?: string;
@@ -84,7 +64,6 @@ export type SourceActions = {
 };
 
 export type SourcePnLWindow = {
-  accounting?: FomoAccounting;
   window: string;
   realized_profit_usd: string;
   unrealized_profit_usd: string;
@@ -95,7 +74,7 @@ export type SourcePnLWindow = {
   buy_count: string;
   sell_count: string;
 };
-export type SourcePnL = {meta: SourceMeta; windows: SourcePnLWindow[]; daily_windows?: SourcePnLWindow[]};
+export type SourcePnL = {meta: SourceMeta; windows: SourcePnLWindow[]};
 
 const exactInt64Fields = ['fetched_at', 'occurred_at', 'snapshot_at', 'mapping_version'] as const;
 
