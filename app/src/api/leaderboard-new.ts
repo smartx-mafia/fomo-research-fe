@@ -1,5 +1,5 @@
 import {call} from './envelope';
-import {assertProviderSnapshotMeta, type SourceMeta} from './smartmoney-source';
+import {assertProviderSnapshotMeta, type SourceMeta, type FomoAccounting} from './smartmoney-source';
 import {isExternalSubjectId} from '@/lib/smartmoney-identity';
 
 export type UnifiedLeaderboardWindow = '1d' | '7d' | '30d' | 'all';
@@ -9,6 +9,8 @@ export type UnifiedLeaderboardIdentity =
 
 export type UnifiedLeaderboardEntry = {
   rank: number;
+  accounting?: FomoAccounting;
+  ranking_basis_id?: string; ranking_eligible?: boolean; ranking_reason?: string; cohort_rank?: number;
   identity: UnifiedLeaderboardIdentity;
   profile: {display_name?: string; username?: string; avatar_url?: string; x_handle?: string};
   platforms: string[];
@@ -29,6 +31,7 @@ export type UnifiedLeaderboardReply = {
   stale: boolean;
   count: number;
   list: UnifiedLeaderboardEntry[];
+  ranking_cohorts?: {basis_id: string; count: number; ranking_eligible: boolean; reason?: string}[];
   meta: SourceMeta;
 };
 

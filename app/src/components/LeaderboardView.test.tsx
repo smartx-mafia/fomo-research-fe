@@ -36,3 +36,16 @@ it('keys personalized board reads by the current session and forwards the JWT', 
   await waitFor(() => expect(board).toHaveBeenCalledWith('7d', 'viewer-jwt'));
   expect(await screen.findByText('榜单构建已延迟，请谨慎参考。')).toBeTruthy();
 });
+
+it('distinguishes FOMO policy cohorts without inventing a global placing', async () => {
+  session.mockReturnValue(null);
+  meta.mockResolvedValue({windows: ['all'], dimensions: ['Global']});
+  const entries = ['fomo_profile_v1:source_snapshot', 'fomo_profile_v1:accounting_replay', 'legacy:Global:window_realized_plus_current_unrealized'].map((basis, index) => ({rank: 0, ranking_basis_id: basis, ranking_eligible: false, ranking_reason: 'incomparable_ranking_basis', cohort_rank: 1, identity: {type: 'external_user', id: `subject:${index + 1}`, user_type: 2}, profile: {display_name: `Trader${index}`}, platforms: [index === 2 ? 'GMGN' : 'FOMO'], dimension: 'Global', pnl_basis: basis, total_profit_usd: `${100 - index}`, snapshot_at: '1780000000', chains: ['sol'], identity_revision: 'rev'}));
+  board.mockResolvedValue({meta: {source: 'mixed', data_mode: 'provider_snapshot', data_provider: 'mixed', as_of: '2026-10-08T11:23:16Z', coverage: 'ranked_selection', ledger_verified: false}, window: 'all', dimension: 'Global', updated_at: '1780000000', stale: false, count: entries.length, list: entries});
+  render(<SWRConfig value={{provider: () => new Map()}}><LeaderboardView /></SWRConfig>);
+  expect(await screen.findByText('FOMO 个人页起点快照 · 本组内排名，组间不比较')).toBeTruthy();
+  expect(screen.getByText('FOMO 起点＋本代增量 · 本组内排名，组间不比较')).toBeTruthy();
+  expect(screen.getAllByText('组内 1')).toHaveLength(3);
+  expect(screen.queryByText('0', {selector: 'td span'})).toBeNull();
+  expect(screen.getByText(/按同一口径分组展示收益与名次/)).toBeTruthy();
+});

@@ -37,3 +37,15 @@ describe('unified external leaderboard adapter', () => {
     await expect(getUnifiedLeaderboard('7d')).rejects.toThrow(/non-decimal/);
   });
 });
+
+it('preserves cohort order and rank-zero metadata instead of calculating a mixed ranking', async () => {
+  const bases = ['fomo_profile_v1:accounting_replay', 'fomo_profile_v1:source_snapshot'];
+  const list = bases.map((basis, index) => ({rank: 0, ranking_basis_id: basis, ranking_eligible: false, ranking_reason: 'incomparable_ranking_basis', cohort_rank: 1, identity: {type: 'external_user', id: `subject:${index + 1}`, user_type: 2}, dimension: 'Global', total_profit_usd: index === 0 ? '1' : '999999999999999999.999'}));
+  const ranking_cohorts = bases.map(basis_id => ({basis_id, count: 1, ranking_eligible: false, reason: 'incomparable_ranking_basis'}));
+  callMock.mockResolvedValueOnce({data: {meta: sourceMeta, snapshot: {window: 'all', dimension: 'Global', list, ranking_cohorts}}});
+  const result = await getUnifiedLeaderboard('all');
+  expect(result.list.map(row => row.ranking_basis_id)).toEqual(bases);
+  expect(result.list.map(row => row.rank)).toEqual([0, 0]);
+  expect(result.list.map(row => row.cohort_rank)).toEqual([1, 1]);
+  expect(result.ranking_cohorts).toEqual(ranking_cohorts);
+});
