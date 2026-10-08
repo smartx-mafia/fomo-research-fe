@@ -1,4 +1,5 @@
 import {call} from './envelope';
+import type {SmartMoneyAccounting} from './smartmoney-accounting';
 import {assertProviderSnapshotMeta, type SourceMeta} from './smartmoney-source';
 import {isExternalSubjectId} from '@/lib/smartmoney-identity';
 
@@ -9,6 +10,9 @@ export type UnifiedLeaderboardIdentity =
 
 export type UnifiedLeaderboardEntry = {
   rank: number;
+  cohort_rank?: number;
+  ranking_basis_id?: string;
+  accounting?: SmartMoneyAccounting;
   identity: UnifiedLeaderboardIdentity;
   profile: {display_name?: string; username?: string; avatar_url?: string; x_handle?: string};
   platforms: string[];

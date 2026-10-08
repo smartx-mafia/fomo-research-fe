@@ -1,5 +1,7 @@
 'use client';
 
+import {rankingBasisLabel} from '@/api/smartmoney-accounting';
+
 import {useState} from 'react';
 import useSWR from 'swr';
 import {ApiError} from '@/api/envelope';
@@ -46,9 +48,10 @@ function LeaderboardRow({entry}: {entry: UnifiedLeaderboardEntry}) {
     (entry.identity.type === 'external_user' ? entry.identity.id : entry.identity.address);
   const lastObserved = timestamp(entry.snapshot_at);
   return <tr className="border-t border-border transition hover:bg-surface-2/60">
-    <td className="px-4 py-3"><span className={`inline-flex h-6 min-w-6 items-center justify-center rounded-md px-1 font-mono text-xs font-bold ${entry.rank <= 3 ? 'bg-accent/15 text-accent' : 'text-muted'}`}>{entry.rank}</span></td>
+    <td className="px-4 py-3"><span className={`inline-flex h-6 min-w-6 items-center justify-center rounded-md px-1 font-mono text-xs font-bold ${entry.rank >= 1 && entry.rank <= 3 ? 'bg-accent/15 text-accent' : 'text-muted'}`}>{entry.rank > 0 ? entry.rank : entry.cohort_rank && entry.cohort_rank > 0 ? `组内 ${entry.cohort_rank}` : '—'}</span></td>
     <td className="px-3 py-3"><a href={rowHref(entry)} className="font-medium text-foreground hover:text-accent">{display}</a>
       {entry.identity.type === 'external_user' ? <p className="mt-1 font-mono text-[10px] text-muted">{entry.identity.id}</p> : <p className="mt-1 break-all font-mono text-[10px] text-muted">{entry.identity.address}</p>}
+      {entry.rank === 0 ? <p className="mt-1 text-xs text-muted">{rankingBasisLabel(entry.ranking_basis_id || entry.accounting?.ranking_basis_id || entry.pnl_basis)}</p> : null}
       {entry.profile.x_handle ? <a className="mt-1 inline-block text-xs text-accent hover:underline" href={`https://x.com/${encodeURIComponent(entry.profile.x_handle)}`} target="_blank" rel="noreferrer">@{entry.profile.x_handle}</a> : null}
     </td>
     <td className="px-3 py-3"><div className="flex flex-wrap gap-1">{entry.platforms.map((platform) => <span key={platform} className="rounded border border-border px-1.5 py-0.5 text-[10px] text-muted">{platform}</span>)}{entry.platforms.length === 0 ? <span className="text-xs text-muted">未标注</span> : null}</div><p className="mt-1 text-[10px] text-muted">{entry.chains.length ? entry.chains.join(' · ') : '链范围未知'}</p></td>
@@ -65,13 +68,14 @@ export function LeaderboardView() {
     ([, selectedWindow]) => getUnifiedLeaderboard(selectedWindow as UnifiedLeaderboardWindow, session?.jwt),
     {shouldRetryOnError: false, revalidateOnFocus: true});
   const apiError = board.error instanceof ApiError ? board.error : meta.error instanceof ApiError ? meta.error : undefined;
+  const mixedCohorts = board.data?.list.some((entry) => entry.rank === 0) ?? false;
   const supportedWindows = allWindows.filter((candidate) => !meta.data || meta.data.windows.includes(candidate));
 
   return <div className="space-y-5">
-    <header className="flex flex-wrap items-end justify-between gap-4"><div><h1 className="text-2xl font-semibold tracking-tight">聪明钱榜单</h1><p className="mt-1 text-sm text-muted">展示外部聪明钱主体与钱包，按美元总收益排序。</p></div>
+    <header className="flex flex-wrap items-end justify-between gap-4"><div><h1 className="text-2xl font-semibold tracking-tight">聪明钱榜单</h1><p className="mt-1 text-sm text-muted">{mixedCohorts ? '按收益口径分别排名；组间名次和总额不直接比较。' : '展示外部聪明钱主体与钱包，按美元总收益排序。'}</p></div>
       <div className="flex items-center gap-3 text-xs text-muted">{board.data?.updated_at ? <span>榜单 {age(board.data.updated_at)} 更新</span> : null}<button type="button" disabled={board.isValidating} onClick={() => void board.mutate()} className="rounded-md border border-border px-3 py-2 text-accent disabled:opacity-50">{board.isValidating ? '刷新中…' : '刷新'}</button></div></header>
     <div role="note" className="rounded-lg border border-accent/25 bg-accent/5 px-4 py-3 text-xs leading-5 text-muted">
-      <p>当前是外部聪明钱的供应商快照榜单，未经链上账本核验。表内时间为各行参与收益的最旧观测时间；榜单只包含已发布的前 100 名，不代表全部聪明钱或完整用户 PnL。</p>
+      <p>{mixedCohorts ? '当前榜单含多个收益口径；仅展示各组已发布条目，不代表全球前100或完整用户PnL。请结合每行口径与观测时间查看。' : '当前是外部聪明钱的供应商快照榜单，未经链上账本核验。表内时间为各行参与收益的最旧观测时间；榜单只包含已发布的前 100 名，不代表全部聪明钱或完整用户 PnL。'}</p>
       {board.data ? <p className="mt-1">身份来源：{sourceName(board.data.meta.source)} · 数据提供方：{sourceName(board.data.meta.data_provider)} · 观测时间：{board.data.meta.as_of || '未知'} · 覆盖状态：仅榜单筛选范围</p> : null}
       {board.data?.stale ? <strong className="mt-1 block text-down">榜单构建已延迟，请谨慎参考。</strong> : null}
     </div>

@@ -1,6 +1,8 @@
 'use client';
 
 import {useState} from 'react';
+import {unrealizedLabel} from '@/api/smartmoney-accounting';
+import {SmartMoneyAccountingNote} from './SmartMoneyAccountingNote';
 import useSWR from 'swr';
 import {
   getSourceActions,
@@ -51,7 +53,8 @@ function coverageName(raw: SourceMeta['coverage']): string {
 function Provenance({meta}: {meta: SourceMeta}) {
   return <div className="mt-2 text-xs leading-5 text-muted">
     <p>身份来源：{sourceName(meta.source)} · 数据提供方：{sourceName(meta.data_provider)} · 观测时间：{meta.as_of || '未知'}
-      {' · '}覆盖状态：{coverageName(meta.coverage)} · 供应商快照，未经链上账本核验</p>
+      {' · '}覆盖状态：{coverageName(meta.coverage)} · 未经完整链上核验</p>
+    <SmartMoneyAccountingNote accounting={meta.accounting} />
     {meta.coverage !== 'complete' || !meta.as_of ?
       <p className="text-amber-500">观测时间或覆盖范围不完整；下方记录不能代表全部仓位、成交或收益。</p> : null}
   </div>;
@@ -63,7 +66,7 @@ function PanelError({retry}: {retry: () => void}) {
   </div>;
 }
 
-function PositionRows({title, rows, coverage}: {title: string; rows: SourcePosition[]; coverage: SourceMeta['coverage']}) {
+function PositionRows({title, rows, coverage, accountingSource}: {title: string; rows: SourcePosition[]; coverage: SourceMeta['coverage']; accountingSource?: string}) {
   return <div className="mt-4">
     <h3 className="text-sm font-medium text-foreground">{title}</h3>
     {rows.length === 0 ? <p className="mt-2 text-sm text-muted">
@@ -74,10 +77,12 @@ function PositionRows({title, rows, coverage}: {title: string; rows: SourcePosit
           <p className="font-medium">{position.symbol || position.name || value(position.token_address)}</p>
           <p className="break-all font-mono text-xs text-muted">{value(position.chain)} · {value(position.token_address)}</p>
           <p className="text-xs text-muted">数量 {value(position.balance)}</p>
+          {position.balance_quantity !== undefined && position.balance_quantity !== '' ? <p className="text-xs text-muted">余额观察 {value(position.balance_quantity)} · 绩效库存 {value(position.position_quantity)}</p> : null}
+          {position.asset_role === 'native_observation' ? <p className="text-xs text-muted">原生余额观察 · 未计入绩效</p> : null}
         </div>
         <div className="text-right text-xs text-muted">
           <p>估值 {money(position.usd_value)}</p>
-          <p>成本 {money(position.accu_cost || position.cost)}</p>
+          <p>成本 {money(accountingSource === 'gmgn' ? (position.accu_cost ?? position.cost) : (position.accu_cost || position.cost))}</p>
           <p>已实现 {money(position.realized_profit)} · 未实现 {money(position.unrealized_profit)}</p>
         </div>
       </div>)}</div>}
@@ -155,9 +160,9 @@ export function SmartMoneySourcePanels({route}: {route: IdentityRoute}) {
       {positions.error ? <PanelError retry={() => void positions.mutate()} /> : null}
       {!positions.data && !positions.error ? <p className="mt-3 text-sm text-muted">正在加载仓位…</p> : null}
       {positions.data ? <><Provenance meta={positions.data.meta} />
-        <PositionRows title="持有中" rows={open} coverage={positions.data.meta.coverage} />
+        <PositionRows title="持有中" rows={open} coverage={positions.data.meta.coverage} accountingSource={positions.data.meta.accounting?.source} />
         {cap && sourceSurfaceReady(cap, 'closed_positions') ?
-          <PositionRows title="已清仓" rows={closed} coverage={positions.data.meta.coverage} /> : null}</> : null}
+          <PositionRows title="已清仓" rows={closed} coverage={positions.data.meta.coverage} accountingSource={positions.data.meta.accounting?.source} /> : null}</> : null}
     </section> : null}
 
     {actionsReady ? <section className="rounded-xl border border-border bg-surface p-5">
@@ -184,7 +189,8 @@ export function SmartMoneySourcePanels({route}: {route: IdentityRoute}) {
             <div key={entry.window} className="rounded-lg border border-border/70 p-3 text-sm">
               <p className="font-medium">{entry.window}</p>
               <p className="mt-2">总收益 {money(entry.total_profit_usd)}</p>
-              <p className="text-xs text-muted">已实现 {money(entry.realized_profit_usd)} · 未实现 {money(entry.unrealized_profit_usd)}</p>
+              <SmartMoneyAccountingNote accounting={entry.accounting} />
+              <p className="text-xs text-muted">已实现 {money(entry.realized_profit_usd)} · {unrealizedLabel(entry.window, entry.accounting)} {money(entry.unrealized_profit_usd)}</p>
               <p className="text-xs text-muted">已实现成本 {money(entry.realized_cost_usd)}</p>
               <p className="text-xs text-muted">买入 {value(entry.buy_count)} · 卖出 {value(entry.sell_count)}</p>
               <p className="mt-1 text-xs text-muted">覆盖状态：{entry.coverage ? coverageName(entry.coverage as SourceMeta['coverage']) : '未知'} · 观测时间：{entry.as_of || '未知'}</p>

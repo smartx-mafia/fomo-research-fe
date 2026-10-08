@@ -1,10 +1,13 @@
 import {call} from './envelope';
+import type {SmartMoneyAccounting} from './smartmoney-accounting';
+import type {SmartMoneyHolding} from './smartmoney';
 
 export type SourceIdentity =
   | {type: 'user'; userId: string}
   | {type: 'wallet'; namespace: 'evm' | 'solana'; address: string};
 
 export type SourceMeta = {
+  accounting?: SmartMoneyAccounting;
   source: string;
   data_mode: 'provider_snapshot';
   data_provider: string;
@@ -22,19 +25,7 @@ export type SourceCapabilities = {
   surfaces: Record<string, SourceSurface>;
 };
 
-export type SourcePosition = {
-  chain?: string;
-  token_address?: string;
-  symbol?: string;
-  name?: string;
-  balance?: string;
-  usd_value?: string;
-  cost?: string;
-  accu_cost?: string;
-  realized_profit?: string;
-  unrealized_profit?: string;
-  total_profit?: string;
-};
+export type SourcePosition = SmartMoneyHolding & {cost?: string};
 
 type WalletPositions = {open: SourcePosition[]; closed: SourcePosition[]};
 type UserPositions = {list: SourcePosition[]; open: SourcePosition[]; closed: SourcePosition[]};
@@ -64,6 +55,7 @@ export type SourceActions = {
 };
 
 export type SourcePnLWindow = {
+  accounting?: SmartMoneyAccounting;
   window: string;
   realized_profit_usd: string;
   unrealized_profit_usd: string;

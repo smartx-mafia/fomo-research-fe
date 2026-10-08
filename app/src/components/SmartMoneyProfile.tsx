@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {SmartMoneyAccountingNote} from "./SmartMoneyAccountingNote";
 import {
   getSmartMoneyHoldings,
   getSmartMoneyTrades,
@@ -58,6 +59,7 @@ export function SmartMoneyProfile({ chain, address }: { chain: string; address: 
             <span className="ml-2">({formatRatio(holdings.total_profit_ratio)})</span>
           )}
         </div>
+        <SmartMoneyAccountingNote accounting={holdings?.accounting} />
       </div>
 
       <section className="rounded-lg border border-border bg-surface">
@@ -67,7 +69,7 @@ export function SmartMoneyProfile({ chain, address }: { chain: string; address: 
         ) : holdings === null ? (
           <p className="p-4 text-sm text-muted">Loading holdings…</p>
         ) : (holdings.open?.length ?? 0) === 0 ? (
-          <p className="p-4 text-sm text-muted">No open holdings.</p>
+          <p className="p-4 text-sm text-muted">{holdings.accounting?.source === 'gmgn' && holdings.accounting.total_status === 'unavailable' ? 'Current holdings are unavailable; this does not mean the account is empty.' : 'No open holdings.'}</p>
         ) : (
           holdings.open?.map((item, index) => (
             <div key={`${item.token_address ?? "unknown"}:${index}`} className="flex items-center justify-between gap-3 border-b border-border/50 px-4 py-3 last:border-0">
@@ -75,6 +77,8 @@ export function SmartMoneyProfile({ chain, address }: { chain: string; address: 
               <div className="shrink-0 text-right text-xs text-muted">
                 <div className="text-sm text-foreground">{formatMoney(item.usd_value)}</div>
                 <div>PnL {formatMoney(item.total_profit)}</div>
+                {item.balance_quantity !== undefined && item.balance_quantity !== '' ? <div>Balance {item.balance_quantity} · Position {item.position_quantity || '—'}</div> : null}
+                {item.asset_role === 'native_observation' ? <div>Native balance · excluded from performance</div> : null}
               </div>
             </div>
           ))
@@ -88,7 +92,7 @@ export function SmartMoneyProfile({ chain, address }: { chain: string; address: 
         ) : holdings === null ? (
           <p className="p-4 text-sm text-muted">Loading holdings…</p>
         ) : (holdings.closed?.length ?? 0) === 0 ? (
-          <p className="p-4 text-sm text-muted">No closed holdings.</p>
+          <p className="p-4 text-sm text-muted">{holdings.accounting?.source === 'gmgn' && holdings.accounting.total_status === 'unavailable' ? 'Closed holdings are unavailable.' : 'No closed holdings.'}</p>
         ) : (
           holdings.closed?.map((item, index) => (
             <div key={`${item.token_address ?? "unknown"}:${index}`} className="flex items-center justify-between gap-3 border-b border-border/50 px-4 py-3 last:border-0">

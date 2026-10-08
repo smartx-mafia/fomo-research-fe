@@ -36,3 +36,14 @@ it('keys personalized board reads by the current session and forwards the JWT', 
   await waitFor(() => expect(board).toHaveBeenCalledWith('7d', 'viewer-jwt'));
   expect(await screen.findByText('榜单构建已延迟，请谨慎参考。')).toBeTruthy();
 });
+
+it('shows only cohort rank for mixed accounting bases, never a rank zero medal', async () => {
+ session.mockReturnValue(null);
+ meta.mockResolvedValue({windows:['all'],dimensions:['Global']});
+ board.mockResolvedValue({meta:{source:'gmgn',data_mode:'provider_snapshot',data_provider:'gmgn_baseline_ledger',coverage:'ranked_selection',ledger_verified:false,as_of:''},window:'all',dimension:'Global',stale:false,count:1,list:[{rank:0,cohort_rank:1,identity:{type:'wallet',namespace:'evm',address:'0xabc',user_type:2},profile:{display_name:'GMGN account'},platforms:['GMGN'],dimension:'Global',pnl_basis:'gmgn_source_v1:source_snapshot',total_profit_usd:'100',snapshot_at:'0',chains:['eth'],identity_revision:'new'}]});
+ render(<SWRConfig value={{provider:()=>new Map()}}><LeaderboardView /></SWRConfig>);
+ expect(await screen.findByText('组内 1')).toBeTruthy();
+ expect(screen.getByText('组内 1').className).not.toContain('bg-accent');
+ expect(screen.getByText('GMGN 起点快照')).toBeTruthy();
+ expect(screen.getByText(/组间名次和总额不直接比较/)).toBeTruthy();
+});

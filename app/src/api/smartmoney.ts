@@ -1,11 +1,24 @@
 /** 聪明钱详情公共接口（docs/contracts/smartmoney-detail.md）。 */
 import {call} from './envelope';
+import type {SmartMoneyAccounting} from './smartmoney-accounting';
 
 export type SmartMoneyHolding = {
   chain?: string;
   launchpad?: string;
   /** Average holding cost × collected total supply (FDV), decimal USD; empty means unavailable. */
   avg_cost_market_cap_usd?: string;
+  position_quantity?: string;
+  balance_quantity?: string;
+  quantity_gap?: string;
+  balance_market_value?: string;
+  performance_market_value?: string;
+  performance_included?: boolean | null;
+  asset_role?: string;
+  source_decimals?: number | null;
+  position_pnl_basis?: string;
+  cost_basis_kind?: string;
+  source_lifetime_realized_reference?: string;
+  realized_since_baseline?: string;
   token_address?: string;
   symbol?: string;
   name?: string;
@@ -35,6 +48,7 @@ export type SmartMoneyHolding = {
 };
 
 export type SmartMoneyHoldings = {
+  accounting?: SmartMoneyAccounting;
   chain: string;
   address: string;
   total_profit?: string;
@@ -46,6 +60,7 @@ export type SmartMoneyHoldings = {
 };
 
 export type SmartMoneyPnlWindow = {
+  accounting?: SmartMoneyAccounting;
   window: string;
   total_profit?: string;
   realized_profit?: string;
