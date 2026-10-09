@@ -16,17 +16,17 @@ import {
   type SourceMeta,
   type SourcePosition,
 } from '@/api/smartmoney-source';
+import {normalizeSmartMoneySourceChain} from '@/lib/smartmoney-identity';
 import type {SmartMoneyIdentityRoute} from '@/hooks/useSmartMoneyIdentityRoute';
 
 type IdentityRoute = Extract<SmartMoneyIdentityRoute, {status: 'subject' | 'wallet'}>;
-const evmChains = ['base', 'ethereum', 'bsc', 'robinhood'] as const;
 
 function value(raw?: string): string {
-  return raw === undefined || raw === '' ? '—' : raw;
+  return typeof raw !== 'string' || raw === '' ? '—' : raw;
 }
 
 function money(raw?: string): string {
-  return raw === undefined || raw === '' ? '—' : `$${raw}`;
+  return typeof raw !== 'string' || !/^-?\d+(?:\.\d+)?$/.test(raw) ? '—' : `$${raw}`;
 }
 
 function eventTime(raw?: string | number): string {
@@ -50,11 +50,11 @@ function coverageName(raw: SourceMeta['coverage']): string {
   return {complete: '完整', partial: '部分', unknown: '未知', ranked_selection: '仅榜单筛选范围'}[raw] ?? raw;
 }
 
-function Provenance({meta}: {meta: SourceMeta}) {
+function Provenance({meta, scopeChain, showReferences = false}: {meta: SourceMeta; scopeChain?: string; showReferences?: boolean}) {
   return <div className="mt-2 text-xs leading-5 text-muted">
     <p>身份来源：{sourceName(meta.source)} · 数据提供方：{sourceName(meta.data_provider)} · 观测时间：{meta.as_of || '未知'}
       {' · '}覆盖状态：{coverageName(meta.coverage)} · 未经完整链上核验</p>
-    <SmartMoneyAccountingNote accounting={meta.accounting} />
+    <SmartMoneyAccountingNote accounting={meta.accounting} scopeChain={scopeChain} showReferences={showReferences} />
     {meta.coverage !== 'complete' || !meta.as_of ?
       <p className="text-amber-500">观测时间或覆盖范围不完整；下方记录不能代表全部仓位、成交或收益。</p> : null}
   </div>;
@@ -72,7 +72,7 @@ function PositionRows({title, rows, coverage, accountingSource}: {title: string;
     {rows.length === 0 ? <p className="mt-2 text-sm text-muted">
       {coverage === 'complete' ? '当前快照没有记录。' : '当前未返回记录；快照覆盖不足时不能据此判断为零。'}
     </p> : <div className="mt-2 divide-y divide-border/60">{rows.map((position, index) =>
-      <div key={`${position.chain ?? ''}:${position.token_address ?? ''}:${index}`} className="flex flex-wrap justify-between gap-3 py-3 text-sm">
+      <div key={`${position.chain ?? ''}:${position.token_address ?? ''}:${index}`} className="flex flex-wrap justify-between gap-3 py-3 text-sm" style={{contentVisibility: 'auto', containIntrinsicSize: 'auto 120px'}}>
         <div className="min-w-0">
           <p className="font-medium">{position.symbol || position.name || value(position.token_address)}</p>
           <p className="break-all font-mono text-xs text-muted">{value(position.chain)} · {value(position.token_address)}</p>
@@ -82,7 +82,7 @@ function PositionRows({title, rows, coverage, accountingSource}: {title: string;
         </div>
         <div className="text-right text-xs text-muted">
           <p>估值 {money(position.usd_value)}</p>
-          <p>成本 {money(accountingSource === 'gmgn' ? (position.accu_cost ?? position.cost) : (position.accu_cost || position.cost))}</p>
+          <p>成本 {money(accountingSource === 'gmgn' ? position.accu_cost : (position.accu_cost || position.cost))}</p>
           <p>已实现 {money(position.realized_profit)} · 未实现 {money(position.unrealized_profit)}</p>
         </div>
       </div>)}</div>}
@@ -101,8 +101,8 @@ function ActionRow({action}: {action: SourceAction}) {
 }
 
 export function SmartMoneySourcePanels({route}: {route: IdentityRoute}) {
-  const [evmChain, setEvmChain] = useState<string>(route.status === 'wallet' ? route.sourceChain ?? 'base' : 'base');
-  const [actionPages, setActionPages] = useState<string[]>(['']);
+  const [evmChain, setEvmChain] = useState<string>(route.status === 'wallet' ? route.sourceChain ?? '' : '');
+  const [actionHistory, setActionHistory] = useState<{chain?: string; pages: string[]}>({pages: ['']});
   const capabilities = useSWR('smartmoney-source-capabilities-v1', () => getSourceCapabilities(), {
     shouldRetryOnError: false,
     refreshInterval: (latest) => {
@@ -113,19 +113,36 @@ export function SmartMoneySourcePanels({route}: {route: IdentityRoute}) {
     refreshWhenHidden: false, refreshWhenOffline: false,
   });
   const cap = capabilities.data;
-  const availableEvm = evmChains.filter((candidate) => cap?.supported_chains.includes(candidate));
+  const namespace = route.status === 'wallet' ? route.namespace : 'evm';
+  const availableChains = [...new Set((cap?.supported_chains ?? [])
+    .map((candidate) => normalizeSmartMoneySourceChain(candidate, namespace)).filter((candidate) => candidate !== undefined))];
   const identity: SourceIdentity = route.status === 'subject'
     ? {type: 'user', userId: route.subjectId}
     : {type: 'wallet', namespace: route.namespace, address: route.walletAddress};
   const identityKey = route.status === 'subject' ? `user:${route.subjectId}` : `wallet:${route.namespace}:${route.walletAddress}:${route.sourceChain ?? ''}`;
-  const chain = route.status === 'subject' ? undefined : route.namespace === 'solana' ? 'solana' :
-    availableEvm.includes(evmChain as typeof evmChains[number]) ? evmChain : availableEvm[0];
-  const scopeReady = route.status === 'subject' || (route.namespace === 'solana'
-    ? cap?.supported_chains.includes('solana') === true : availableEvm.length > 0);
+  const initialChain = route.status === 'subject' ? undefined :
+    route.sourceChain && availableChains.includes(route.sourceChain) ? route.sourceChain : availableChains[0];
+  const scopeReady = route.status === 'subject' || availableChains.length > 0;
+  const pnlReady = Boolean(cap && scopeReady && sourceSurfaceReady(cap, 'pnl'));
+  // This small, same-key-deduplicated read establishes ownership and declared
+  // chain scope. Global capabilities alone cannot establish a wallet's chains.
+  const scope = useSWR(pnlReady ? ['smartmoney-source-pnl', identityKey, initialChain] : null,
+    () => getSourcePnL(identity, initialChain), {shouldRetryOnError: false, revalidateOnFocus: true,
+      refreshInterval: sourceRefreshMs(cap, 'pnl'), refreshWhenHidden: false, refreshWhenOffline: false});
+  const gmgnOwner = scope.data?.meta.accounting?.source === 'gmgn';
+  const declaredChains = [...new Set((scope.data?.meta.accounting?.source_references ?? [])
+    .filter((ref) => ref.window === 'all')
+    .map((ref) => normalizeSmartMoneySourceChain(ref.chain ?? '', namespace)).filter((candidate) => candidate !== undefined))];
+  const selectedChains = gmgnOwner ? declaredChains : availableChains;
+  const chain = route.status === 'subject' ? undefined : gmgnOwner && evmChain === 'all' ? 'all' :
+    selectedChains.includes(evmChain as typeof selectedChains[number]) ? evmChain :
+      selectedChains[0] ?? (gmgnOwner ? 'all' : initialChain);
+  const actionPages = actionHistory.chain === chain ? actionHistory.pages : [''];
   const cursor = actionPages[actionPages.length - 1];
-  const positionsReady = cap && scopeReady ? sourceSurfaceReady(cap, 'positions') : false;
-  const actionsReady = cap && scopeReady ? sourceSurfaceReady(cap, 'actions') : false;
-  const pnlReady = cap && scopeReady ? sourceSurfaceReady(cap, 'pnl') : false;
+  const positionsReady = Boolean(cap && scopeReady && sourceSurfaceReady(cap, 'positions'));
+  // Actions have their own concrete-chain contract; an account-wide PnL read
+  // does not authorize merging transaction lists across chains.
+  const actionsReady = Boolean(cap && scopeReady && chain !== 'all' && sourceSurfaceReady(cap, 'actions'));
   const positions = useSWR(positionsReady ? ['smartmoney-source-positions', identityKey, chain] : null,
     () => getSourcePositions(identity, chain), {shouldRetryOnError: false, revalidateOnFocus: true,
       refreshInterval: sourceRefreshMs(cap, 'positions'), refreshWhenHidden: false, refreshWhenOffline: false});
@@ -143,13 +160,13 @@ export function SmartMoneySourcePanels({route}: {route: IdentityRoute}) {
 
   return <div className="space-y-4">
     <div role="note" className="rounded-lg border border-accent/25 bg-accent/5 px-4 py-3 text-xs leading-5 text-muted">
-      以下是现有供应商快照，不是已验证链上账本或完整用户 PnL。各接口的观测时间和覆盖范围独立。
+      各接口的观测时间和覆盖范围独立。请以服务端公布的金额及状态为准，不从可见仓位相加推算账户收益。
     </div>
-    {route.status === 'wallet' && route.namespace === 'evm' && availableEvm.length > 0 ?
-      <div className="flex flex-wrap items-center gap-2 text-sm"><span className="text-muted">链</span>{availableEvm.map((candidate) =>
+    {route.status === 'wallet' && (selectedChains.length > 0 || gmgnOwner) ?
+      <div className="flex flex-wrap items-center gap-2 text-sm"><span className="text-muted">范围</span>{(gmgnOwner ? ['all', ...selectedChains] : selectedChains).map((candidate) =>
         <button key={candidate} type="button" aria-pressed={chain === candidate}
           className={`rounded-md border px-2.5 py-1 ${chain === candidate ? 'border-accent text-accent' : 'border-border text-muted'}`}
-          onClick={() => { setEvmChain(candidate); setActionPages(['']); }}>{candidate}</button>)}</div> : null}
+          onClick={() => { setEvmChain(candidate); setActionHistory({chain: candidate, pages: ['']}); }}>{candidate === 'all' ? '全部已纳入链' : candidate}</button>)}</div> : null}
     {capabilities.error ? <PanelError retry={() => void capabilities.mutate()} /> : null}
     {!cap && !capabilities.error ? <p className="text-sm text-muted">正在检查供应商快照能力…</p> : null}
     {cap && !scopeReady ? <p className="text-sm text-muted">当前钱包的链尚未开放供应商快照读取。</p> : null}
@@ -174,27 +191,36 @@ export function SmartMoneySourcePanels({route}: {route: IdentityRoute}) {
         {actions.data.snapshot.list.length === 0 ? <p className="mt-3 text-sm text-muted">当前页没有成交记录；这不证明历史为空。</p> :
           <div className="mt-3 divide-y divide-border/60">{actions.data.snapshot.list.map((action, index) => <ActionRow key={`${action.tx_hash ?? ''}:${index}`} action={action} />)}</div>}
         <div className="mt-3 flex gap-3 text-xs">
-          {actionPages.length > 1 ? <button type="button" className="text-accent underline" onClick={() => setActionPages((pages) => pages.slice(0, -1))}>上一页</button> : null}
-          {actions.data.snapshot.next_cursor ? <button type="button" className="text-accent underline" onClick={() => setActionPages((pages) => [...pages, actions.data!.snapshot.next_cursor])}>下一页</button> : null}
+          {actionPages.length > 1 ? <button type="button" className="text-accent underline" onClick={() => setActionHistory({chain, pages: actionPages.slice(0, -1)})}>上一页</button> : null}
+          {actions.data.snapshot.next_cursor ? <button type="button" className="text-accent underline" onClick={() => setActionHistory({chain, pages: [...actionPages, actions.data!.snapshot.next_cursor]})}>下一页</button> : null}
         </div></> : null}
     </section> : null}
 
     {pnlReady ? <section className="rounded-xl border border-border bg-surface p-5">
-      <h2 className="font-semibold">供应商 PnL 窗口</h2>
+      <h2 className="font-semibold">收益窗口{gmgnOwner ? chain === 'all' ? ' · 全部已纳入链' : ` · ${chain}` : ''}</h2>
       {pnl.error ? <PanelError retry={() => void pnl.mutate()} /> : null}
       {!pnl.data && !pnl.error ? <p className="mt-3 text-sm text-muted">正在加载收益…</p> : null}
-      {pnl.data ? <><Provenance meta={pnl.data.meta} />
+      {pnl.data ? <><Provenance meta={pnl.data.meta} scopeChain={chain} showReferences />
         {pnl.data.windows.length === 0 ? <p className="mt-3 text-sm text-muted">当前没有可用窗口；未知值不会记作零。</p> :
           <div className="mt-3 grid gap-3 md:grid-cols-2">{pnl.data.windows.map((entry) =>
             <div key={entry.window} className="rounded-lg border border-border/70 p-3 text-sm">
               <p className="font-medium">{entry.window}</p>
               <p className="mt-2">总收益 {money(entry.total_profit_usd)}</p>
               <SmartMoneyAccountingNote accounting={entry.accounting} />
-              <p className="text-xs text-muted">已实现 {money(entry.realized_profit_usd)} · {unrealizedLabel(entry.window, entry.accounting)} {money(entry.unrealized_profit_usd)}</p>
+              <p className="text-xs text-muted">{entry.accounting?.source === 'gmgn' && ['warming_up', 'partial', 'partial_day'].includes(entry.accounting.window_status ?? '') ? '当前片段已实现' : '已实现'} {money(entry.realized_profit_usd)} · {unrealizedLabel(entry.window, entry.accounting)} {money(entry.unrealized_profit_usd)}</p>
               <p className="text-xs text-muted">已实现成本 {money(entry.realized_cost_usd)}</p>
               <p className="text-xs text-muted">买入 {value(entry.buy_count)} · 卖出 {value(entry.sell_count)}</p>
               <p className="mt-1 text-xs text-muted">覆盖状态：{entry.coverage ? coverageName(entry.coverage as SourceMeta['coverage']) : '未知'} · 观测时间：{entry.as_of || '未知'}</p>
-            </div>)}</div>}</> : null}
+            </div>)}</div>}
+        {pnl.data.meta.accounting?.source === 'gmgn' ? <details className="mt-4">
+          <summary className="cursor-pointer text-accent">每日收益（UTC 自然日）</summary>
+          {(pnl.data.daily_windows ?? []).length === 0 ? <p className="mt-2 text-sm text-muted">尚未发布每日收益，不代表每日收益为零。</p> :
+            pnl.data.daily_windows!.map((day) => <div key={day.window} className="mt-2 border-t border-border pt-2">
+              <p>{day.window.replace(/^day:/, '')} · 总收益 {money(day.total_profit_usd)}</p>
+              <SmartMoneyAccountingNote accounting={day.accounting} />
+            </div>)}
+        </details> : null}</> : null}
     </section> : null}
+    {gmgnOwner && chain === 'all' ? <p className="text-xs text-muted">查看成交记录请先选择一条已纳入的链。</p> : null}
   </div>;
 }

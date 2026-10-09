@@ -51,8 +51,11 @@ describe('provider snapshot source reads', () => {
     callMock.mockResolvedValueOnce({data: {meta, snapshot: {wallet: {open: [], closed: []}}}});
     await getSourcePositions({type: 'wallet', namespace: 'evm', address: '0xAbC'}, 'base');
     expect(callMock.mock.calls[1][0]).toBe('/v2/smartmoney/positions?identity.type=wallet&identity.namespace=evm&identity.address=0xAbC&chain=base');
-    await expect(getSourcePositions({type: 'wallet', namespace: 'evm', address: '0xAbC'})).rejects.toThrow('one chain');
-    expect(callMock).toHaveBeenCalledTimes(2);
+    callMock.mockResolvedValueOnce({data: {meta, snapshot: {wallet: {open: [], closed: []}}}});
+    await getSourcePositions({type: 'wallet', namespace: 'evm', address: '0xAbC'}, 'all');
+    expect(callMock.mock.calls[2][0]).toContain('chain=all');
+    await expect(getSourceActions({type: 'wallet', namespace: 'evm', address: '0xAbC'}, 'all')).rejects.toThrow('one chain');
+    expect(callMock).toHaveBeenCalledTimes(3);
   });
 
   it('keeps opaque cursors intact and refuses unverified provenance or wrong snapshot branches', async () => {

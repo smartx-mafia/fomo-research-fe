@@ -27,7 +27,7 @@ export type SourceCapabilities = {
 
 export type SourcePosition = SmartMoneyHolding & {cost?: string};
 
-type WalletPositions = {open: SourcePosition[]; closed: SourcePosition[]};
+type WalletPositions = {open: SourcePosition[]; closed: SourcePosition[]; accounting?: SmartMoneyAccounting; total_profit?: string};
 type UserPositions = {list: SourcePosition[]; open: SourcePosition[]; closed: SourcePosition[]};
 export type SourcePositions = {
   meta: SourceMeta;
@@ -56,6 +56,8 @@ export type SourceActions = {
 
 export type SourcePnLWindow = {
   accounting?: SmartMoneyAccounting;
+  effective_from?: string;
+  pnl_basis?: string;
   window: string;
   realized_profit_usd: string;
   unrealized_profit_usd: string;
@@ -66,17 +68,17 @@ export type SourcePnLWindow = {
   buy_count: string;
   sell_count: string;
 };
-export type SourcePnL = {meta: SourceMeta; windows: SourcePnLWindow[]};
+export type SourcePnL = {meta: SourceMeta; windows: SourcePnLWindow[]; daily_windows?: SourcePnLWindow[]};
 
 const exactInt64Fields = ['fetched_at', 'occurred_at', 'snapshot_at', 'mapping_version'] as const;
 
-function sourceParams(identity: SourceIdentity, chain?: string): URLSearchParams {
+function sourceParams(identity: SourceIdentity, chain?: string, allowWalletAll = false): URLSearchParams {
   const params = new URLSearchParams();
   params.set('identity.type', identity.type);
   if (identity.type === 'user') {
     params.set('identity.user_id', identity.userId);
   } else {
-    if (!chain || chain === 'all') throw new Error('A wallet source read requires one chain.');
+    if ((!chain || chain === 'all') && !allowWalletAll) throw new Error('A wallet action read requires one chain.');
     params.set('identity.namespace', identity.namespace);
     params.set('identity.address', identity.address);
   }
@@ -112,7 +114,7 @@ export function sourceRefreshMs(capabilities: SourceCapabilities | undefined, na
 }
 
 export async function getSourcePositions(identity: SourceIdentity, chain?: string, signal?: AbortSignal): Promise<SourcePositions> {
-  const {data} = await call<SourcePositions>(`/v2/smartmoney/positions?${sourceParams(identity, chain)}`,
+  const {data} = await call<SourcePositions>(`/v2/smartmoney/positions?${sourceParams(identity, chain, true)}`,
     {signal, preserveInt64Fields: exactInt64Fields});
   assertProviderSnapshotMeta(data.meta);
   const branch = identity.type === 'wallet' ? data.snapshot?.wallet : data.snapshot?.user;
@@ -135,7 +137,7 @@ export async function getSourceActions(identity: SourceIdentity, chain?: string,
 }
 
 export async function getSourcePnL(identity: SourceIdentity, chain?: string, signal?: AbortSignal): Promise<SourcePnL> {
-  const {data} = await call<SourcePnL>(`/v2/smartmoney/pnl?${sourceParams(identity, chain)}`, {signal});
+  const {data} = await call<SourcePnL>(`/v2/smartmoney/pnl?${sourceParams(identity, chain, true)}`, {signal});
   assertProviderSnapshotMeta(data.meta);
   if (!Array.isArray(data.windows)) throw new Error('Smart Money PnL windows are unavailable.');
   return data;

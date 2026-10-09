@@ -4,6 +4,12 @@ export type SmartMoneyAccounting = {
   generation_id?: string;
   publication_revision?: string;
   method?: string;
+  engine_version?: string;
+  formula_version?: string;
+  policy_version?: string;
+  effective_from?: string;
+  economic_reconciliation_status?: string;
+  quote_status?: string;
   ranking_basis_id?: string;
   total_status?: string;
   decomposition_status?: string;
