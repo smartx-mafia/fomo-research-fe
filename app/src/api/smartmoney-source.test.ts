@@ -37,6 +37,10 @@ describe('provider snapshot source reads', () => {
     expect(sourceSurfaceReady(capabilities, 'actions')).toBe(false);
     expect(sourceSurfaceReady({...capabilities, surfaces: {...capabilities.surfaces,
       positions: {...capabilities.surfaces.positions, reason: 'not_' + capabilities.surfaces.positions.reason}}}, 'positions')).toBe(false);
+    callMock.mockResolvedValue({data: {...data, epoch: 'explicit-data-modes-v1', data_modes: ['provider_snapshot', 'ledger_calculated']}});
+    expect(sourceSurfaceReady(await getSourceCapabilities(), 'positions')).toBe(true);
+    callMock.mockResolvedValue({data: {...data, epoch: 'explicit-data-modes-v1', data_modes: ['ledger_calculated']}});
+    await expect(getSourceCapabilities()).rejects.toThrow('unsupported contract');
     callMock.mockResolvedValue({data: {...data, epoch: 'old'}});
     await expect(getSourceCapabilities()).rejects.toThrow('unsupported contract');
   });

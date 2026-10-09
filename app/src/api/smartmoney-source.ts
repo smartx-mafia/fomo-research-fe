@@ -21,6 +21,7 @@ export type SourceSurface = {enabled: boolean; state: string; reason: string; po
 export type SourceCapabilities = {
   protocol_version: string;
   epoch: string;
+  data_modes?: string[];
   supported_chains: string[];
   surfaces: Record<string, SourceSurface>;
 };
@@ -94,7 +95,9 @@ export function assertProviderSnapshotMeta(meta: SourceMeta | undefined): assert
 
 export async function getSourceCapabilities(signal?: AbortSignal): Promise<SourceCapabilities> {
   const {data} = await call<SourceCapabilities>('/v2/smartmoney/capabilities', {signal});
-  if (data.protocol_version !== '2' || data.epoch !== 'provider-snapshot-v1' ||
+  const supportedEpoch = data.epoch === 'provider-snapshot-v1' ||
+    (data.epoch === 'explicit-data-modes-v1' && Array.isArray(data.data_modes) && data.data_modes.includes('provider_snapshot'));
+  if (data.protocol_version !== '2' || !supportedEpoch ||
     !Array.isArray(data.supported_chains) || !data.surfaces || typeof data.surfaces !== 'object') {
     throw new Error('Smart Money source capabilities have an unsupported contract.');
   }
