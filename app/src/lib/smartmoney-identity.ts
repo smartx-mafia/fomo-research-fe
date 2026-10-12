@@ -2,16 +2,24 @@ export function isExternalSubjectId(value: unknown): value is string {
   return typeof value === 'string' && /^subject:[1-9][0-9]*$/.test(value);
 }
 
+export type SmartMoneySourceChain = 'base' | 'bsc' | 'ethereum' | 'robinhood' | 'solana';
+
+export function normalizeSmartMoneySourceChain(raw: string, namespace: 'evm' | 'solana'): SmartMoneySourceChain | undefined {
+  const chain = raw === 'eth' ? 'ethereum' : raw === 'sol' ? 'solana' : raw;
+  if (namespace === 'solana') return chain === 'solana' ? chain : undefined;
+  return chain === 'base' || chain === 'bsc' || chain === 'ethereum' || chain === 'robinhood' ? chain : undefined;
+}
+
 export type SmartMoneyIdentityRoute =
   | {status: 'pending'}
   | {status: 'subject'; subjectId: string}
-  | {status: 'wallet'; namespace: 'evm' | 'solana'; walletAddress: string}
+  | {status: 'wallet'; namespace: 'evm' | 'solana'; walletAddress: string; sourceChain?: SmartMoneySourceChain}
   | {status: 'legacy'; chain: string; address: string}
   | {status: 'invalid'};
 
 export function parseSmartMoneyIdentityRoute(pathname: string, query: URLSearchParams): SmartMoneyIdentityRoute {
   const invalid = {status: 'invalid'} as const;
-  const keys = ['subject_id', 'namespace', 'wallet_address', 'chain', 'address'];
+  const keys = ['subject_id', 'namespace', 'wallet_address', 'source_chain', 'chain', 'address'];
   if (keys.some((key) => query.getAll(key).length > 1)) return invalid;
 
   const segments = pathname.replace(/\/$/, '').split('/').filter(Boolean);
@@ -28,15 +36,19 @@ export function parseSmartMoneyIdentityRoute(pathname: string, query: URLSearchP
   const hasLegacy = query.has('chain') || query.has('address') || Boolean(pathWallet);
   if (Number(hasSubject) + Number(hasWallet) + Number(hasLegacy) !== 1) return invalid;
   if (hasSubject) {
+    if (query.has('source_chain')) return invalid;
     const subjectId = query.get('subject_id');
     return isExternalSubjectId(subjectId) ? {status: 'subject', subjectId} : invalid;
   }
   if (hasWallet) {
     const namespace = query.get('namespace');
     const walletAddress = query.get('wallet_address');
-    return (namespace === 'evm' || namespace === 'solana') && walletAddress?.trim() === walletAddress && walletAddress
-      ? {status: 'wallet', namespace, walletAddress} : invalid;
+    if ((namespace !== 'evm' && namespace !== 'solana') || !walletAddress || walletAddress.trim() !== walletAddress) return invalid;
+    const rawChain = query.get('source_chain');
+    const sourceChain = rawChain === null ? undefined : normalizeSmartMoneySourceChain(rawChain, namespace);
+    return rawChain !== null && !sourceChain ? invalid : {status: 'wallet', namespace, walletAddress, ...(sourceChain ? {sourceChain} : {})};
   }
+  if (query.has('source_chain')) return invalid;
   const chain = query.get('chain');
   const address = query.get('address');
   if (query.has('chain') || query.has('address')) {
