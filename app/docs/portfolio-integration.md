@@ -8,7 +8,7 @@
 - Closed history uses `/closed?limit=20&cursor=...`; cursors are opaque. Rows retain `cycle_key`, history epoch and completeness. Zero legacy entry IDs do not invalidate a cycle with a real key.
 - Cycle detail uses `/position?chain=...&asset=...&cycle_key=...`. It returns the selected position and all successful trades, without frontend pagination. Mismatched identity, duplicate trades and oversized results fail visibly.
 - Global trades use `/trades?before_id=...&limit=50`. Integer cursors remain strings without Number conversion. Execution prices and total fees are displayed from server values, never reconstructed from fees.
-- Portfolio balances and PnL share the overview request. The removed `/v1/portfolio/balance/curve` is no longer called. Charts support independent PnL and absolute Total assets views; unavailable current values do not erase history.
+- Portfolio balances and PnL share the overview request. The removed `/v1/portfolio/balance/curve` is no longer called. The chart draws only PnL; Total assets is displayed as a numeric field for the selected time, without a separate curve or metric switch. Unavailable current values do not erase PnL history.
 
 ## Identity and quality
 

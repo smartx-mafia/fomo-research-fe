@@ -53,6 +53,7 @@ import type {FollowEntry, TimestampLike, UserRelation} from '@/api/social';
 import {getUserPublicProfile} from '@/api/users';
 import type {UserPublicProfile} from '@/api/users';
 import {ErrorPanel} from '@/components/ErrorPanel';
+import {PortfolioBalanceChart, PortfolioPnlChart} from '@/components/PortfolioPnlChart';
 import {Button} from '@/components/ui/button';
 import {Input} from '@/components/ui/input';
 import {
@@ -628,7 +629,7 @@ function ProfilePage({identifier}: {identifier: string}) {
       {/* ── Tabs：首次打开才挂载（惰性加载），之后保持挂载避免来回切丢数据 ── */}
       <div className="flex rounded-lg border border-border bg-surface p-1">
         {([
-          ['positions', '持仓'],
+          ['positions', 'Portfolio'],
           ['trades', '交易'],
           ['follows', '关注'],
         ] as const).map(([key, label]) => (
@@ -648,7 +649,7 @@ function ProfilePage({identifier}: {identifier: string}) {
 
       {visited.positions ? (
         <section className={tab === 'positions' ? '' : 'hidden'}>
-          <PositionsTab identifier={identifier} jwt={jwt} />
+          <PositionsTab key={jwt ?? 'anonymous'} identifier={identifier} jwt={jwt} />
         </section>
       ) : null}
       {visited.trades ? (
@@ -675,7 +676,6 @@ function PositionsTab({identifier, jwt}: {identifier: string; jwt?: string}) {
 
   useEffect(() => {
     let cancelled = false;
-    setData(undefined);
     setError(undefined);
     setLoading(true);
     // Optional 档：匿名可看；坏 JWT 回 400000 且不降级，无会话就绝不传 bearer
@@ -696,12 +696,12 @@ function PositionsTab({identifier, jwt}: {identifier: string; jwt?: string}) {
 
   const positions = data?.positions ?? [];
   const pnl7 = data?.pnl?.d7?.amount_usd;
-  const pnlAll = data?.pnl?.all_usd ?? data?.pnl?.all?.amount_usd;
+  const pnlAll = data?.pnl?.all?.amount_usd ?? data?.pnl?.all_usd;
 
   return (
     <div className="space-y-4">
       {error ? <ErrorLine error={error} onRetry={() => setReload((key) => key + 1)} pending={loading} /> : null}
-      {loading ? <p className="py-10 text-center text-sm text-muted">加载中…</p> : null}
+      {loading && !data ? <p className="py-10 text-center text-sm text-muted">加载中…</p> : null}
       {data ? (
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
@@ -714,6 +714,9 @@ function PositionsTab({identifier, jwt}: {identifier: string; jwt?: string}) {
           {data.partial_errors.length > 0 ? (
             <p className="text-xs text-muted">部分链数据不完整（{data.partial_errors.length} 项），数值可能偏低。</p>
           ) : null}
+
+          <PortfolioPnlChart pnl={data.pnl} balance={data.balance} loading={false} refreshing={loading} stale={!!error} observedAt={data.observed_at} onRefresh={() => setReload((key) => key + 1)} />
+          <PortfolioBalanceChart balance={data.balance} loading={false} refreshing={loading} stale={!!error} observedAt={data.observed_at} onRefresh={() => setReload((key) => key + 1)} />
 
           <div className="overflow-hidden rounded-xl border border-border bg-surface">
             <p className="border-b border-border px-4 py-3 text-sm font-semibold">当前持仓</p>

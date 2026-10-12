@@ -2,7 +2,7 @@
 import React from 'react';
 import {cleanup, fireEvent, render, screen} from '@testing-library/react';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
-import {PortfolioPnlChart} from './PortfolioPnlChart';
+import {PortfolioBalanceChart, PortfolioPnlChart} from './PortfolioPnlChart';
 import type {PortfolioPnl} from '@/api/portfolio';
 import {ApiError} from '@/api/envelope';
 import {SWRConfig} from 'swr';
@@ -15,19 +15,45 @@ const pnl: PortfolioPnl = {
 };
 const props = {pnl, loading: false, refreshing: false, stale: false, onRefresh: vi.fn()};
 describe('Portfolio PnL chart', () => {
-  it('shows balance history independently when current assets and PnL are unavailable', () => {
-    render(<PortfolioPnlChart {...props} pnl={undefined} balance={{d1: {curve: [{at: '2026-09-09T00:00:00Z', balance_usd: '123.45'}], simulated: false}}} />);
-    fireEvent.click(screen.getByRole('button', {name: 'Total assets'}));
+  it('draws asset history independently of PnL and switches asset windows', () => {
+    render(<PortfolioBalanceChart {...props} balance={{
+      d1: {amount_usd: '999', curve: [{at: '2026-09-09T00:00:00Z', balance_usd: '123.45'}], simulated: false},
+      d7: {amount_usd: '998', curve: [], simulated: true},
+    }} />);
+    expect(screen.getByTestId('balance-total').textContent).toBe('$999');
+    expect(screen.getByTestId('balance-segment').getAttribute('points')?.split(' ')).toHaveLength(2);
+    fireEvent.change(screen.getByRole('slider', {name: 'Total assets sample'}), {target: {value: '22'}});
+    expect(screen.getByTestId('balance-sample').textContent).toBe('$123.45');
+    fireEvent.click(screen.getByRole('button', {name: '7D'}));
+    expect(screen.getByTestId('balance-sample').textContent).toBe('$998');
+    expect(screen.getByText('Includes simulated data')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', {name: '30D'}));
+    expect(screen.getByTestId('balance-total').textContent).toBe('—');
+    expect(screen.queryByRole('img')).toBeNull();
+    expect(screen.getByText(/Total assets history is unavailable/)).toBeTruthy();
+  });
+  it('keeps missing asset history empty and distinguishes it from a zero balance', () => {
+    const view = render(<PortfolioBalanceChart {...props} />);
+    expect(screen.queryByRole('img')).toBeNull();
+    expect(screen.getByTestId('balance-total').textContent).toBe('—');
+    view.rerender(<PortfolioBalanceChart {...props} balance={{d1: {amount_usd: '0', curve: [], simulated: false}}} />);
+    expect(screen.getByTestId('balance-total').textContent).toBe('$0');
     expect(screen.getByRole('img')).toBeTruthy();
-    fireEvent.change(screen.getByRole('slider', {name: 'PnL sample'}), {target: {value: '22'}});
-    expect(screen.getByTestId('pnl-assets').textContent).toBe('$123.45');
+  });
+  it('does not draw total assets when PnL is unavailable', () => {
+    render(<PortfolioPnlChart {...props} pnl={undefined} balance={{d1: {curve: [{at: '2026-09-09T00:00:00Z', balance_usd: '123.45'}], simulated: false}}} />);
+    expect(screen.queryByRole('button', {name: 'Total assets'})).toBeNull();
+    expect(screen.queryByRole('img')).toBeNull();
     expect(screen.getByTestId('pnl-total').textContent).toBe('—');
   });
   it('uses the overview balance windows without fetching a separate curve', () => {
     render(<PortfolioPnlChart {...props} balance={{d1: {curve: [{at: '2026-09-09T00:00:00Z', balance_usd: '123.45'}], amount_usd: '999', simulated: false}}} />);
     expect(screen.getByTestId('pnl-assets').textContent).toBe('$999');
+    expect(screen.getByTestId('pnl-sample').textContent).toBe('$5');
+    expect(screen.getAllByTestId('pnl-segment')).toHaveLength(1);
     fireEvent.change(screen.getByRole('slider', {name: 'PnL sample'}), {target: {value: '22'}});
     expect(screen.getByTestId('pnl-assets').textContent).toBe('$123.45');
+    expect(screen.getByTestId('pnl-sample').textContent).toBe('$-2');
     fireEvent.click(screen.getByRole('button', {name: '7D'}));
     expect(screen.getByTestId('pnl-assets').textContent).toBe('—');
     expect(balanceMock).not.toHaveBeenCalled();
