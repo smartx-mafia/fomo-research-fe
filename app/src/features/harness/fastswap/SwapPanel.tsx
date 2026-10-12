@@ -23,6 +23,8 @@ import {createSwapStore, withSwapLock, type SwapRecord} from './store';
 import {StageLog, secs, type TraceView} from './stagelog';
 import {TokenPicker} from './TokenPicker';
 import {acceptedMinOut} from './verify';
+import {keepPreviousWireValue} from '../stable-state';
+import {LatestTaskRunner} from './latest-task';
 import {
   ExecutionStatus,
   FeePolicy,
@@ -339,7 +341,7 @@ export function SwapPanel(p: SwapPanelProps) {
   const [settledPrepareQuoteKey, setSettledPrepareQuoteKey] = useState('');
   const [pageVisible, setPageVisible] = useState(true);
   const preparedRef = useRef<{key: string; run: SwapRun} | null>(null);
-  const prepareQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const prepareQueueRef = useRef(new LatestTaskRunner());
   const prepareGenerationRef = useRef(0);
   const consumedPrepareKeyRef = useRef('');
   const [prepareNonce, setPrepareNonce] = useState(0);
@@ -493,36 +495,38 @@ export function SwapPanel(p: SwapPanelProps) {
     const generation = ++prepareGenerationRef.current;
     setPreparing(true);
     setPrepareError(null);
-    prepareQueueRef.current = prepareQueueRef.current.then(async () => {
-      const old = preparedRef.current;
-      if (old && old.key !== prepareKey) await cancelPrepared(old);
-      if (generation !== prepareGenerationRef.current) return;
-      if (!prepareKey || !quoteReq || !srcWallet || !signer) return;
+    prepareQueueRef.current.schedule(async () => {
+      try {
+        const old = preparedRef.current;
+        if (old && old.key !== prepareKey) await cancelPrepared(old);
+        if (generation !== prepareGenerationRef.current) return;
+        if (!prepareKey || !quoteReq || !srcWallet || !signer) return;
 
-      const next = SwapRun.start(depsFor(srcWallet.address), quoteReq, null);
-      preparedRef.current = {key: prepareKey, run: next};
-      runRef.current = next;
-      p.say(`⏱ 输入稳定，后台准备完整可签交易 · client_intent_id=${next.snapshotState.clientIntentID}`);
-      const state = await next.prepare();
-      // 输入在请求期间变化时，下一项串行任务会取消这笔；这里不并发 cancel。
-      if (generation !== prepareGenerationRef.current) return;
-      if (state.stage === 'ready') {
-        p.say(`[trade_id ${state.swapID}] 可签交易 READY（预构建 ${ms(state.timeline.create_ms)}），点击时只签名并上报`);
-      } else if (state.error instanceof SwapApiError && state.error.code === 430310) {
-        const riskChain = chainOfCaip(quoteReq.destination_chain);
-        if (!riskChain) throw new Error(`风险确认不支持链 ${quoteReq.destination_chain}`);
-        const reply = await getTokenRisk(riskChain, quoteReq.destination_asset, p.token);
-        const risk = reply.risk.assessment;
-        if (!risk?.confirmationVersion || !risk.items.length) throw new Error('当前风险详情不完整，不能确认购买。');
-        setPendingRisk({key: prepareKey, run: next, chain: riskChain, address: quoteReq.destination_asset, risk});
-        setPrepareError(null);
-      } else {
-        setPrepareError(state.stopReason ?? '可签交易准备失败');
+        const next = SwapRun.start(depsFor(srcWallet.address), quoteReq, null);
+        preparedRef.current = {key: prepareKey, run: next};
+        runRef.current = next;
+        p.say(`⏱ 输入稳定，后台准备完整可签交易 · client_intent_id=${next.snapshotState.clientIntentID}`);
+        const state = await next.prepare();
+        // 输入在请求期间变化时，最新一项会取消这笔；这里不并发 cancel。
+        if (generation !== prepareGenerationRef.current) return;
+        if (state.stage === 'ready') {
+          p.say(`[trade_id ${state.swapID}] 可签交易 READY（预构建 ${ms(state.timeline.create_ms)}），点击时只签名并上报`);
+        } else if (state.error instanceof SwapApiError && state.error.code === 430310) {
+          const riskChain = chainOfCaip(quoteReq.destination_chain);
+          if (!riskChain) throw new Error(`风险确认不支持链 ${quoteReq.destination_chain}`);
+          const reply = await getTokenRisk(riskChain, quoteReq.destination_asset, p.token);
+          const risk = reply.risk.assessment;
+          if (!risk?.confirmationVersion || !risk.items.length) throw new Error('当前风险详情不完整，不能确认购买。');
+          setPendingRisk({key: prepareKey, run: next, chain: riskChain, address: quoteReq.destination_asset, risk});
+          setPrepareError(null);
+        } else {
+          setPrepareError(state.stopReason ?? '可签交易准备失败');
+        }
+      } catch (e: unknown) {
+        if (generation === prepareGenerationRef.current) setPrepareError(errText(e));
+      } finally {
+        if (generation === prepareGenerationRef.current) setPreparing(false);
       }
-    }).catch((e: unknown) => {
-      if (generation === prepareGenerationRef.current) setPrepareError(errText(e));
-    }).finally(() => {
-      if (generation === prepareGenerationRef.current) setPreparing(false);
     });
   }, [cancelPrepared, depsFor, p.say, prepareKey, quoteReq, running, signer, srcWallet]);
 
@@ -694,7 +698,7 @@ export function SwapPanel(p: SwapPanelProps) {
   const activeBusyRef = useRef(false);
   const activeGenRef = useRef(0);
   const loadActive = useCallback(async () => {
-    setLocalRecs(store.list());
+    setLocalRecs((previous) => keepPreviousWireValue(previous, store.list()));
     if (!p.token || activeBusyRef.current) return;
     activeBusyRef.current = true;
     const gen = ++activeGenRef.current;
@@ -708,7 +712,7 @@ export function SwapPanel(p: SwapPanelProps) {
         cursor = r.next_cursor;
       }
       if (gen !== activeGenRef.current) return;
-      setActive(out);
+      setActive((previous) => keepPreviousWireValue(previous, out));
       setActiveErr(null);
     } catch (e) {
       // 失败只更新卡片上那一行，不写「过程」日志 —— 1 秒一条会把右栏冲掉

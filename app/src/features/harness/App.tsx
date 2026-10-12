@@ -48,6 +48,7 @@ import {OpinionDesk} from './OpinionDesk';
 import {ModerationDesk} from './ModerationDesk';
 import {caipOf, chainOfID} from './chains';
 import {codeInfo} from './codes';
+import {keepPreviousWireValue} from './stable-state';
 import {readiness} from './identity';
 import {
   fetchTokenBalance,
@@ -774,7 +775,10 @@ export function App() {
     try {
       const ps = await listPositions(token);
       if (gen !== posGenRef.current) return;
-      setPositions(ps);
+      // 轮询回包即使内容没变也会带一组全新的对象。无条件 set 会让这棵两千多行的
+      // Harness UI 每秒完整渲染一次；操作密集时它会与输入、报价和预构建更新叠加，
+      // 最终把 renderer 主线程打满。只有 wire payload 真变了才发布新 state。
+      setPositions((previous) => keepPreviousWireValue(previous, ps));
       const mark = positionsMark(ps);
       if (mark !== posMarkRef.current || !quiet) {
         posMarkRef.current = mark;
