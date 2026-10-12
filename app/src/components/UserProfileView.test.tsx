@@ -7,7 +7,7 @@
  * - 本人视角不显示关注按钮，显示「编辑资料」；
  * - 备注编辑：设置与清除（空串）走同一端点。
  */
-import {cleanup, render, screen, waitFor} from '@testing-library/react';
+import {cleanup, render, screen, waitFor, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 
@@ -44,6 +44,7 @@ vi.mock('@/session/storage', () => ({
 }));
 
 import {UserProfileView} from './UserProfileView';
+import {getUserPortfolio} from '@/api/portfolio';
 
 const profile = {
   identifier: 'target-identifier',
@@ -59,6 +60,7 @@ function setup() {
 }
 
 beforeEach(() => {
+  vi.mocked(getUserPortfolio).mockReset().mockResolvedValue({positions: [], partial_errors: []});
   for (const m of [getUserPublicProfile, getFollowCounts, getRelations, getKnownFollowers, followTarget, unfollowTarget, setRemark]) m.mockReset();
   getUserPublicProfile.mockResolvedValue({data: {...profile}});
   getFollowCounts.mockResolvedValue({data: {following_count: 27, follower_count: 6}});
@@ -69,6 +71,34 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('UserProfileView 客态头部', () => {
+  it('loads the target user curves and retains them when refreshing fails', async () => {
+    vi.mocked(getUserPortfolio).mockResolvedValue({positions: [], partial_errors: [],
+      pnl: {d1: {amount_usd: '-12', curve: []}},
+      balance: {d1: {amount_usd: '1234.56', curve: [], simulated: false}},
+    });
+    setup();
+    await waitFor(() => expect(screen.getByTestId('balance-total').textContent).toBe('$1,234.56'));
+    expect(getUserPortfolio).toHaveBeenCalledWith('target-identifier', 'jwt');
+    expect(screen.getByTestId('pnl-total').textContent).toBe('$-12');
+    expect(within(screen.getByRole('region', {name: 'Portfolio PnL'})).getByRole('img')).toBeTruthy();
+    expect(within(screen.getByRole('region', {name: 'Portfolio assets'})).getByRole('img')).toBeTruthy();
+    vi.mocked(getUserPortfolio).mockRejectedValueOnce(new Error('offline'));
+    await userEvent.click(screen.getByRole('button', {name: 'Refresh assets'}));
+    await waitFor(() => expect(screen.getByText(/last available assets snapshot/)).toBeTruthy());
+    expect(screen.getByTestId('balance-total').textContent).toBe('$1,234.56');
+    expect(screen.getByTestId('pnl-total').textContent).toBe('$-12');
+  });
+  it('clears the previous user curves while the next user is loading', async () => {
+    vi.mocked(getUserPortfolio).mockResolvedValueOnce({positions: [], partial_errors: [],
+      pnl: {d1: {amount_usd: '123', curve: []}},
+    });
+    const view = setup();
+    await waitFor(() => expect(screen.getByTestId('pnl-total').textContent).toBe('$123'));
+    vi.mocked(getUserPortfolio).mockReturnValueOnce(new Promise(() => {}));
+    view.rerender(<UserProfileView identifier="another-user" />);
+    expect(screen.queryByTestId('pnl-total')).toBeNull();
+    expect(getUserPortfolio).toHaveBeenLastCalledWith('another-user', 'jwt');
+  });
   it('渲染展示名回退 remark → nickname → @username，并显示关注计数', async () => {
     setup();
     await waitFor(() => expect(screen.getByText('Alice')).toBeTruthy());
