@@ -37,7 +37,11 @@ export type TokenInfo = {
   is_verify: boolean;
 };
 
+// Display identity remains usable while precision is unknown. Never use this type for amount conversion.
+export type TokenDisplayInfo = Omit<TokenInfo, 'decimals'> & {decimals?: number};
+
 export type TokenMetaResult = {
+  presentation?: TokenDisplayInfo;
   chain: string;
   address: string;
   status: number;
@@ -123,6 +127,16 @@ export function normalizeTokenInfo(value: unknown): TokenInfo | undefined {
   };
 }
 
+export function normalizeTokenPresentation(value: unknown): TokenDisplayInfo | undefined {
+  const raw = record(value);
+  if (!raw) return undefined;
+  const ref = normalizeTokenRef(typeof raw.chain === 'string' ? raw.chain : '', typeof raw.address === 'string' ? raw.address : '');
+  if (!ref) return undefined;
+  return {...ref, symbol: optionalString(raw.symbol), name: optionalString(raw.name), logo: optionalString(raw.logo),
+    launchpad: optionalString(raw.launchpad), launchpad_name: optionalString(raw.launchpad_name),
+    launchpad_logo: optionalString(raw.launchpad_logo), is_verify: raw.is_verify === true};
+}
+
 export function normalizeGetToken(value: unknown): GetTokenReply | undefined {
   const raw = record(value);
   if (!raw) return undefined;
@@ -139,7 +153,7 @@ export function normalizeBatchTokenMetadata(value: unknown, requested: TokenRef[
   return {
     results: rows.map((value, index) => {
       const row = record(value) ?? {};
-      const status = typeof row.status === 'number' && Number.isInteger(row.status) ? row.status : 0;
+      let status = typeof row.status === 'number' && Number.isInteger(row.status) ? row.status : 0;
       const source = typeof row.source === 'number' && Number.isInteger(row.source) ? row.source : 0;
       const echoed = normalizeTokenRef(
         typeof row.chain === 'string' ? row.chain : requested[index].chain,
@@ -152,6 +166,21 @@ export function normalizeBatchTokenMetadata(value: unknown, requested: TokenRef[
       if (!personal || typeof personal.is_favorited !== 'boolean') {
         throw new Error(`Token metadata item ${index} has an invalid personal object.`);
       }
+      // The backend uses -1 for unknown precision. Keep the strict TokenInfo
+      // contract for amounts, but do not let one such item discard every other
+      // token's valid image/metadata in this batch. Identity checks still apply.
+      const rawInfo = record(row.info);
+      const unknownPrecision = status === TOKEN_META_STATUS_OK && rawInfo?.decimals === -1;
+      if (unknownPrecision) {
+        const infoRef = normalizeTokenRef(
+          typeof rawInfo.chain === 'string' ? rawInfo.chain : '',
+          typeof rawInfo.address === 'string' ? rawInfo.address : '',
+        );
+        if (!infoRef || tokenKey(infoRef.chain, infoRef.address) !== tokenKey(echoed.chain, echoed.address)) {
+          throw new Error(`Token metadata item ${index} has an invalid or mismatched info object.`);
+        }
+        status = TOKEN_META_STATUS_UNAVAILABLE;
+      }
       const info = status === TOKEN_META_STATUS_OK ? normalizeTokenInfo(row.info) : undefined;
       if (status === TOKEN_META_STATUS_OK && (!info || tokenKey(info.chain, info.address) !== tokenKey(echoed.chain, echoed.address))) {
         throw new Error(`Token metadata item ${index} has an invalid or mismatched info object.`);
@@ -162,7 +191,8 @@ export function normalizeBatchTokenMetadata(value: unknown, requested: TokenRef[
         source,
         risk: normalizeTokenRisk(row.risk),
         ...(info ? {info} : {}),
-        message: optionalString(row.message),
+        ...((info || unknownPrecision) ? {presentation: normalizeTokenPresentation(row.info)} : {}),
+        message: optionalString(row.message) ?? (unknownPrecision ? 'Token precision is not available.' : undefined),
         personal: normalizeTokenPersonal(personal),
       };
     }),

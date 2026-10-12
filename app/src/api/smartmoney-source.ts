@@ -1,3 +1,4 @@
+import {overlayTradeMetadata, type TradeTokenMetadata} from '@/lib/trade-token-metadata';
 import {call} from './envelope';
 import type {SmartMoneyAccounting} from './smartmoney-accounting';
 import type {SmartMoneyHolding} from './smartmoney';
@@ -43,6 +44,8 @@ export type SourceAction = {
   wallet_address?: string;
   token_address?: string;
   token_symbol?: string;
+  token_name?: string;
+  token_logo?: string;
   token_amount?: string;
   quote_amount?: string;
   quote_symbol?: string;
@@ -52,7 +55,7 @@ export type SourceAction = {
 export type SourceActions = {
   meta: SourceMeta;
   classification: 'provider_reported';
-  snapshot: {list: SourceAction[]; next_cursor: string};
+  snapshot: {list: SourceAction[]; next_cursor: string; token_metadata?: TradeTokenMetadata[]};
 };
 
 export type SourcePnLWindow = {
@@ -127,16 +130,17 @@ export async function getSourcePositions(identity: SourceIdentity, chain?: strin
   return data;
 }
 
-export async function getSourceActions(identity: SourceIdentity, chain?: string, cursor = '', signal?: AbortSignal): Promise<SourceActions> {
+export async function getSourceActions(identity: SourceIdentity, chain?: string, cursor = '', signal?: AbortSignal, options?: {backgroundRefresh?: boolean}): Promise<SourceActions> {
   const params = sourceParams(identity, chain);
   if (cursor) params.set('cursor', cursor);
+  if (options?.backgroundRefresh !== undefined) params.set('background_refresh', String(options.backgroundRefresh));
   const {data} = await call<SourceActions>(`/v2/smartmoney/actions?${params}`,
     {signal, preserveInt64Fields: exactInt64Fields});
   assertProviderSnapshotMeta(data.meta);
   if (data.classification !== 'provider_reported' || !Array.isArray(data.snapshot?.list)) {
     throw new Error('Smart Money actions are not a provider-reported snapshot.');
   }
-  return data;
+  return {...data, snapshot: {...data.snapshot, list: overlayTradeMetadata(data.snapshot.list, data.snapshot.token_metadata)}};
 }
 
 export async function getSourcePnL(identity: SourceIdentity, chain?: string, signal?: AbortSignal): Promise<SourcePnL> {

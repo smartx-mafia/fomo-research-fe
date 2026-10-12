@@ -1,6 +1,8 @@
 'use client';
 
-import {useState} from 'react';
+import {useMemo, useState} from 'react';
+import {metadataRetryMs} from '@/lib/trade-token-metadata';
+import {TokenAvatarView} from '@/components/TokenAvatar';
 import {unrealizedLabel} from '@/api/smartmoney-accounting';
 import {SmartMoneyAccountingNote} from './SmartMoneyAccountingNote';
 import useSWR from 'swr';
@@ -92,7 +94,10 @@ function PositionRows({title, rows, coverage, accountingSource}: {title: string;
 function ActionRow({action}: {action: SourceAction}) {
   return <div className="flex flex-wrap justify-between gap-3 py-3 text-sm">
     <div className="min-w-0">
-      <p className="font-medium">{value(action.event_type)} · {action.token_symbol || value(action.token_address)}</p>
+      <div className="flex items-center gap-2"><TokenAvatarView isFavorited={false} personalReady={false} size={32}
+        fallbackLogo={action.token_logo} fallbackName={action.token_name} fallbackSymbol={action.token_symbol} />
+      <div><p className="font-medium">{value(action.event_type)} · {action.token_symbol || action.token_name || value(action.token_address)}</p>
+      {action.token_name && action.token_name !== action.token_symbol ? <p className="text-xs text-muted">{action.token_name}</p> : null}</div></div>
       <p className="break-all font-mono text-xs text-muted">{value(action.chain)} · {value(action.wallet_address)} · {value(action.tx_hash)}</p>
       <p className="text-xs text-muted">数量 {value(action.token_amount)} · 计价 {value(action.quote_amount)} {value(action.quote_symbol)}</p>
     </div>
@@ -100,7 +105,7 @@ function ActionRow({action}: {action: SourceAction}) {
   </div>;
 }
 
-export function SmartMoneySourcePanels({route}: {route: IdentityRoute}) {
+export function SmartMoneySourcePanels({route, backgroundRefresh = false}: {route: IdentityRoute; backgroundRefresh?: boolean}) {
   const [evmChain, setEvmChain] = useState<string>(route.status === 'wallet' ? route.sourceChain ?? '' : '');
   const [actionHistory, setActionHistory] = useState<{chain?: string; pages: string[]}>({pages: ['']});
   const capabilities = useSWR('smartmoney-source-capabilities-v1', () => getSourceCapabilities(), {
@@ -146,9 +151,15 @@ export function SmartMoneySourcePanels({route}: {route: IdentityRoute}) {
   const positions = useSWR(positionsReady ? ['smartmoney-source-positions', identityKey, chain] : null,
     () => getSourcePositions(identity, chain), {shouldRetryOnError: false, revalidateOnFocus: true,
       refreshInterval: sourceRefreshMs(cap, 'positions'), refreshWhenHidden: false, refreshWhenOffline: false});
-  const actions = useSWR(actionsReady ? ['smartmoney-source-actions', identityKey, chain, cursor] : null,
-    () => getSourceActions(identity, chain, cursor), {shouldRetryOnError: false, revalidateOnFocus: true,
-      refreshInterval: sourceRefreshMs(cap, 'actions'), refreshWhenHidden: false, refreshWhenOffline: false});
+  const metadataWindow = useMemo(() => ({startedAt: 0, hasFetched: false}), [identityKey, chain, cursor, backgroundRefresh]);
+  const actions = useSWR(actionsReady ? ['smartmoney-source-actions', identityKey, chain, cursor, backgroundRefresh] : null,
+    async () => {
+      const retrying = metadataWindow.hasFetched;
+      metadataWindow.startedAt ||= Date.now();
+      metadataWindow.hasFetched = true;
+      return getSourceActions(identity, chain, cursor, undefined, {backgroundRefresh: backgroundRefresh || retrying});
+    }, {shouldRetryOnError: false, revalidateOnFocus: true,
+      refreshInterval: (latest) => metadataRetryMs(latest?.snapshot.token_metadata, metadataWindow.startedAt, Date.now()) || sourceRefreshMs(cap, 'actions'), refreshWhenHidden: false, refreshWhenOffline: false});
   const pnl = useSWR(pnlReady ? ['smartmoney-source-pnl', identityKey, chain] : null,
     () => getSourcePnL(identity, chain), {shouldRetryOnError: false, revalidateOnFocus: true,
       refreshInterval: sourceRefreshMs(cap, 'pnl'), refreshWhenHidden: false, refreshWhenOffline: false});

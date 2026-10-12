@@ -1,3 +1,4 @@
+import {overlayTradeMetadata, type TradeTokenMetadata} from '@/lib/trade-token-metadata';
 /** 聪明钱详情公共接口（docs/contracts/smartmoney-detail.md）。 */
 import {call} from './envelope';
 import type {SmartMoneyAccounting} from './smartmoney-accounting';
@@ -72,6 +73,7 @@ export type SmartMoneyTrade = {
   occurred_at?: number;
   token_address?: string;
   token_symbol?: string;
+  token_name?: string;
   token_logo?: string;
   token_amount?: string;
   quote_amount?: string;
@@ -87,10 +89,11 @@ export type SmartMoneyTokenTrade = {
 };
 export type SmartMoneyTokenTrades = {
   chain: string; address: string; token_address: string; list?: SmartMoneyTokenTrade[];
-  next_cursor?: string; complete?: boolean;
+  next_cursor?: string; complete?: boolean; token_metadata?: TradeTokenMetadata[];
 };
 
 export type SmartMoneyTrades = {
+  token_metadata?: TradeTokenMetadata[];
   chain: string;
   address: string;
   fetched_at?: number;
@@ -102,9 +105,10 @@ function detailPath(path: 'holdings' | 'trades', chain: string, address: string)
   return `/v1/smartmoney/${path}?${params.toString()}`;
 }
 
-export function getSmartMoneyTokenTrades(chain: string, address: string, tokenAddress: string, cursor = '', signal?: AbortSignal) {
+export function getSmartMoneyTokenTrades(chain: string, address: string, tokenAddress: string, cursor = '', signal?: AbortSignal, options?: {backgroundRefresh?: boolean}) {
   const params = new URLSearchParams({chain, address, token_address: tokenAddress, limit: '50'});
   if (cursor) params.set('cursor', cursor);
+  if (options?.backgroundRefresh !== undefined) params.set('background_refresh', String(options.backgroundRefresh));
   return call<SmartMoneyTokenTrades>(`/v1/smartmoney/token-trades?${params}`, {signal});
 }
 
@@ -112,6 +116,9 @@ export function getSmartMoneyHoldings(chain: string, address: string, signal?: A
   return call<SmartMoneyHoldings>(detailPath('holdings', chain, address), {signal});
 }
 
-export function getSmartMoneyTrades(chain: string, address: string, signal?: AbortSignal) {
-  return call<SmartMoneyTrades>(detailPath('trades', chain, address), {signal});
+export async function getSmartMoneyTrades(chain: string, address: string, signal?: AbortSignal, options?: {backgroundRefresh?: boolean}) {
+  const suffix = options?.backgroundRefresh === undefined ? '' : `&background_refresh=${options.backgroundRefresh}`;
+  const result = await call<SmartMoneyTrades>(detailPath('trades', chain, address) + suffix, {signal});
+  const data = result.data;
+  return {...result, data: {...data, list: overlayTradeMetadata((data.list ?? []).map((row) => ({...row, chain: data.chain})), data.token_metadata)}};
 }

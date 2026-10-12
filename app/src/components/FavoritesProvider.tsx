@@ -26,7 +26,7 @@ import {
   TOKEN_META_STATUS_INVALID,
   TOKEN_META_STATUS_OK,
   tokenKey,
-  type TokenInfo,
+  type TokenDisplayInfo,
   type TokenRef,
 } from '@/api/token-metadata';
 import {clearSite, useSession} from '@/session/storage';
@@ -39,7 +39,7 @@ const EMPTY_BOOLEAN_MAP: Record<string, boolean> = {};
 
 export type TokenMetadataState = {
   status: 'ready' | 'missing' | 'invalid' | 'error';
-  info?: TokenInfo;
+  info?: TokenDisplayInfo;
   /** Dynamic risk stays beside static info, including when a later request fails. */
   risk?: TokenRisk;
   checkedAt: number;
@@ -176,8 +176,8 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
             const personalReadyUpdates: Record<string, boolean> = {};
             response.data.results.forEach((result, index) => {
               const key = keys[index];
-              if (result.status === TOKEN_META_STATUS_OK && result.info) {
-                updates[key] = {status: 'ready', info: result.info, risk: result.risk, checkedAt, retryAt: checkedAt + META_FRESH_MS};
+              if (result.presentation || (result.status === TOKEN_META_STATUS_OK && result.info)) {
+                updates[key] = {status: 'ready', info: result.presentation ?? result.info, risk: result.risk, checkedAt, retryAt: checkedAt + META_FRESH_MS};
               } else if (result.status === TOKEN_META_STATUS_INVALID) {
                 updates[key] = {status: 'invalid', risk: result.risk, checkedAt, retryAt: Number.POSITIVE_INFINITY};
               } else {
@@ -187,11 +187,11 @@ export function FavoritesProvider({children}: {children: ReactNode}) {
                 const mutation = activeMutationRef.current.get(key);
                 const canAcceptFavorite = mutation?.generation !== generation &&
                   (mutationVersionRef.current.get(key) ?? 0) === versions[index];
-                if (result.status !== TOKEN_META_STATUS_OK || canAcceptFavorite) {
+                if ((!result.presentation && result.status !== TOKEN_META_STATUS_OK) || canAcceptFavorite) {
                   personalGenerationRef.current.set(key, generation);
                   personalReadyUpdates[key] = true;
                   forcedPersonalRefreshRef.current.delete(key);
-                  if (result.status === TOKEN_META_STATUS_OK) {
+                  if (result.presentation || result.status === TOKEN_META_STATUS_OK) {
                     favoriteUpdates[key] = result.personal.is_favorited;
                     if (bearer) queriedStatusRef.current.add(key);
                   }

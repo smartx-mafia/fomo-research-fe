@@ -73,3 +73,13 @@ describe('provider snapshot source reads', () => {
     await expect(getSourcePositions({type: 'user', userId: 'subject:1'})).rejects.toThrow('does not match');
   });
 });
+
+it('passes background refresh and overlays display fields without changing a trade', async () => {
+  callMock.mockResolvedValue({data: {meta, classification: 'provider_reported', snapshot: {next_cursor: 'opaque',
+    list: [{chain: 'sol', token_address: 'Mint', tx_hash: 'same', cost_usd: '0.000000000000000001'}],
+    token_metadata: [{chain: 'solana', address: 'Mint', name: 'Token Name', symbol: 'SYM', logo: 'https://static.smartx.io/token.png', refresh_state: 'ready'}]}}});
+  const data = await getSourceActions({type: 'user', userId: 'subject:1'}, undefined, '', undefined, {backgroundRefresh: true});
+  expect(callMock.mock.calls.at(-1)?.[0]).toContain('background_refresh=true');
+  expect(data.snapshot.list[0]).toMatchObject({token_name: 'Token Name', token_symbol: 'SYM', tx_hash: 'same', cost_usd: '0.000000000000000001'});
+  expect(data.snapshot.next_cursor).toBe('opaque');
+});
