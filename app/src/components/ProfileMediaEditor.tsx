@@ -7,7 +7,7 @@ import {toast} from 'sonner';
 import type {UserInfo} from '@/api/auth';
 import {MEDIA_PURPOSES, type MediaPurpose} from '@/api/profile-media';
 import {isMediaUnresolved, useProfileMedia} from '@/hooks/useProfileMedia';
-import {cropRectangle, IMAGE_RULES, ImageValidationError, mediaErrorMessage, readProfileImage} from '@/lib/profile-image';
+import {mediaErrorMessage, readProfileImage} from '@/lib/profile-image';
 import {ProfileImageCropper} from './ProfileImageCropper';
 
 export function ProfileMediaEditor({bearer, user, onSaved}: {bearer: string; user: UserInfo; onSaved: (user: UserInfo) => void}) {
@@ -35,9 +35,6 @@ export function ProfileMediaEditor({bearer, user, onSaved}: {bearer: string; use
     try {
       loaded = await readProfileImage(file);
       if (seq !== selection.current) {URL.revokeObjectURL(loaded.url); return;}
-      const rule = IMAGE_RULES[purpose];
-      const rect = cropRectangle(loaded.image.naturalWidth, loaded.image.naturalHeight, rule.ratio, 1, 0.5, 0.5);
-      if (rect.width < rule.minWidth || rect.height < rule.minHeight) throw new ImageValidationError(`Choose an image at least ${rule.minWidth} × ${rule.minHeight} pixels.`);
       setCrop({purpose, ...loaded});
     } catch (error) {
       if (loaded) URL.revokeObjectURL(loaded.url);
@@ -59,7 +56,7 @@ export function ProfileMediaEditor({bearer, user, onSaved}: {bearer: string; use
           <Dialog.Close aria-label="Close image editor" className="rounded p-1 text-muted hover:text-foreground"><X className="size-5" /></Dialog.Close>
         </div>
         <div className="space-y-5 overflow-y-auto p-5">
-          <p className="text-xs text-muted">Static JPG, PNG or WebP, up to 10MB. Each image has 5 reviews per rolling 24 hours. Submitting for review uses a review even if you don’t save.</p>
+          <p className="text-xs text-muted">Choose an image and crop it before upload. The crop is uploaded as a still PNG. Each image has 5 reviews per rolling 24 hours. Submitting for review uses a review even if you don’t save.</p>
           {reading ? <p role="status" className="text-sm text-muted">Reading image…</p> : null}
           {fileError ? <p role="alert" className="text-sm text-down">{fileError}</p> : null}
           {crop ? <ProfileImageCropper key={crop.url} image={crop.image} purpose={crop.purpose} onCancel={() => setCrop(undefined)} onDone={(file) => {const purpose = crop.purpose; setCrop(undefined); void media.submit(purpose, file);}} /> : null}
@@ -78,9 +75,9 @@ export function ProfileMediaEditor({bearer, user, onSaved}: {bearer: string; use
                 </div>
                 <label className={`flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-border px-3 py-2 text-sm ${disabled || waiting || !canUpload || cooldown > 0 ? 'cursor-not-allowed opacity-50' : 'hover:border-accent'}`}>
                   <Camera className="size-4" />Choose {purpose}
-                  <input type="file" aria-label={`Choose ${purpose}`} accept="image/jpeg,image/png,image/webp" className="sr-only" disabled={disabled || waiting || !canUpload || cooldown > 0} onChange={(event) => {const file = event.target.files?.[0]; event.target.value = ''; void select(purpose, file);}} />
+                  <input type="file" aria-label={`Choose ${purpose}`} className="sr-only" disabled={disabled || waiting || !canUpload || cooldown > 0} onChange={(event) => {const file = event.target.files?.[0]; event.target.value = ''; void select(purpose, file);}} />
                 </label>
-                <p className="text-xs text-muted">{purpose === 'avatar' ? '1:1 · Minimum 200 × 200' : '3:1 · Minimum 600 × 200'}</p>
+                <p className="text-xs text-muted">{purpose === 'avatar' ? 'Any aspect ratio · Crop to 1:1 before upload' : 'Any aspect ratio · Crop to 3:1 before upload'}</p>
                 <p className="text-xs text-muted">{!quota ? 'Upload availability not loaded.' : !quota.upload_enabled ? 'New uploads are currently unavailable.' : quota.remaining > 0 ? `${quota.remaining} of ${quota.limit} reviews remaining` : `Review limit reached.${Number(quota.next_allowed_at) > 0 ? ` Available ${new Date(Number(quota.next_allowed_at) * 1000).toLocaleString()}.` : ''}`}</p>
                 {error ? <p role="alert" className="text-xs text-down">{error}</p> : null}
                 {draft.status ? <p role="status" className="text-xs text-accent">{draft.status === 'approved' ? 'Ready to save' : draft.status === 'saved' ? 'Saved' : draft.status === 'pending' ? 'Review in progress. Check again if it takes longer.' : draft.status === 'uncertain' ? 'Upload result needs confirmation. Check status before uploading again.' : draft.status === 'rejected' ? 'Review rejected' : draft.status === 'failed' ? 'Upload failed' : 'Confirming current image…'}</p> : null}

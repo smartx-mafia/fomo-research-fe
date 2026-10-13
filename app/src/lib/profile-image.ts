@@ -1,57 +1,13 @@
 import {ApiError} from '@/api/envelope';
 import type {MediaPurpose} from '@/api/profile-media';
 
-export const MAX_IMAGE_BYTES = 10_485_760;
 export const IMAGE_RULES = {
-  avatar: {ratio: 1, minWidth: 200, minHeight: 200, width: 512, height: 512, maxSide: 4096, maxPixels: 16_000_000},
-  background: {ratio: 3, minWidth: 600, minHeight: 200, width: 1500, height: 500, maxSide: 8192, maxPixels: 20_000_000},
+  avatar: {ratio: 1, width: 512, height: 512},
+  background: {ratio: 3, width: 1500, height: 500},
 };
 export class ImageValidationError extends Error {}
-export function validateImageSize(size: number) {
-  if (size > MAX_IMAGE_BYTES) throw new ImageValidationError('Image is too large. Max 10MB.');
-  if (size === 0) throw new ImageValidationError('Can’t read this image. Choose another.');
-}
-
-/** Inspect chunk boundaries, not arbitrary strings in compressed image data. */
-export function staticImageType(buffer: ArrayBuffer): 'image/jpeg' | 'image/png' | 'image/webp' {
-  const bytes = new Uint8Array(buffer);
-  const view = new DataView(buffer);
-  const text = (at: number, length: number) => String.fromCharCode(...bytes.subarray(at, at + length));
-  const unsupported = () => {throw new ImageValidationError('Unsupported image format.');};
-  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
-  if (bytes.length >= 8 && text(0, 8) === '\x89PNG\r\n\x1a\n') {
-    for (let at = 8; at + 12 <= bytes.length;) {
-      const length = view.getUint32(at);
-      if (text(at + 4, 4) === 'acTL') unsupported();
-      at += 12 + length;
-    }
-    return 'image/png';
-  }
-  if (text(0, 4) === 'RIFF' && text(8, 4) === 'WEBP') {
-    for (let at = 12; at + 8 <= bytes.length;) {
-      const length = view.getUint32(at + 4, true);
-      const chunk = text(at, 4);
-      if (chunk === 'ANIM' || chunk === 'ANMF' || (chunk === 'VP8X' && length > 0 && (bytes[at + 8] & 2))) unsupported();
-      at += 8 + length + (length % 2);
-    }
-    return 'image/webp';
-  }
-  return unsupported() as never;
-}
-
-export function validateImageDimensions(purpose: MediaPurpose, width: number, height: number) {
-  const rule = IMAGE_RULES[purpose];
-  if (width < rule.minWidth || height < rule.minHeight || width > rule.maxSide || height > rule.maxSide || width * height > rule.maxPixels) {
-    throw new ImageValidationError(`Use an image at least ${rule.minWidth} × ${rule.minHeight}, within the supported size limits.`);
-  }
-  if (width !== height * rule.ratio) throw new ImageValidationError(`Crop this image to ${rule.ratio}:1.`);
-}
 
 export async function readProfileImage(file: File): Promise<{image: HTMLImageElement; url: string}> {
-  validateImageSize(file.size);
-  let buffer: ArrayBuffer;
-  try {buffer = await file.arrayBuffer();} catch {throw new ImageValidationError('Can’t read this image. Choose another.');}
-  staticImageType(buffer);
   const url = URL.createObjectURL(file);
   const image = new Image();
   try {
@@ -73,7 +29,6 @@ export function cropRectangle(width: number, height: number, ratio: number, zoom
 export async function exportProfileCrop(image: HTMLImageElement, purpose: MediaPurpose, zoom: number, x: number, y: number) {
   const rule = IMAGE_RULES[purpose];
   const rect = cropRectangle(image.naturalWidth, image.naturalHeight, rule.ratio, zoom, x, y);
-  if (rect.width < rule.minWidth || rect.height < rule.minHeight) throw new ImageValidationError(`Crop must contain at least ${rule.minWidth} × ${rule.minHeight} pixels. Zoom out or choose a larger image.`);
   const canvas = document.createElement('canvas');
   canvas.width = rule.width; canvas.height = rule.height;
   const ctx = canvas.getContext('2d');
@@ -81,8 +36,6 @@ export async function exportProfileCrop(image: HTMLImageElement, purpose: MediaP
   ctx.drawImage(image, rect.x, rect.y, rect.width, rect.height, 0, 0, canvas.width, canvas.height);
   const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/png'));
   if (!blob) throw new ImageValidationError('Can’t read this image. Choose another.');
-  validateImageSize(blob.size);
-  validateImageDimensions(purpose, canvas.width, canvas.height);
   return new File([blob], `${purpose}.png`, {type: 'image/png'});
 }
 
