@@ -313,11 +313,11 @@ export function getAvatarHistory(bearer: string, signal?: AbortSignal) {
 }
 
 /** POST /v1/profile/avatar —— preset_id / url 二选一（都传或都不传回 100123）。 */
-export function setAvatar(bearer: string, source: {presetId?: string; url?: string}) {
+export function setAvatar(bearer: string, source: {presetId?: string; url?: string}, signal?: AbortSignal) {
   const body: Record<string, string> = {};
   if (source.presetId !== undefined) body.preset_id = source.presetId;
   if (source.url !== undefined) body.url = source.url;
-  return call<{user: UserInfo; quota?: ProfileQuota}>('/v1/profile/avatar', {method: 'POST', bearer, body});
+  return call<{user: UserInfo; quota?: ProfileQuota}>('/v1/profile/avatar', {method: 'POST', bearer, body, ...(signal ? {signal} : {})});
 }
 
 /** POST /v1/profile/bio —— 空串 = 清空；bio 字段必须出现在请求体里（缺席回 100111）。回 user + bio 配额。 */

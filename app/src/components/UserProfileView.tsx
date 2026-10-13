@@ -4,7 +4,7 @@
  * 客态用户主页（路由 /user/:identifier）。
  *
  * 契约依据（后端仓 docs/contracts/）：
- * - settings.md §3.5 —— GET /v1/users/{id}/profile 六字段恒在场；展示名回退
+ * - settings.md §3.5 / §7 —— GET /v1/users/{id}/profile 公开字段及 background_url；展示名回退
  *   remark → nickname → @username → 缩写由**前端**拼，remark 是「我起的」要用
  *   与真名不同的样式；目标不可见（不存在/注销/封禁/未激活）一律 200102 且回包
  *   逐字节相同（有意不给探测口），前端一律按「用户不存在」渲染。
@@ -53,6 +53,7 @@ import type {FollowEntry, TimestampLike, UserRelation} from '@/api/social';
 import {getUserPublicProfile} from '@/api/users';
 import type {UserPublicProfile} from '@/api/users';
 import {ErrorPanel} from '@/components/ErrorPanel';
+import {ProfileBackground} from '@/components/ProfileBackground';
 import {PortfolioBalanceChart, PortfolioPnlChart} from '@/components/PortfolioPnlChart';
 import {Button} from '@/components/ui/button';
 import {Input} from '@/components/ui/input';
@@ -500,6 +501,7 @@ function ProfilePage({identifier}: {identifier: string}) {
 
       {/* ── 头部卡片 ── */}
       <header className="rounded-xl border border-border bg-surface p-5">
+        {profile?.background_url && !profileError && !profileLoading ? <div className="-mx-5 -mt-5 mb-5 overflow-hidden rounded-t-xl"><ProfileBackground url={profile.background_url} /></div> : null}
         {profileError ? (
           <ErrorLine error={profileError} onRetry={retryHeader} pending={profileLoading} />
         ) : profileLoading || !profile ? (

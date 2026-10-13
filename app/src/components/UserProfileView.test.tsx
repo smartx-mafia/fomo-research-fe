@@ -71,6 +71,13 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe('UserProfileView 客态头部', () => {
+  it('displays the saved background at a fixed 3:1 ratio', async () => {
+    getUserPublicProfile.mockResolvedValue({data: {...profile, background_url: 'https://images/background.png'}});
+    setup();
+    const background = await screen.findByRole('img', {name: 'Profile background'});
+    expect(background.getAttribute('src')).toBe('https://images/background.png');
+    expect(background.parentElement?.className).toContain('aspect-[3/1]');
+  });
   it('loads the target user curves and retains them when refreshing fails', async () => {
     vi.mocked(getUserPortfolio).mockResolvedValue({positions: [], partial_errors: [],
       pnl: {d1: {amount_usd: '-12', curve: []}},
