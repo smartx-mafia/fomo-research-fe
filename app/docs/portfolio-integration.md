@@ -25,3 +25,15 @@ Deposit still uses the existing authenticated `/v1/portfolio` helper for its cas
 ## Verification
 
 Coverage includes unified paths and user identity, opaque/integer cursors, cycles with zero legacy IDs, response identity checks, settlement shares, balance windows, precision, missing values, account changes, cycle navigation, and live revaluation without historical mutation.
+
+## Profile images (2026-10-13)
+
+The Portfolio profile header loads `/v1/profile` independently of holdings. Its image editor uses the backend `profile-media.md` contract: each purpose (`avatar` / `background`) has separate quota, upload operation, application and history requests. `upload_enabled` controls new uploads; available historical assets can still be applied when new uploads are disabled. Public user profiles display the same `background_url` at 3:1.
+
+Selection decodes locally before cropping, without frontend file-size, format, signature, or minimum-pixel restrictions. Browser decode failures are still reported. The crop preview supports zoom and horizontal/vertical placement; a numeric zoom input has no fixed upper bound. Small source crops are upscaled. PNG exports remain 512×512 for avatars and 1500×500 for backgrounds, including a still frame when the browser decodes an animated source. The backend validates the uploaded result and performs moderation. A multipart upload contains only `file`, with a browser-generated boundary and a stable `Idempotency-Key`.
+
+Uploading for review does not apply the picture. Save applies ready changes sequentially, records each completed purpose, updates shared user information, and shows one success notification only after all selected changes succeed. Failed changes remain editable. A timed-out application is checked against current user information before the same asset is retried. No background removal API is exposed. X import warns that a nonempty X avatar replaces the current custom avatar.
+
+Upload timeouts recover by querying the original operation. Pending recovery makes at most eight status requests, spaced by 2.5 seconds after each completed query, with a 25-second timeout per request; users can explicitly check again. Technical failures require a new operation and at least 30 seconds before another attempt. Missing operations can replay the same in-memory file and key. Operation locators and observed failure times are stored per backend/user/purpose, without tokens or image bytes. Closing the dialog preserves drafts while the page remains mounted; after navigation or reload, the operation can be queried again, but original local files and unsent crop edits are not persisted.
+
+Tests cover multipart encoding, small and large source selection, high-zoom crop upscaling, decode failures, pending/rejected/failed/noop handling, timeout recovery, same-key replay, partial saving, session lifecycle, shared profile updates, history with uploads disabled, and editor draft retention. Real supplier review, R2 publication, browser CORS and deployed quota behavior still need acceptance against an enabled backend with a test account.

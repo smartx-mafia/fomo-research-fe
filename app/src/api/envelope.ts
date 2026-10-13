@@ -94,6 +94,9 @@ export function assertNoMixedContent(url: URL, pageProtocol?: string): void {
 type CallOptions = {
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
   body?: unknown;
+  /** Browser-generated multipart boundary; never JSON-encode this body. */
+  formData?: FormData;
+  idempotencyKey?: string;
   signal?: AbortSignal;
   /**
    * This backend currently emits selected protobuf int64 values as JSON
@@ -125,7 +128,9 @@ export async function call<T>(path: string, opts: CallOptions = {}): Promise<Cal
   // 每次请求新生成，不复用（契约硬规则，复用比不传更糟）。
   const sentRequestID = newTraceID();
   const headers: Record<string, string> = {'x-request-id': sentRequestID};
+  if (opts.body !== undefined && opts.formData) throw new Error('Choose JSON or multipart, not both');
   if (opts.body !== undefined) headers['content-type'] = 'application/json';
+  if (opts.idempotencyKey) headers['Idempotency-Key'] = opts.idempotencyKey;
   if (opts.bearer) headers['authorization'] = `Bearer ${opts.bearer}`;
 
   let res: Response;
@@ -135,7 +140,7 @@ export async function call<T>(path: string, opts: CallOptions = {}): Promise<Cal
     res = await fetch(url, {
       method: opts.method ?? 'GET',
       headers,
-      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+      body: opts.formData ?? (opts.body === undefined ? undefined : JSON.stringify(opts.body)),
       signal: opts.signal,
     });
   } catch (e) {

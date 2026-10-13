@@ -9,6 +9,7 @@ const {control} = vi.hoisted(() => ({control: {jwt: 'A', fetch: vi.fn()}}));
 vi.mock('@/api/user-portfolio', () => ({getUserPortfolio: control.fetch}));
 vi.mock('@/session/storage', () => ({useSession: () => ({jwt: control.jwt, user: {identifier: control.jwt}}), clearSite: vi.fn(), readSite: () => ({jwt: control.jwt})}));
 vi.mock('@/components/PortfolioActivity', () => ({PortfolioActivity: () => null}));
+vi.mock('@/components/PortfolioProfile', () => ({PortfolioProfile: () => null}));
 vi.mock('@/components/PortfolioCycles', () => ({ClosedPortfolioPositions: () => null, PortfolioCycleTrades: () => null}));
 vi.mock('@/components/OpinionComposer', () => ({OpinionComposer: () => <div>Opinion dialog</div>}));
 vi.mock('@/hooks/useLivePortfolio', () => ({useLivePortfolio: (data: unknown) => data}));

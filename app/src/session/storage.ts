@@ -73,6 +73,21 @@ export function removeDurableRecord(key: string): boolean {
   }
 }
 
+export function readDurableRecord(key: string): string | null {
+  return raw(key);
+}
+
+/** Apply a response only to the session that initiated it. */
+export function updateSessionUser(bearer: string, user: UserInfo): boolean {
+  const session = readSite();
+  if (session?.jwt !== bearer || session.user?.identifier !== user.identifier) return false;
+  try {
+    localStorage.setItem(KEYS.user, JSON.stringify(user));
+    notify();
+    return true;
+  } catch {return false;}
+}
+
 export function listDurableRecords(prefix: string): {key: string; value: string}[] {
   const records: {key: string; value: string}[] = [];
   for (let index = 0; index < localStorage.length; index += 1) {
