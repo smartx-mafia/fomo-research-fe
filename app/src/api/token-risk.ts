@@ -20,7 +20,11 @@ function riskPath(chain: string, address: string) {
   return `/v1/tokens/${encodeURIComponent(ref.chain)}/${encodeURIComponent(ref.address)}/risk`;
 }
 export async function getTokenRisk(chain: string, address: string, bearer?: string, signal?: AbortSignal): Promise<GetRiskReply> {
-  const reply = await call<unknown>(riskPath(chain, address), {bearer, signal});
+  const reply = await call<unknown>(riskPath(chain, address), {
+    bearer,
+    signal,
+    preserveInt64Fields: ['observed_at_ms', 'fetched_at_ms', 'valid_until_ms', 'last_attempt_at_ms'],
+  });
   return normalizeReply(reply.data, chain, address);
 }
 export async function confirmTokenRisk(chain: string, address: string, bearer: string, flowID: string, confirmationVersion: string, signal?: AbortSignal): Promise<GetRiskReply> {

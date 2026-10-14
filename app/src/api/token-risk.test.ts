@@ -9,7 +9,11 @@ describe('risk RPC contract', () => {
   beforeEach(() => {callMock.mockReset(); callMock.mockResolvedValue({data: reply});});
   it('GET is anonymous and validates fresh response identity', async () => {
     expect((await getTokenRisk('base', address)).risk.assessment?.grade).toBe(4);
-    expect(callMock.mock.calls[0]).toEqual([`/v1/tokens/base/${address}/risk`, {bearer: undefined, signal: undefined}]);
+    expect(callMock.mock.calls[0]).toEqual([`/v1/tokens/base/${address}/risk`, {
+      bearer: undefined,
+      signal: undefined,
+      preserveInt64Fields: ['observed_at_ms', 'fetched_at_ms', 'valid_until_ms', 'last_attempt_at_ms'],
+    }]);
     for (const bad of [{...reply, chain: 'bsc'}, {...reply, address: 'different'}, {risk: reply.risk}, null]) {
       callMock.mockResolvedValueOnce({data: bad});
       await expect(getTokenRisk('base', address)).rejects.toThrow(/match/);
