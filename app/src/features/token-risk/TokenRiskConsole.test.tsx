@@ -3,7 +3,7 @@
 import {render, screen, waitFor} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {describe, expect, it, vi} from 'vitest';
-import TokenRiskConsole, {ProviderCard} from './TokenRiskConsole';
+import TokenRiskConsole, {ProviderCard, VolumeRiskMatrix} from './TokenRiskConsole';
 import type {RiskAssessment, RiskSourceStatus} from '@/lib/risk-assessment';
 
 const {getTokenRiskMock} = vi.hoisted(() => ({getTokenRiskMock: vi.fn()}));
@@ -43,6 +43,19 @@ describe('ProviderCard', () => {
 
     await user.click(collapse);
     expect(screen.getAllByText('Additional risk flagged')).toHaveLength(4);
+  });
+});
+
+describe('VolumeRiskMatrix', () => {
+  it('marks every proposed volume signal as inactive reference material', () => {
+    render(<VolumeRiskMatrix />);
+
+    expect(screen.getAllByText('未接入')).toHaveLength(6);
+    expect(screen.queryByText('当前生效')).toBeNull();
+    expect(screen.getAllByLabelText('候选等级 R3')).toHaveLength(4);
+    expect(screen.getAllByLabelText('候选等级 R4')).toHaveLength(2);
+    expect(screen.getByText(/不是当前代币的检测结果/)).toBeTruthy();
+    expect(screen.getByText(/最终等级仍以后端返回为准/)).toBeTruthy();
   });
 });
 

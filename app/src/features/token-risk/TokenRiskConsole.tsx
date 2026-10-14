@@ -1,7 +1,7 @@
 'use client';
 
 import {FormEvent, useEffect, useMemo, useState} from 'react';
-import {AlertTriangle, Check, ChevronDown, ChevronRight, CircleDot, Clock3, Database, RefreshCw, Search, ShieldCheck, ShieldQuestion} from 'lucide-react';
+import {Activity, AlertTriangle, Check, ChevronDown, ChevronRight, CircleDot, Clock3, Database, RefreshCw, Search, ShieldCheck, ShieldQuestion} from 'lucide-react';
 import {ApiError} from '@/api/envelope';
 import {getTokenRisk, type GetRiskReply} from '@/api/token-risk';
 import {BUSINESS_API_BASE, sameBusinessEnvironment} from '@/config';
@@ -51,6 +51,34 @@ function itemGradeMeta(grade: number) {
   if (grade === 3) return {label: 'R3', title: 'R3 · 风险警告', classes: 'border-amber-300/25 bg-amber-300/10 text-amber-100'};
   if (grade === 2) return {label: 'R2', title: 'R2 · 风险提示', classes: 'border-sky-300/25 bg-sky-300/10 text-sky-100'};
   return {label: 'R?', title: '风险等级未判定', classes: 'border-white/10 bg-white/[.04] text-white/45'};
+}
+
+const volumeRiskRules = [
+  {name: '买卖成交额严重失衡', grade: 3, basis: '5m / 1h / 24h 方向成交额'},
+  {name: '少量地址贡献大部分成交量', grade: 4, basis: '成交贡献与独立地址覆盖'},
+  {name: '疑似刷量或循环交易', grade: 4, basis: '地址关系、金额与时间序列'},
+  {name: '成交量 / 流动性异常', grade: 3, basis: '主池成交额与流动性比率'},
+  {name: '短时成交量突增', grade: 3, basis: '5m 相对 1h / 24h 基线'},
+  {name: '价格与成交量背离', grade: 3, basis: '价格变化与成交量联合判断'},
+] as const;
+
+export function VolumeRiskMatrix() {
+  return <section aria-labelledby="volume-risk-title" className="mt-8 overflow-hidden rounded-2xl border border-white/[.08] bg-[#101513]">
+    <div className="flex flex-col gap-3 border-b border-white/[.07] p-5 sm:flex-row sm:items-start sm:justify-between">
+      <div><div className="flex items-center gap-2"><Activity className="h-4 w-4 text-sky-300/80"/><h2 id="volume-risk-title" className="font-semibold text-white">成交量候选规则</h2></div><p className="mt-1.5 text-xs leading-5 text-white/55">以下是尚未接入后端的规则建议，不是当前代币的检测结果，也不影响本次综合结论。</p></div>
+      <div className="flex flex-wrap gap-2 sm:justify-end"><span className="rounded-full border border-white/10 bg-white/[.03] px-2.5 py-1 text-[11px] text-white/55">映射草案 · 2026-10-13</span><span className="rounded-full border border-sky-300/15 bg-sky-300/[.06] px-2.5 py-1 text-[11px] text-sky-200/80">参考口径：厂家主交易对</span></div>
+    </div>
+    <div className="grid lg:grid-cols-2">
+      {volumeRiskRules.map((rule, index) => {
+        return <div key={rule.name} className={`flex items-center gap-3 border-white/[.06] px-5 py-3.5 ${index > 0 ? 'border-t lg:border-t-0' : ''} ${index >= 2 ? 'lg:border-t' : ''} ${index % 2 === 1 ? 'lg:border-l' : ''}`}>
+          <span aria-label={`候选等级 R${rule.grade}`} className="shrink-0 rounded-md border border-white/10 bg-white/[.04] px-2 py-1 font-mono text-[10px] font-semibold text-white/55">候选 R{rule.grade}</span>
+          <div className="min-w-0 flex-1"><p className="text-sm text-white/80">{rule.name}</p><p className="mt-0.5 break-words text-[11px] leading-4 text-white/55">{rule.basis}</p></div>
+          <span className="shrink-0 rounded-full border border-white/10 bg-white/[.03] px-2 py-0.5 text-[10px] text-white/55">未接入</span>
+        </div>;
+      })}
+    </div>
+    <p className="border-t border-white/[.06] px-5 py-3 text-[11px] leading-5 text-white/55">本草案尚未形成后端策略版本。若后端后续接入，成交量按厂家选定主交易对计算，并非全池或全链聚合；数据缺失不得当作零成交。最终等级仍以后端返回为准。</p>
+  </section>;
 }
 
 export function ProviderCard({source, risk}: {source: RiskSourceStatus; risk: RiskAssessment}) {
@@ -148,6 +176,7 @@ export default function TokenRiskConsole() {
           <div className="mt-6 flex flex-wrap gap-x-6 gap-y-2 border-t border-white/[.06] py-5 text-[11px] text-white/30"><span className="inline-flex items-center gap-1.5"><Clock3 className="h-3.5 w-3.5"/>策略 {risk.policyVersion || '—'}</span><span className="font-mono">decision {risk.decisionVersion || '—'}</span><span className="font-mono">{reply.chain}:{reply.address}</span></div>
         </> : !loading && !error ? <div className="mt-6 rounded-2xl border border-dashed border-white/10 p-12 text-center text-sm text-white/40">暂无风控数据</div> : null}
       </section>
+      <VolumeRiskMatrix />
     </div>
   </main>;
 }
