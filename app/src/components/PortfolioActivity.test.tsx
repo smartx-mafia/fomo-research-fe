@@ -1,7 +1,7 @@
 import React from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {describe, expect, it} from 'vitest';
-import {TradeRow} from './PortfolioActivity';
+import {TradeRow, TransferRow} from './PortfolioActivity';
 import type {PortfolioTrade} from '@/api/portfolio';
 
 const trade: PortfolioTrade = {
@@ -32,4 +32,13 @@ describe('Portfolio executed trade row', () => {
     expect(html.match(/>—</g)?.length).toBeGreaterThanOrEqual(2);
     expect(html).toContain('trade-1');
   });
+});
+
+it('renders a refunded order as failed with no received amount', () => {
+  const html = renderToStaticMarkup(<table><tbody><TransferRow transfer={{direction: 1, chain: 'solana', asset_symbol: 'USDC', asset_address: 'mint', asset_decimals: 6, amount_raw: '', tx_hash: '', occurred_at: {seconds: 1791950400}, kind: 'deposit', record_id: 'refund-order', status: 'failed'}} /></tbody></table>);
+  expect(html).toContain('Deposit');
+  expect(html).toContain('failed');
+  expect(html).toContain('refund-order');
+  expect(html).not.toContain('Received');
+  expect(html).not.toContain('completed');
 });

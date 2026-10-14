@@ -33,3 +33,12 @@ describe('transfer history contract', () => {
     expect(() => normalizeTransferPage({transfers: [], next_cursor: 1})).toThrow(/next_cursor/);
   });
 });
+
+ it('keeps refunded and pending orders without inventing arrival evidence', () => {
+   const row = {direction: 1, chain: 'solana', asset_symbol: 'USDC', asset_address: 'devnet-mint', asset_decimals: 6, amount_raw: '', counterparty: '', tx_hash: '', occurred_at: {seconds: 1791950400}, kind: 'deposit', record_id: 'refund-order', status: 'failed'};
+   const result = normalizeTransferPage({transfers: [row, {...row, record_id: 'pending-order', status: 'pending'}], next_cursor: ''});
+   expect(result.transfers).toHaveLength(2);
+   expect(result.transfers[0]).toMatchObject({record_id: 'refund-order', status: 'failed', amount_raw: '', tx_hash: ''});
+   expect(() => normalizeTransferPage({transfers: [{...row, status: 'completed'}], next_cursor: ''})).toThrow();
+   expect(() => normalizeTransferPage({transfers: [{...row, record_id: ''}], next_cursor: ''})).toThrow();
+ });
