@@ -6,6 +6,15 @@ discovery experience against the SmartX market API (see
 HTTP for snapshots/detail tabs, WebSocket for real-time boards and token headers.
 No BFF / own-backend proxy layer.
 
+## Cloudflare Pages deployment
+
+The Pages project uses `app` as its root and exports the Next.js build to `out`.
+`app/.env.production` contains only the public Crossmint staging browser key
+matching the default SmartX test backend. It is intentionally shipped to browsers;
+never add server keys or secrets to that file. Hosting environment variables take
+precedence. A different backend or Crossmint project requires its matching browser
+key in `NEXT_PUBLIC_CROSSMINT_CLIENT_SIDE_API_KEY` and a fresh build.
+
 ## Data strategy (per market.md §5)
 
 - **Discover page** — WS only: `subscribe board:{trending|new|bonding|bonded}` returns a
