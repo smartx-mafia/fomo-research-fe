@@ -92,8 +92,8 @@ export function FiatDepositCard({
     }
   };
   const updateFromGet = (next: FiatDepositSession, base?: FiatRecovery) => {
-    const providerOrderID = base?.depositID === next.deposit_id ? base.providerOrderID : undefined;
-    setOrder((current) => ({...next, provider_order_id: current?.deposit_id === next.deposit_id ? current.provider_order_id : providerOrderID, client_secret: next.client_secret ?? (current?.deposit_id === next.deposit_id ? current.client_secret : undefined)}));
+    const providerOrderID = next.provider_order_id ?? (base?.depositID === next.deposit_id ? base.providerOrderID : undefined);
+    setOrder((current) => ({...next, provider_order_id: providerOrderID ?? (current?.deposit_id === next.deposit_id ? current.provider_order_id : undefined), client_secret: next.client_secret ?? (current?.deposit_id === next.deposit_id ? current.client_secret : undefined)}));
     setProofUncertain(false);
     if (isFiatTerminal(next.status)) {
       // A history record may be viewed while an unrelated Create result is

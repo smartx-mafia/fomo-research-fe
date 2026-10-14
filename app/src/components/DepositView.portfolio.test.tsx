@@ -6,7 +6,7 @@ import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
 const {control} = vi.hoisted(() => ({control: {loading: false, error: undefined as Error | undefined, mounted: 0, unmounted: 0}}));
 vi.mock('@privy-io/react-auth', () => ({usePrivy: () => ({ready: true, authenticated: true, user: {id: 'did:test'}})}));
 vi.mock('@/session/storage', () => ({useSession: () => ({jwt: 'test', user: {identifier: 'owner'}}), readSite: () => ({jwt: 'test'}), clearSite: vi.fn()}));
-vi.mock('@/components/FiatDepositCard', () => ({FiatDepositCard: () => null}));
+vi.mock('@/components/FiatDepositCard', () => ({FiatDepositCard: ({resumeID}: {resumeID?: string}) => resumeID ? <div>Recover fiat {resumeID}</div> : null}));
 vi.mock('@/components/DepositAddresses', () => ({DepositAddresses: () => null}));
 vi.mock('@/components/SweepDepositCard', () => ({SweepDepositCard: () => {
   useEffect(() => {control.mounted++; return () => {control.unmounted++;};}, []);
@@ -26,7 +26,12 @@ describe('Portfolio-independent sweep recovery', () => {
     control.loading = true; control.error = undefined; control.mounted = 0; control.unmounted = 0;
     element = document.createElement('div'); document.body.append(element); root = createRoot(element);
   });
-  afterEach(async () => {await act(async () => root.unmount()); element.remove();});
+  afterEach(async () => {await act(async () => root.unmount()); element.remove(); window.history.replaceState(null, '', '/');});
+  it('passes a known order link to fiat recovery while Portfolio is unavailable', async () => {
+    window.history.replaceState(null, '', '/deposit?deposit_id=existing-order');
+    await act(async () => root.render(<DepositView />));
+    expect(element.textContent).toContain('Recover fiat existing-order');
+  });
   it('keeps the recovery component mounted through Portfolio loading and failure', async () => {
     await act(async () => root.render(<DepositView />));
     expect(element.textContent).toContain('Known sweep recovery available');

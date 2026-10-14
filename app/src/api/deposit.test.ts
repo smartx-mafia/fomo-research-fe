@@ -6,6 +6,7 @@ vi.mock('./envelope', () => ({call: callMock}));
 import {
   createDepositSweep,
   createFiatDeposit,
+  getDeposit,
   prepareDepositSweep,
   submitFiatWalletProof,
   submitDepositSweep,
@@ -19,6 +20,21 @@ describe('deposit API contract', () => {
     callMock.mockResolvedValue({data: {deposit_id: 'd-1', provider_order_id: 'p-1', client_secret: 'secret', status: 1}});
     await createFiatDeposit('jwt', {idempotencyKey: 'deposit-key', fiatAmount: '100.00', receiptEmail: 'a@example.com'});
     expect(callMock).toHaveBeenCalledWith('/v1/deposits/fiat', {method: 'POST', bearer: 'jwt', signal: undefined, body: {idempotency_key: 'deposit-key', fiat_amount: '100.00', fiat_currency: 'USD', receipt_email: 'a@example.com'}});
+  });
+
+  it('accepts the protobuf empty wallet-proof message on successful creation', async () => {
+    callMock.mockResolvedValue({data: {deposit_id: 'd-1', provider_order_id: 'p-1', client_secret: 'secret', status: 2, wallet_proof: {challenge_id: '', message: ''}}});
+    await expect(createFiatDeposit('jwt', {idempotencyKey: 'key', fiatAmount: '5.00', receiptEmail: 'a@example.com'})).resolves.toMatchObject({deposit_id: 'd-1', wallet_proof: undefined});
+  });
+
+  it('keeps the provider order ID when recovering checkout without browser metadata', async () => {
+    callMock.mockResolvedValue({data: {deposit: {deposit_id: 'd-1', kind: 1, status: 2}, provider_order_id: 'p-1', client_secret: 'secret', next_action: 'mount_checkout', wallet_proof: {challenge_id: '', message: ''}}});
+    await expect(getDeposit('jwt', 'd-1')).resolves.toMatchObject({provider_order_id: 'p-1', next_action: 'mount_checkout', wallet_proof: undefined});
+  });
+
+  it('rejects a partial wallet-proof challenge instead of silently skipping signing', async () => {
+    callMock.mockResolvedValue({data: {deposit_id: 'd-1', status: 2, wallet_proof: {challenge_id: 'c-1', message: ''}}});
+    await expect(createFiatDeposit('jwt', {idempotencyKey: 'key', fiatAmount: '5.00', receiptEmail: 'a@example.com'})).rejects.toThrow('wallet_proof.message');
   });
 
   it('creates a sweep from the exact Portfolio chain and token with no client amount', async () => {
