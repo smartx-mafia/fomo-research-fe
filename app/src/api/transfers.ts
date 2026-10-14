@@ -68,12 +68,13 @@ export function normalizeTransferPage(value: unknown): TransferPage {
       (!business && (transfer.chain !== 'solana' || transfer.asset_symbol !== 'USDC' || transfer.asset_decimals !== 6))
     ) throw new Error('Transfer history returned an invalid transfer entry.');
     if (typeof transfer.tx_hash !== 'string' || (!unsettled && !transfer.tx_hash)) throw new Error('Transfer history returned an invalid tx_hash.');
+    if (business && typeof transfer.asset_address !== 'string') throw new Error('Transfer history returned an invalid asset_address.');
     if (typeof transfer.counterparty !== 'string') throw new Error('Transfer history returned an invalid counterparty.');
     return {
       direction: transfer.direction,
       chain: transfer.chain,
       asset_symbol: transfer.asset_symbol,
-      asset_address: requiredString(transfer.asset_address, 'asset_address'),
+      asset_address: business ? transfer.asset_address as string : requiredString(transfer.asset_address, 'asset_address'),
       asset_decimals: transfer.asset_decimals as number,
       amount_raw: transfer.amount_raw,
       counterparty: transfer.counterparty || undefined,
