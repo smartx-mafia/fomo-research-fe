@@ -1,0 +1,4 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "NEXT_PUBLIC_PRIVY_APP_ID=\"${NEXT_PUBLIC_PRIVY_APP_ID:-cmtb1g7g800l10dkzdlqi80zm}\" pnpm build"
+}

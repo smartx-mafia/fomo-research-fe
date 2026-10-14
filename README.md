@@ -6,6 +6,16 @@ discovery experience against the SmartX market API (see
 HTTP for snapshots/detail tabs, WebSocket for real-time boards and token headers.
 No BFF / own-backend proxy layer.
 
+## Vercel deployment
+
+Use `app` as the Vercel project root. `app/vercel.json` supplies the public
+SmartX test Privy app ID at build time when the project has no explicit
+`NEXT_PUBLIC_PRIVY_APP_ID`. It matches the default business API
+`https://sm-test-api.smartx.io`; it is a browser-visible identifier, not a secret.
+When deploying against another backend, set both `NEXT_PUBLIC_BUSINESS_API_BASE`
+and its matching `NEXT_PUBLIC_PRIVY_APP_ID` in Vercel and redeploy. Explicit
+project configuration takes precedence over this test deployment default.
+
 ## Data strategy (per market.md §5)
 
 - **Discover page** — WS only: `subscribe board:{trending|new|bonding|bonded}` returns a
