@@ -92,6 +92,7 @@ export function FiatDepositCard({
     }
   };
   const updateFromGet = (next: FiatDepositSession, base?: FiatRecovery) => {
+    if (next.deposit?.fiat_amount) setAmount(next.deposit.fiat_amount);
     const providerOrderID = next.provider_order_id ?? (base?.depositID === next.deposit_id ? base.providerOrderID : undefined);
     setOrder((current) => ({...next, provider_order_id: providerOrderID ?? (current?.deposit_id === next.deposit_id ? current.provider_order_id : undefined), client_secret: next.client_secret ?? (current?.deposit_id === next.deposit_id ? current.client_secret : undefined)}));
     setProofUncertain(false);
