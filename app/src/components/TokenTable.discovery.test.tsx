@@ -103,3 +103,13 @@ it('直接展示后端多路理由与发现时指标，并在切榜后清除状�
  act(()=>socket.frame({topic:'board:discovery_lab',kind:'snapshot',seq:1,data:{items:[]}}));expect(screen.getByText('TEST')).toBeTruthy();
  fireEvent.click(screen.getByRole('button',{name:'Trending'}));expect(screen.queryByText(/部分通道暂不可用/)).toBeNull();
 });
+
+it('切到研究视图释放行情订阅，只读取全量批次HTTP',async()=>{
+ vi.stubGlobal('fetch',vi.fn().mockResolvedValue({ok:true,json:async()=>({code:200,data:{research:{generated_at_ms:1792065000000,state:'complete',source_row_count:0,unique_count:0,qualified_count:0,selected_count:0,candidates:[]}}})}));
+ render(<TokenTable initialTrending={null} initialBoard="discovery_lab"/>);const socket=start();
+ fireEvent.click(screen.getByRole('button',{name:'候选全量 · 研究'}));await act(async()=>{});
+ expect(socket.sent.at(-1)).toEqual({op:'unsubscribe',topic:'board:discovery_lab'});
+ expect(socket.sent.some(f=>f.topic==='board:discovery_candidates')).toBe(false);
+ expect(screen.getByText('候选全量 · 研究视图')).toBeTruthy();
+ expect(vi.mocked(fetch).mock.calls[0][0]).toContain('/v1/boards/discovery_candidates');
+});

@@ -6,3 +6,11 @@ it('保留多路理由、零值与缺失值的区别，不依据实时行情推�
  expect(normalizeDiscovery({reasons:[{code:'x',label:'X',value:false} ]})?.reasons[0].value).toBeUndefined();
  expect(normalizeDiscoveryCoverage({})).toBeUndefined();
 });
+
+it('研究全量不截100，缺失数值保留未知，缺少research不能冒充空列表', async () => {
+ const {normalizeDiscoveryResearch}=await import('./discovery');
+ const rows=Array.from({length:151},(_,i)=>({chain:'bsc',address:`0x${i}`,price:null,sources:[],selection_state:'local_excluded'}));
+ const data=normalizeDiscoveryResearch({research:{generated_at_ms:'123',state:'complete',source_row_count:200,unique_count:151,qualified_count:0,selected_count:0,candidates:rows}});
+ expect(data.candidates).toHaveLength(151);expect(data.candidates[0].price).toBeUndefined();
+ expect(()=>normalizeDiscoveryResearch({items:[]})).toThrow();
+});

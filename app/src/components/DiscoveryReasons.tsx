@@ -1,5 +1,5 @@
 import type {DiscoverySignal, DiscoveryCoverage} from '@/lib/discovery';
-import {discoveryReasonDetail} from '@/lib/discovery';
+import {discoveryReasonDetail, discoveryChannelLabels} from '@/lib/discovery';
 
 export function DiscoveryReasons({discovery}: {discovery?: DiscoverySignal}) {
   if (!discovery?.reasons.length) return <span className="text-xs text-muted">理由暂缺</span>;
@@ -17,4 +17,9 @@ const states: Record<string,string> = {complete:'发现数据完整',partial:'�
 export function DiscoveryStatus({coverage}: {coverage?: DiscoveryCoverage}) {
   if (!coverage) return <p className="text-muted">等待新版发现数据…</p>;
   return <p className="text-muted">{states[coverage.state] ?? '发现状态待确认'} · {modes[coverage.market_mode] ?? '行情状态待确认'}{coverage.discovered_at_ms ? ` · 最近发现 ${new Date(coverage.discovered_at_ms).toLocaleTimeString()}` : ''}</p>;
+}
+
+export function DiscoveryWeights({coverage}:{coverage?:DiscoveryCoverage}) {
+ if(!coverage?.weights || Object.keys(coverage.weights).length===0)return null;
+ return <p className="text-muted">混排目标配比：{Object.entries(discoveryChannelLabels).map(([key,label])=>`${label} ${coverage.weights?.[key] ?? '—'}%`).join(' · ')}（候选不足时由其他通道补位）</p>;
 }

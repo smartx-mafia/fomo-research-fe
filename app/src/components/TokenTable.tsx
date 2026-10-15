@@ -11,7 +11,8 @@ import { StarButton, useFavorites } from "@/components/FavoritesProvider";
 import { useSession } from "@/session/storage";
 import {RiskDetails, RiskDialog} from "@/components/TokenRisk";
 import {riskHeading} from "@/lib/risk-assessment";
-import {DiscoveryReasons, DiscoveryStatus} from "./DiscoveryReasons";
+import {DiscoveryReasons, DiscoveryStatus, DiscoveryWeights} from "./DiscoveryReasons";
+import {DiscoveryResearch} from "./DiscoveryResearch";
 import WatchlistPanel from "@/components/WatchlistPanel";
 
 /** 2026-09 起五榜：most_held 是候选池最多 Account 主体持有榜。 */
@@ -206,11 +207,11 @@ function TokenRows({ tokens, board }: { tokens: TokenMarket[]; board: BoardName 
  *
  * 成员与排序由服务端决定；测试榜独立订阅，不复用 Trending 的基线。
  */
-type Tab = BoardName | "watchlist";
+type Tab = BoardName | "watchlist" | "discovery_candidates";
 
-export function TokenTable({ initialTrending, initialBoard = "trending" }: { initialTrending: TokenMarket[] | null; initialBoard?: BoardName }) {
+export function TokenTable({ initialTrending, initialBoard = "trending" }: { initialTrending: TokenMarket[] | null; initialBoard?: BoardName | "discovery_candidates" }) {
   const [tab, setTab] = useState<Tab>(initialBoard);
-  const isBoard = tab !== "watchlist";
+  const isBoard = tab !== "watchlist" && tab !== "discovery_candidates";
   // 启动快照只属于 Trending：切到其它榜时绝不能拿它冒充新榜快照。
   const initial = tab === "trending" ? initialTrending ?? undefined : undefined;
   const { items, status, discovery } = useBoardStream(isBoard ? tab : null, initial);
@@ -220,7 +221,7 @@ export function TokenTable({ initialTrending, initialBoard = "trending" }: { ini
     <Card>
       <div className="flex items-center justify-between border-b border-border px-4 py-2">
         <div className="flex flex-wrap items-center gap-1">
-          {([...BOARDS, "watchlist"] as Tab[]).map((t) => (
+          {([...BOARDS, "discovery_candidates", "watchlist"] as Tab[]).map((t) => (
             <button
               key={t}
               type="button"
@@ -230,7 +231,7 @@ export function TokenTable({ initialTrending, initialBoard = "trending" }: { ini
                 tab === t ? "bg-accent/15 text-foreground" : "text-muted hover:text-foreground"
               }`}
             >
-              {t === "watchlist" ? "★ Watchlist" : BOARD_LABELS[t as BoardName]}
+              {t === "watchlist" ? "★ Watchlist" : t === "discovery_candidates" ? "候选全量 · 研究" : BOARD_LABELS[t as BoardName]}
             </button>
           ))}
         </div>
@@ -252,10 +253,11 @@ export function TokenTable({ initialTrending, initialBoard = "trending" }: { ini
         <p className="font-medium">机会榜 · 临时测试</p>
         <p className="text-muted">跨链发现 · 流动性 ≥ $20K · 5 分钟成交额 ≥ $1K · 5 分钟独立买家 ≥ 10 · 不设 FDV 上限。</p>
         <p className="text-muted">短期热门、突然放量、新币起势、上涨异动、持续热门五路发现，约每 30 秒筛选并执行风险准入。展开“入选理由”可查看发现时的指标；理由与当前行情可能不同。FDV 为完全稀释估值。</p>
+        <DiscoveryWeights coverage={discovery} />
         <DiscoveryStatus coverage={discovery} />
       </div>}
 
-      {tab === "watchlist" ? (
+      {tab === "discovery_candidates" ? <DiscoveryResearch /> : tab === "watchlist" ? (
         <WatchlistPanel />
       ) : status === "rejected" ? (
         <EmptyState>This board is not available in the current backend environment.</EmptyState>

@@ -1,4 +1,4 @@
-import {normalizeDiscovery, normalizeDiscoveryCoverage} from "./discovery";
+import {normalizeDiscovery, normalizeDiscoveryCoverage, normalizeDiscoveryResearch} from "./discovery";
 /**
  * SmartX 行情 API 客户端（HTTP 面）。前端直连后端，无 BFF 中转。
  *
@@ -409,4 +409,9 @@ export async function fetchTopTraders(
     { revalidate: 300 }
   );
   return normalizeHolderPage(data);
+}
+
+/** Slow research snapshot; never starts token price subscriptions. */
+export async function fetchDiscoveryResearch(signal?: AbortSignal) {
+ return normalizeDiscoveryResearch(await marketFetch<unknown>('/v1/boards/discovery_candidates', {}, {revalidate:0,cache:'no-store',signal}));
 }
