@@ -1,5 +1,8 @@
 "use client";
 
+import {normalizeDiscoveryCoverage, type DiscoveryCoverage} from "./discovery";
+
+
 /**
  * SmartX 行情 WebSocket 层（docs/api/market.md §3）。
  *
@@ -154,7 +157,7 @@ export function mergeBoardUpdates(current: TokenMarket[], data: unknown): TokenM
 export function useBoardStream(board: BoardName | null, initial?: TokenMarket[]) {
   const topic = board ? `board:${board}` : null;
   const bootstrap = useRef({topic, items: initial});
-  const [view, setView] = useState<{topic: string | null; items: TokenMarket[]; status: StreamStatus}>(() => ({
+  const [view, setView] = useState<{topic: string | null; items: TokenMarket[]; status: StreamStatus; discovery?: DiscoveryCoverage}>(() => ({
     topic, items: initial ?? [], status: "connecting",
   }));
 
@@ -170,11 +173,13 @@ export function useBoardStream(board: BoardName | null, initial?: TokenMarket[])
     let list: TokenMarket[] = bootstrap.current.items ? [...bootstrap.current.items] : [];
     let lastSeq: number | null = null;
     let hasSnapshot = false;
+    let discovery: DiscoveryCoverage | undefined;
     const publish = (status: StreamStatus) => {
-      if (active) setView({topic, items: [...list], status});
+      if (active) setView({topic, items: [...list], status, discovery});
     };
     const invalidate = () => {
       list = [];
+      discovery = undefined;
       hasSnapshot = false;
       lastSeq = null;
       publish("connecting");
@@ -196,8 +201,11 @@ export function useBoardStream(board: BoardName | null, initial?: TokenMarket[])
         return;
       }
       if (f.kind === "snapshot") {
-        const data = f.data as {seq?: unknown; items?: unknown[]} | undefined;
+        const data = f.data as {seq?: unknown; items?: unknown[]; discovery?: unknown} | undefined;
+        const nextSeq = f.seq ?? num(data?.seq);
+        if (hasSnapshot && nextSeq !== undefined && lastSeq !== null && nextSeq < lastSeq) return;
         list = (data?.items ?? []).map(normalizeTokenMarket);
+        discovery = normalizeDiscoveryCoverage(data?.discovery);
         lastSeq = f.seq ?? num(data?.seq) ?? null;
         hasSnapshot = true;
         publish("live");
@@ -240,7 +248,7 @@ export function useBoardStream(board: BoardName | null, initial?: TokenMarket[])
   }, [topic]);
 
   // effect清理之前的那次render也不能把旧榜数据画到新榜标题下。
-  return view.topic === topic && topic ? {items: view.items, status: view.status} : {items: [], status: "connecting" as StreamStatus};
+  return view.topic === topic && topic ? {items: view.items, status: view.status, discovery: view.discovery} : {items: [], status: "connecting" as StreamStatus};
 }
 
 /**

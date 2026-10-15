@@ -1,3 +1,4 @@
+import {normalizeDiscovery, normalizeDiscoveryCoverage} from "./discovery";
 /**
  * SmartX 行情 API 客户端（HTTP 面）。前端直连后端，无 BFF 中转。
  *
@@ -138,6 +139,7 @@ const TOKEN_STR_FIELDS = ["symbol", "name", "logo", "created_at"] as const;
 export function normalizeTokenMarket(raw: unknown): TokenMarket {
   const r = (raw ?? {}) as Record<string, unknown>;
   const out: TokenMarket = {
+    discovery: normalizeDiscovery(r.discovery),
     chain: typeof r.chain === "string" ? r.chain : "",
     address: typeof r.address === "string" ? r.address : "",
     risk: normalizeTokenRisk(r.risk, {flat: r, observedAtMs: r.updated_at}),
@@ -156,6 +158,7 @@ export function normalizeTokenMarket(raw: unknown): TokenMarket {
 export function normalizeBoard(raw: unknown): BoardData {
   const r = (raw ?? {}) as Record<string, unknown>;
   return {
+    discovery: normalizeDiscoveryCoverage(r.discovery),
     seq: num(r.seq),
     updated_at: num(r.updated_at),
     items: Array.isArray(r.items) ? r.items.map(normalizeTokenMarket) : [],

@@ -1,3 +1,4 @@
+import type {DiscoverySignal, DiscoveryCoverage} from "./discovery";
 import type {TokenRisk} from './token-risk';
 
 /**
@@ -31,6 +32,7 @@ export type BoardName = (typeof BOARDS)[number];
  * 经 normalizeTokenMarket() 之后数值字段保证是 number。
  */
 export interface TokenMarket {
+  discovery?: DiscoverySignal;
   chain: string;
   address: string;
   /** Canonical normalized risk. Transitional flat backend fields are input-only. */
@@ -68,6 +70,7 @@ export interface TokenMarket {
 
 /** /v1/boards/{board} 回包 data（§2.1），WS snapshot 帧的 data 同形 */
 export interface BoardData {
+  discovery?: DiscoveryCoverage;
   /** 榜单版本号，单调递增，与 WS 帧的 seq 同一体系 */
   seq?: number;
   /** unix 毫秒 */

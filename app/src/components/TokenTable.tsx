@@ -11,6 +11,7 @@ import { StarButton, useFavorites } from "@/components/FavoritesProvider";
 import { useSession } from "@/session/storage";
 import {RiskDetails, RiskDialog} from "@/components/TokenRisk";
 import {riskHeading} from "@/lib/risk-assessment";
+import {DiscoveryReasons, DiscoveryStatus} from "./DiscoveryReasons";
 import WatchlistPanel from "@/components/WatchlistPanel";
 
 /** 2026-09 起五榜：most_held 是候选池最多 Account 主体持有榜。 */
@@ -113,8 +114,8 @@ function TokenRows({ tokens, board }: { tokens: TokenMarket[]; board: BoardName 
             <th className="px-3 py-2 font-medium text-right">24h</th>
             <th className="px-3 py-2 font-medium text-right">{board === "discovery_lab" ? "FDV" : "Market Cap"}</th>
             <th className="px-3 py-2 font-medium text-right">Liquidity</th>
-            <th className="px-3 py-2 font-medium text-right">{board === "discovery_lab" ? "Vol 1h" : "Vol 24h"}</th>
-            {board === "discovery_lab" && <th className="px-3 py-2 font-medium">Risk</th>}
+            <th className="px-3 py-2 font-medium text-right">{board === "discovery_lab" ? "Vol 5m" : "Vol 24h"}</th>
+            {board === "discovery_lab" && <><th className="px-3 py-2 font-medium">入选理由</th><th className="px-3 py-2 font-medium">Risk</th></>}
             {board === "most_held" && (
               <>
                 <th className="px-3 py-2 font-medium text-right">Held By</th>
@@ -168,9 +169,9 @@ function TokenRows({ tokens, board }: { tokens: TokenMarket[]; board: BoardName 
                 <Flash value={tok.liquidity}>{fmtCompact(tok.liquidity)}</Flash>
               </td>
               <td className="px-3 py-2 tabular text-right">
-                <Flash value={board === "discovery_lab" ? tok.volume_1h : tok.volume_24h}>{fmtCompact(board === "discovery_lab" ? tok.volume_1h : tok.volume_24h)}</Flash>
+                <Flash value={board === "discovery_lab" ? tok.discovery?.volume_5m : tok.volume_24h}>{fmtCompact(board === "discovery_lab" ? tok.discovery?.volume_5m : tok.volume_24h)}</Flash>
               </td>
-              {board === "discovery_lab" && <td className="px-3 py-2"><DiscoveryRisk token={tok} /></td>}
+              {board === "discovery_lab" && <><td className="px-3 py-2"><DiscoveryReasons discovery={tok.discovery} /></td><td className="px-3 py-2"><DiscoveryRisk token={tok} /></td></>}
               {board === "most_held" && (
                 <>
                   <td className="px-3 py-2 tabular text-right">
@@ -210,7 +211,7 @@ export function TokenTable({ initialTrending, initialBoard = "trending" }: { ini
   const isBoard = tab !== "watchlist";
   // 启动快照只属于 Trending：切到其它榜时绝不能拿它冒充新榜快照。
   const initial = tab === "trending" ? initialTrending ?? undefined : undefined;
-  const { items, status } = useBoardStream(isBoard ? tab : null, initial);
+  const { items, status, discovery } = useBoardStream(isBoard ? tab : null, initial);
   const rows = items;
 
   return (
@@ -247,8 +248,9 @@ export function TokenTable({ initialTrending, initialBoard = "trending" }: { ini
 
       {tab === "discovery_lab" && <div className="space-y-1 border-b border-border px-4 py-3 text-sm" role="note">
         <p className="font-medium">机会榜 · 临时测试</p>
-        <p className="text-muted">跨链发现 · FDV $100K–$50M · 流动性 ≥ $50K · 1h 成交额 ≥ $20K · 1h 独立买家 ≥ 30。</p>
-        <p className="text-muted">合并 5 分钟与 1 小时热度候选，由后端排序并执行现有风险准入。约每 30 秒刷新，冷启动和风险检查可能需要等待；合格数量不足时不补凑。FDV 为完全稀释估值，不等于流通市值。</p>
+        <p className="text-muted">跨链发现 · 流动性 ≥ $20K · 5 分钟成交额 ≥ $1K · 5 分钟独立买家 ≥ 10 · 不设 FDV 上限。</p>
+        <p className="text-muted">短期热门、突然放量、新币起势、上涨异动、持续热门五路发现，约每 30 秒筛选并执行风险准入。展开“入选理由”可查看发现时的指标；理由与当前行情可能不同。FDV 为完全稀释估值。</p>
+        <DiscoveryStatus coverage={discovery} />
       </div>}
 
       {tab === "watchlist" ? (

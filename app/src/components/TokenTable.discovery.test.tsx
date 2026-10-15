@@ -46,7 +46,7 @@ it('实验榜独立订阅，保留服务端顺序和FDV展示，切回原Trendin
     {...row('base','SECOND'), market_cap_diluted:2000000, volume_1h:900000},
   ]}}));
   expect(screen.getByRole('columnheader',{name:'FDV'})).toBeTruthy();
-  expect(screen.getByRole('columnheader',{name:'Vol 1h'})).toBeTruthy();
+  expect(screen.getByRole('columnheader',{name:'Vol 5m'})).toBeTruthy();
   expect(screen.getByRole('columnheader',{name:'Risk'})).toBeTruthy();
   const rows = screen.getAllByRole('row');
   expect(rows[1].textContent).toContain('FIRST');
@@ -91,4 +91,15 @@ it('完整无风险项和平台验证提供准确说明，不打开不可用提�
   fireEvent.click(screen.getByText('平台已验证'));
   expect(screen.getByText('平台验证资格不代表无风险或已完成全部检查。交易前仍以最新风控为准。')).toBeTruthy();
   expect(screen.queryByText('Risk data is unavailable or incomplete. This does not mean the token is safe. Ordinary transaction checks still apply.')).toBeNull();
+});
+
+it('直接展示后端多路理由与发现时指标，并在切榜后清除状态', () => {
+ render(<TokenTable initialTrending={null} initialBoard="discovery_lab" />);const socket=start();
+ act(()=>socket.frame({topic:'board:discovery_lab',kind:'snapshot',seq:2,data:{discovery:{policy_version:'codex-five-lane-v2',state:'partial',market_mode:'fallback'},items:[{...row('bsc','TEST'),price_change_5min:-10,discovery:{volume_5m:'2500',reasons:[{code:'price_up',label:'上涨异动',metric:'price_change_5m',value:8,threshold:5,unit:'percent',upstream_rank:2,observed_at_ms:'1792000000000'},{code:'hot_5m',label:'短期热门',metric:'upstream_rank',value:3,threshold:100}]}}]}}));
+ expect(screen.getByRole('columnheader',{name:'入选理由'})).toBeTruthy();
+ expect(screen.getByText('5 分钟涨幅 8.0%，门槛 ≥ 5%')).toBeTruthy();
+ expect(screen.getByText(/部分通道暂不可用/)).toBeTruthy();
+ expect(screen.getAllByText('短期热门').length).toBeGreaterThan(0);
+ act(()=>socket.frame({topic:'board:discovery_lab',kind:'snapshot',seq:1,data:{items:[]}}));expect(screen.getByText('TEST')).toBeTruthy();
+ fireEvent.click(screen.getByRole('button',{name:'Trending'}));expect(screen.queryByText(/部分通道暂不可用/)).toBeNull();
 });
