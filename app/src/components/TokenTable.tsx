@@ -107,6 +107,7 @@ function TokenRows({ tokens, board }: { tokens: TokenMarket[]; board: BoardName 
           <tr className="border-b border-border text-left text-[11px] uppercase tracking-wide text-muted">
             <th className="w-8 px-2 py-2" />
             <th className="px-3 py-2 font-medium">Token</th>
+            {board === "discovery_lab" && <th className="px-3 py-2 font-medium">入选理由</th>}
             <th className="px-3 py-2 font-medium">Chain</th>
             <th className="px-3 py-2 font-medium">Age</th>
             <th className="px-3 py-2 font-medium text-right">Price</th>
@@ -115,7 +116,7 @@ function TokenRows({ tokens, board }: { tokens: TokenMarket[]; board: BoardName 
             <th className="px-3 py-2 font-medium text-right">{board === "discovery_lab" ? "FDV" : "Market Cap"}</th>
             <th className="px-3 py-2 font-medium text-right">Liquidity</th>
             <th className="px-3 py-2 font-medium text-right">{board === "discovery_lab" ? "Vol 5m" : "Vol 24h"}</th>
-            {board === "discovery_lab" && <><th className="px-3 py-2 font-medium">入选理由</th><th className="px-3 py-2 font-medium">Risk</th></>}
+            {board === "discovery_lab" && <th className="px-3 py-2 font-medium">Risk</th>}
             {board === "most_held" && (
               <>
                 <th className="px-3 py-2 font-medium text-right">Held By</th>
@@ -145,6 +146,7 @@ function TokenRows({ tokens, board }: { tokens: TokenMarket[]; board: BoardName 
                   </div>
                 </a>
               </td>
+              {board === "discovery_lab" && <td className="px-3 py-2"><DiscoveryReasons discovery={tok.discovery} /></td>}
               <td className="px-3 py-2">
                 <ChainBadge chainId={tok.chain} />
               </td>
@@ -171,7 +173,7 @@ function TokenRows({ tokens, board }: { tokens: TokenMarket[]; board: BoardName 
               <td className="px-3 py-2 tabular text-right">
                 <Flash value={board === "discovery_lab" ? tok.discovery?.volume_5m : tok.volume_24h}>{fmtCompact(board === "discovery_lab" ? tok.discovery?.volume_5m : tok.volume_24h)}</Flash>
               </td>
-              {board === "discovery_lab" && <><td className="px-3 py-2"><DiscoveryReasons discovery={tok.discovery} /></td><td className="px-3 py-2"><DiscoveryRisk token={tok} /></td></>}
+              {board === "discovery_lab" && <td className="px-3 py-2"><DiscoveryRisk token={tok} /></td>}
               {board === "most_held" && (
                 <>
                   <td className="px-3 py-2 tabular text-right">
