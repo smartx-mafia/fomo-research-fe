@@ -19,6 +19,8 @@ export type RiskSourceStatus = {
   checksComplete: boolean;
 };
 export type RiskAssessment = {
+  /** Backend platform qualification for display only; never overrides buyAction. */
+  verification?: {eligible: boolean; suspended: boolean};
   mode: 'enforce' | 'observe' | '';
   grade: number;
   checksComplete: boolean;
@@ -90,7 +92,9 @@ export function normalizeRiskAssessment(value: unknown): RiskAssessment {
     });
   }
   const action = field(raw, 'buyAction', 'buy_action');
+  const verification = record(raw.verification);
   return {
+    ...(Object.keys(verification).length ? {verification: {eligible: verification.eligible === true, suspended: verification.suspended === true}} : {}),
     mode: raw.mode === 'enforce' || raw.mode === 'observe' ? raw.mode : '',
     grade: grade(raw.grade), checksComplete: field(raw, 'checksComplete', 'checks_complete') === true,
     validUntilMs: time(field(raw, 'validUntilMs', 'valid_until_ms')),

@@ -9,16 +9,34 @@ import { Card, ChainBadge, PctBadge, Skeleton, EmptyState } from "@/components/u
 import { Flash } from "@/components/Flash";
 import { StarButton, useFavorites } from "@/components/FavoritesProvider";
 import { useSession } from "@/session/storage";
+import {RiskDetails, RiskDialog} from "@/components/TokenRisk";
+import {riskHeading} from "@/lib/risk-assessment";
 import WatchlistPanel from "@/components/WatchlistPanel";
 
 /** 2026-09 起五榜：most_held 是候选池最多 Account 主体持有榜。 */
 const BOARD_LABELS: Record<BoardName, string> = {
   trending: "Trending",
+  discovery_lab: "机会榜 · 测试",
   bonding: "Bonding",
   graduated: "Graduated",
   crypto: "Crypto",
   most_held: "Most Held",
 };
+
+function DiscoveryRisk({token}: {token: TokenMarket}) {
+  const [open, setOpen] = useState(false);
+  const assessment = token.risk.assessment;
+  const verified = assessment?.verification?.eligible && !assessment.verification.suspended;
+  const clear = assessment?.grade === 1 && assessment.checksComplete && assessment.items.length === 0;
+  if (verified || clear) {
+    return <details className="max-w-[240px] text-xs">
+      <summary className="cursor-pointer">{verified ? "平台已验证" : "未报告风险项"}</summary>
+      <p className="mt-2 text-muted">{verified ? "平台验证资格不代表无风险或已完成全部检查。交易前仍以最新风控为准。" : "最近一次评估未列出风险项，不代表安全保证。交易前仍以最新风控为准。"}</p>
+      {!!assessment?.items.length && <RiskDetails risk={assessment} />}
+    </details>;
+  }
+  return <><button type="button" className="text-xs underline" onClick={() => setOpen(true)}>{riskHeading(assessment)}</button><RiskDialog risk={assessment} open={open} onClose={() => setOpen(false)} /></>;
+}
 
 function TokenLogo({ logo, symbol }: { logo?: string; symbol: string }) {
   const [failed, setFailed] = useState(false);
@@ -91,11 +109,12 @@ function TokenRows({ tokens, board }: { tokens: TokenMarket[]; board: BoardName 
             <th className="px-3 py-2 font-medium">Chain</th>
             <th className="px-3 py-2 font-medium">Age</th>
             <th className="px-3 py-2 font-medium text-right">Price</th>
-            <th className="px-3 py-2 font-medium text-right">1h</th>
+            <th className="px-3 py-2 font-medium text-right">{board === "discovery_lab" ? "5m" : "1h"}</th>
             <th className="px-3 py-2 font-medium text-right">24h</th>
-            <th className="px-3 py-2 font-medium text-right">Market Cap</th>
+            <th className="px-3 py-2 font-medium text-right">{board === "discovery_lab" ? "FDV" : "Market Cap"}</th>
             <th className="px-3 py-2 font-medium text-right">Liquidity</th>
-            <th className="px-3 py-2 font-medium text-right">Vol 24h</th>
+            <th className="px-3 py-2 font-medium text-right">{board === "discovery_lab" ? "Vol 1h" : "Vol 24h"}</th>
+            {board === "discovery_lab" && <th className="px-3 py-2 font-medium">Risk</th>}
             {board === "most_held" && (
               <>
                 <th className="px-3 py-2 font-medium text-right">Held By</th>
@@ -133,8 +152,8 @@ function TokenRows({ tokens, board }: { tokens: TokenMarket[]; board: BoardName 
                 <Flash value={tok.price}>{fmtPrice(tok.price)}</Flash>
               </td>
               <td className="px-3 py-2 text-right">
-                <Flash value={tok.price_change_1h}>
-                  <PctBadge value={tok.price_change_1h} />
+                <Flash value={board === "discovery_lab" ? tok.price_change_5min : tok.price_change_1h}>
+                  <PctBadge value={board === "discovery_lab" ? tok.price_change_5min : tok.price_change_1h} />
                 </Flash>
               </td>
               <td className="px-3 py-2 text-right">
@@ -143,14 +162,15 @@ function TokenRows({ tokens, board }: { tokens: TokenMarket[]; board: BoardName 
                 </Flash>
               </td>
               <td className="px-3 py-2 tabular text-right">
-                <Flash value={tok.market_cap}>{fmtCompact(tok.market_cap)}</Flash>
+                <Flash value={board === "discovery_lab" ? tok.market_cap_diluted : tok.market_cap}>{fmtCompact(board === "discovery_lab" ? tok.market_cap_diluted : tok.market_cap)}</Flash>
               </td>
               <td className="px-3 py-2 tabular text-right">
                 <Flash value={tok.liquidity}>{fmtCompact(tok.liquidity)}</Flash>
               </td>
               <td className="px-3 py-2 tabular text-right">
-                <Flash value={tok.volume_24h}>{fmtCompact(tok.volume_24h)}</Flash>
+                <Flash value={board === "discovery_lab" ? tok.volume_1h : tok.volume_24h}>{fmtCompact(board === "discovery_lab" ? tok.volume_1h : tok.volume_24h)}</Flash>
               </td>
+              {board === "discovery_lab" && <td className="px-3 py-2"><DiscoveryRisk token={tok} /></td>}
               {board === "most_held" && (
                 <>
                   <td className="px-3 py-2 tabular text-right">
@@ -181,17 +201,16 @@ function TokenRows({ tokens, board }: { tokens: TokenMarket[]; board: BoardName 
  * 榜单表。主数据源是 WS（subscribe 即 snapshot，之后增量合并，见 lib/ws.ts）；
  * `initialTrending` 是可选启动快照；当前页面传 null，等待浏览器直连 WS snapshot。
  *
- * 五榜均为跨链聚合榜（2026-09 起），不做链筛选或客户端重排；服务端已经
- * 按各榜规则排序并限制为最多 100 条。
+ * 成员与排序由服务端决定；测试榜独立订阅，不复用 Trending 的基线。
  */
 type Tab = BoardName | "watchlist";
 
-export function TokenTable({ initialTrending }: { initialTrending: TokenMarket[] | null }) {
-  const [tab, setTab] = useState<Tab>("trending");
+export function TokenTable({ initialTrending, initialBoard = "trending" }: { initialTrending: TokenMarket[] | null; initialBoard?: BoardName }) {
+  const [tab, setTab] = useState<Tab>(initialBoard);
   const isBoard = tab !== "watchlist";
   // 启动快照只属于 Trending：切到其它榜时绝不能拿它冒充新榜快照。
-  const initial = isBoard && tab === "trending" ? initialTrending ?? undefined : undefined;
-  const { items, status } = useBoardStream(isBoard ? tab : "trending", initial);
+  const initial = tab === "trending" ? initialTrending ?? undefined : undefined;
+  const { items, status } = useBoardStream(isBoard ? tab : null, initial);
   const rows = items;
 
   return (
@@ -202,6 +221,7 @@ export function TokenTable({ initialTrending }: { initialTrending: TokenMarket[]
             <button
               key={t}
               type="button"
+              aria-pressed={tab === t}
               onClick={() => setTab(t)}
               className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
                 tab === t ? "bg-accent/15 text-foreground" : "text-muted hover:text-foreground"
@@ -224,6 +244,12 @@ export function TokenTable({ initialTrending }: { initialTrending: TokenMarket[]
           </span>
         )}
       </div>
+
+      {tab === "discovery_lab" && <div className="space-y-1 border-b border-border px-4 py-3 text-sm" role="note">
+        <p className="font-medium">机会榜 · 临时测试</p>
+        <p className="text-muted">跨链发现 · FDV $100K–$50M · 流动性 ≥ $50K · 1h 成交额 ≥ $20K · 1h 独立买家 ≥ 30。</p>
+        <p className="text-muted">合并 5 分钟与 1 小时热度候选，由后端排序并执行现有风险准入。约每 30 秒刷新，冷启动和风险检查可能需要等待；合格数量不足时不补凑。FDV 为完全稀释估值，不等于流通市值。</p>
+      </div>}
 
       {tab === "watchlist" ? (
         <WatchlistPanel />
