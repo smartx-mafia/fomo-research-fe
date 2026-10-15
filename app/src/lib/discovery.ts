@@ -42,7 +42,7 @@ export function discoveryReasonDetail(r: DiscoveryReason): string {
 }
 
 export const discoveryChannelLabels: Record<string,string> = {new_tokens:'新币起势',hot_5m:'短期热门',volume_spike:'突然放量',price_up:'上涨异动',hot_24h:'持续热门'};
-export const discoverySelectionLabels: Record<string,string> = {selected:'已入榜',qualified_not_selected:'通过筛选，未入榜',local_excluded:'本地筛选未通过',risk_excluded:'风险准入未通过',risk_unavailable:'风险检查暂不可用'};
+export const discoverySelectionLabels: Record<string,string> = {selected:'混排选中',qualified_not_selected:'通过筛选，未获混排名额',local_excluded:'本地筛选未通过',risk_excluded:'风险准入未通过',risk_unavailable:'风险检查暂不可用'};
 export interface DiscoveryCandidate {
  chain:string;address:string;symbol:string;name:string;sources:DiscoveryReason[];
  selection_state:string;exclusion_reason:string;selected_rank?:number;observed_at_ms?:number;

@@ -36,8 +36,8 @@ export function DiscoveryResearch() {
       <p className="text-muted">展示五路查询返回并识别的全部地址，按链和地址去重，不截取前 100。包含未通过筛选的候选；通道命中不等于最终入选。</p>
       <p className="text-muted">价格为发现批次快照，不订阅实时价格。默认每分钟读取一次；可暂停刷新对照研究。范围限于各路本次查询上限，不代表全市场所有代币。</p>
       <DiscoveryWeights coverage={data?.discovery} />
-      {data && <p>原始记录 {data.source_row_count} · 去重地址 {data.unique_count} · 通过筛选 {data.qualified_count} · 本批入榜 {data.selected_count} · 当前显示 {rows.length}</p>}
-      {data && <p className="text-muted">批次时间：{new Date(data.generated_at_ms).toLocaleString()} · {data.state==='complete'?'五路数据完整':data.state==='stale'?'历史批次，已过期':'部分数据或检查暂不可用'} · 以上准入状态为该批次结果</p>}
+      {data && <p>原始记录 {data.source_row_count} · 去重地址 {data.unique_count} · 通过筛选 {data.qualified_count} · 混排选中 {data.selected_count} · 当前显示 {rows.length}</p>}
+      {data && <p className="text-muted">批次时间：{new Date(data.generated_at_ms).toLocaleString()} · {data.state==='complete'?'五路数据完整':data.state==='stale'?'历史批次，已过期':'部分数据或检查暂不可用'} · 以上状态为发现批次结果，实时榜单还会按最新风险和展示信息复核</p>}
       {data?.discovery && <p className="text-muted">{data.discovery.channels.map(c=>`${discoveryChannelLabels[c.name] ?? c.name}：${c.candidate_count ?? '—'} 条${c.state==='fresh'?'':c.state==='stale'?'（沿用上次）':'（不可用）'}`).join(' · ')}</p>}
       {error && <p role="alert" className="text-down">{error}{data?' 当前保留上次批次，请留意时间。':''}</p>}
     </div>
@@ -49,7 +49,7 @@ export function DiscoveryResearch() {
       <button type="button" disabled={loading} onClick={()=>setRefresh(v=>v+1)} className="rounded border border-border px-3 py-2 disabled:opacity-50">{loading?'读取中…':'刷新批次'}</button>
     </div>
     {!data ? <p className="text-muted">等待候选数据…</p> : <div className="overflow-x-auto"><table className="w-full min-w-[1200px] text-left text-sm">
-      <thead className="text-xs text-muted"><tr>{['代币 / 完整地址','通道来源与证据','本批筛选状态','入榜名次','快照价格','流动性','5m 成交额','5m 买家','FDV'].map(label=><th key={label} className="px-3 py-2 font-medium">{label}</th>)}</tr></thead>
+      <thead className="text-xs text-muted"><tr>{['代币 / 完整地址','通道来源与证据','本批筛选状态','混排名次','快照价格','流动性','5m 成交额','5m 买家','FDV'].map(label=><th key={label} className="px-3 py-2 font-medium">{label}</th>)}</tr></thead>
       <tbody>{rows.map(c=><tr key={`${c.chain}:${c.address}`} className="border-t border-border align-top">
         <td className="min-w-[280px] max-w-[340px] px-3 py-3"><a className="font-medium" href={`/token/${encodeURIComponent(c.chain)}/${encodeURIComponent(c.address)}`}>{c.symbol || '未命名'} · {c.chain}</a><p className="text-xs text-muted">{c.name}</p><p className="mt-1 select-text break-all font-mono text-xs">{c.address}</p></td>
         <td className="px-3 py-3"><DiscoveryReasons discovery={{channels:c.sources.map(s=>s.code),reasons:c.sources}} /></td>
