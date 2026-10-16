@@ -250,7 +250,7 @@ export function TokenTable({ initialTrending, initialBoard = "trending" }: { ini
       </div>
 
       {tab === "discovery_lab" && <div className="space-y-1 border-b border-border px-4 py-3 text-sm" role="note">
-        <p className="font-medium">机会榜 · 临时测试</p>
+        <div className="flex flex-wrap items-center justify-between gap-2"><p className="font-medium">机会榜 · 临时测试</p><a href="/discovery-tuning" className="rounded border border-border px-3 py-1.5 text-sm">打开权重实验室</a></div>
         <p className="text-muted">跨链发现 · 流动性 ≥ $20K · 5 分钟成交额 ≥ $1K · 5 分钟独立买家 ≥ 10 · 不设 FDV 上限。</p>
         <p className="text-muted">短期热门、突然放量、新币起势、上涨异动、持续热门五路发现，约每 30 秒筛选并执行风险准入。展开“入选理由”可查看发现时的指标；理由与当前行情可能不同。FDV 为完全稀释估值。</p>
         <DiscoveryWeights coverage={discovery} />
