@@ -148,6 +148,8 @@ export function normalizeTokenMarket(raw: unknown): TokenMarket {
     if (typeof r[f] === "string" && r[f] !== "") out[f] = r[f] as string;
   }
   for (const f of TOKEN_NUM_FIELDS) {
+    // A boolean/array must never become a valid Gainers percentage via Number().
+    if (f === "price_change_1h" && typeof r[f] !== "number" && typeof r[f] !== "string") continue;
     const n = num(r[f]);
     if (n !== undefined) out[f] = n;
   }
@@ -275,18 +277,24 @@ function normalizeHolderPage(raw: unknown): HolderPage {
 
 // ---- 端点封装 ----
 
-/**
- * 榜单快照。五榜均为跨链聚合榜（2026-09 起），?chain= 参数已废弃，传了回 100303。
- * 五榜均为跨链聚合榜，每榜至多 100 条；most_held 的条目额外带两个持有指标。
- * 榜单页主数据走 WS；这个 HTTP helper 供直连诊断和显式快照请求使用。
- */
+/** Share the canonical chain scope between HTTP and WS; Gainers is merged server-side. */
+export function boardChainScope(board: BoardName, chain?: string): string | undefined {
+  if (board === "gainers") return [...new Set(chain?.split(",").map((value) => value.trim()).filter(Boolean))].sort().join(",") || undefined;
+  return undefined;
+}
+
+/** At most 100 backend-ranked rows; also supplies Gainers initial and disconnected fallback snapshots. */
 export async function fetchBoard(
   board: BoardName,
-  opts: { revalidate?: number } = {}
+  opts: { revalidate?: number; chain?: string; signal?: AbortSignal } = {}
 ): Promise<BoardData> {
-  const data = await marketFetch<unknown>(`/v1/boards/${board}`, {}, {
+  const chain = boardChainScope(board, opts.chain);
+  const query = chain ? `?${new URLSearchParams({chain})}` : "";
+  const data = await marketFetch<unknown>(`/v1/boards/${board}${query}`, {}, {
     revalidate: opts.revalidate ?? 3,
     timeoutMs: 3000,
+    signal: opts.signal,
+    ...(board === "gainers" ? {cache: "no-store" as const, revalidate: 0} : {}),
   });
   return normalizeBoard(data);
 }

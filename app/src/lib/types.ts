@@ -21,10 +21,10 @@ export const CHAINS = ["bsc", "solana", "base", "robinhood", "ethereum", "arc"] 
 export type Chain = (typeof CHAINS)[number];
 
 /**
- * 榜单集合（2026-09 起）：五榜，全部是跨链聚合榜，没有链变体。
+ * 榜单集合：默认跨链，Gainers 支持服务端多链合并。
  * new / bonded 已退役；most_held 是候选池最多主体持有榜。
  */
-export const BOARDS = ["trending", "bonding", "graduated", "crypto", "most_held", "discovery_lab"] as const;
+export const BOARDS = ["trending", "gainers", "bonding", "graduated", "crypto", "most_held", "discovery_lab"] as const;
 export type BoardName = (typeof BOARDS)[number];
 
 /**

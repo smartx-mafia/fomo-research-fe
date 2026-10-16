@@ -15,7 +15,7 @@ import {normalizeDiscoveryCoverage, type DiscoveryCoverage} from "./discovery";
  */
 
 import { useEffect, useRef, useState } from "react";
-import { normalizeTokenMarket, getWsUrl } from "./market";
+import { boardChainScope, fetchBoard, MarketApiError, normalizeTokenMarket, getWsUrl } from "./market";
 import { num } from "./format";
 import type { BoardName, TokenMarket, WsFrame } from "./types";
 
@@ -138,7 +138,7 @@ export function getMarketSocket(): MarketSocket {
   return singleton;
 }
 
-export type StreamStatus = "connecting" | "live" | "rejected";
+export type StreamStatus = "connecting" | "live" | "fallback" | "error" | "rejected";
 
 /** Merge normalized backend rows only; membership/risk qualification stays server-owned. */
 export function mergeBoardUpdates(current: TokenMarket[], data: unknown): TokenMarket[] {
@@ -153,9 +153,15 @@ export function mergeBoardUpdates(current: TokenMarket[], data: unknown): TokenM
   return next;
 }
 
-/** 按完整topic绑定基线，切榜不能复用旧榜的列表、状态或seq。null表示暂停订阅。 */
-export function useBoardStream(board: BoardName | null, initial?: TokenMarket[]) {
-  const topic = board ? `board:${board}` : null;
+/** Only Gainers accepts a canonical multi-chain scope; existing boards remain cross-chain. */
+export function boardTopic(board: BoardName, chain?: string): string {
+  const scope = boardChainScope(board, chain);
+  return `board:${board}${scope ? `:${scope}` : ""}`;
+}
+
+/** 按完整topic绑定基线，切链不能复用旧链的列表、状态或seq。null表示暂停订阅。 */
+export function useBoardStream(board: BoardName | null, initial?: TokenMarket[], chain?: string) {
+  const topic = board ? boardTopic(board, chain) : null;
   const bootstrap = useRef({topic, items: initial});
   const [view, setView] = useState<{topic: string | null; items: TokenMarket[]; status: StreamStatus; discovery?: DiscoveryCoverage}>(() => ({
     topic, items: initial ?? [], status: "connecting",
@@ -173,16 +179,83 @@ export function useBoardStream(board: BoardName | null, initial?: TokenMarket[])
     let list: TokenMarket[] = bootstrap.current.items ? [...bootstrap.current.items] : [];
     let lastSeq: number | null = null;
     let hasSnapshot = false;
+    const isGainers = topic === "board:gainers" || topic.startsWith("board:gainers:");
+    let rejected = false;
+    let fetching = false;
+    let generation = 0;
+    let failed = false;
+    let staleTimer: ReturnType<typeof setTimeout> | undefined;
+    // Retain this watermark across expiry/reconnect: repeated cached snapshots
+    // neither renew freshness nor resurrect rows after the stale deadline.
+    let acceptedSnapshot = false;
+    let acceptedSeq: number | undefined;
+    let acceptedUpdatedAt: number | undefined;
+    const acceptSnapshot = (seq?: number, updatedAt?: number) => {
+      if (!isGainers) return true;
+      const newer = !acceptedSnapshot
+        || (seq !== undefined && (acceptedSeq === undefined || seq > acceptedSeq))
+        || (updatedAt !== undefined && (acceptedUpdatedAt === undefined || updatedAt > acceptedUpdatedAt));
+      if (!newer) return false;
+      acceptedSnapshot = true;
+      if (seq !== undefined) acceptedSeq = Math.max(acceptedSeq ?? seq, seq);
+      if (updatedAt !== undefined) acceptedUpdatedAt = Math.max(acceptedUpdatedAt ?? updatedAt, updatedAt);
+      return true;
+    };
+    const controller = new AbortController();
     let discovery: DiscoveryCoverage | undefined;
     const publish = (status: StreamStatus) => {
+      failed = status === "error" || status === "rejected";
+      // Defense against delayed/malformed upstream updates; preserve backend rank order.
+      if (isGainers) list = list.filter((token) => typeof token.price_change_1h === "number" && Number.isFinite(token.price_change_1h) && token.price_change_1h > 0);
       if (active) setView({topic, items: [...list], status, discovery});
     };
-    const invalidate = () => {
+    const expire = () => {
+      generation++;
       list = [];
+      hasSnapshot = false;
+      lastSeq = null;
+      if (staleTimer) clearTimeout(staleTimer);
+      staleTimer = undefined;
+      publish("error");
+    };
+    const markFresh = () => {
+      if (!isGainers) return;
+      if (staleTimer) clearTimeout(staleTimer);
+      staleTimer = setTimeout(() => {
+        if (!active) return;
+        expire();
+        sock.resubscribe(topic);
+        void poll();
+      }, 90_000);
+    };
+    const poll = async () => {
+      if (!isGainers || fetching || hasSnapshot || rejected || !active) return;
+      fetching = true;
+      const requestedGeneration = generation;
+      try {
+        const snapshot = await fetchBoard("gainers", {chain: topic.split(":")[2], signal: controller.signal});
+        // HTTP is only a fallback, never overwrite an authoritative WS snapshot.
+        if (!active || hasSnapshot || rejected || requestedGeneration !== generation) return;
+        if (!acceptSnapshot(snapshot.seq, snapshot.updated_at)) return;
+        list = snapshot.items;
+        markFresh();
+        publish("fallback");
+      } catch (error) {
+        if (active && !hasSnapshot && !rejected && requestedGeneration === generation) {
+          if (error instanceof MarketApiError && error.code === 500304) expire();
+          else publish("error");
+        }
+      } finally {
+        fetching = false;
+      }
+    };
+    const invalidate = (retain = false) => {
+      generation++;
+      if (!retain) list = [];
       discovery = undefined;
       hasSnapshot = false;
       lastSeq = null;
-      publish("connecting");
+      publish(isGainers && (retain || failed) ? "error" : "connecting");
     };
     const reset = () => {
       invalidate();
@@ -192,22 +265,32 @@ export function useBoardStream(board: BoardName | null, initial?: TokenMarket[])
 
     const onFrame = (f: WsFrame) => {
       if (!active) return;
+      if (isGainers && (f.op === "error" || f.kind === "error") && String(f.reason).includes("500304")) {
+        expire();
+        return;
+      }
       if (f.op === "error") {
         console.warn(`[market-ws] subscribe rejected (${topic}):`, f.reason);
         list = [];
         hasSnapshot = false;
         lastSeq = null;
+        rejected = true;
+        if (staleTimer) clearTimeout(staleTimer);
+        staleTimer = undefined;
         publish("rejected");
         return;
       }
       if (f.kind === "snapshot") {
-        const data = f.data as {seq?: unknown; items?: unknown[]; discovery?: unknown} | undefined;
+        const data = f.data as {seq?: unknown; updated_at?: unknown; items?: unknown[]; discovery?: unknown} | undefined;
         const nextSeq = f.seq ?? num(data?.seq);
         if (hasSnapshot && nextSeq !== undefined && lastSeq !== null && nextSeq < lastSeq) return;
+        if (!acceptSnapshot(nextSeq, num(data?.updated_at))) return;
+        generation++;
         list = (data?.items ?? []).map(normalizeTokenMarket);
         discovery = normalizeDiscoveryCoverage(data?.discovery);
         lastSeq = f.seq ?? num(data?.seq) ?? null;
         hasSnapshot = true;
+        markFresh();
         publish("live");
         return;
       }
@@ -227,6 +310,9 @@ export function useBoardStream(board: BoardName | null, initial?: TokenMarket[])
             list = list.filter((t) => !(t.chain === d?.chain && t.address === d?.address));
           }
         }
+        // Gainers uses full ordered snapshots. Unexpected deltas may hide an
+        // invalid row, but cannot renew the age of the authoritative snapshot.
+        if (!isGainers) markFresh();
         publish("live");
         return;
       }
@@ -236,12 +322,17 @@ export function useBoardStream(board: BoardName | null, initial?: TokenMarket[])
     sock.subscribe(topic, onFrame);
     const offState = sock.onState((state) => {
       if (state !== "open") {
-        if (hasSnapshot) invalidate();
-        else publish("connecting");
+        if (hasSnapshot) invalidate(isGainers);
+        else publish(isGainers && (list.length > 0 || failed) ? "error" : "connecting");
       }
     });
+    void poll();
+    const pollTimer = isGainers ? setInterval(() => { void poll(); }, 15_000) : undefined;
     return () => {
       active = false;
+      controller.abort();
+      if (pollTimer) clearInterval(pollTimer);
+      if (staleTimer) clearTimeout(staleTimer);
       offState();
       sock.unsubscribe(topic, onFrame);
     };

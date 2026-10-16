@@ -1,10 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { BoardName, TokenMarket } from "@/lib/types";
-import { BOARDS } from "@/lib/types";
+import type { BoardName, Chain, TokenMarket } from "@/lib/types";
+import { BOARDS, CHAINS } from "@/lib/types";
 import { useBoardStream } from "@/lib/ws";
-import { fmtPrice, fmtCompact, fmtInt, fmtAge } from "@/lib/format";
+import { fmtPrice, fmtCompact, fmtInt, fmtAge, chainLabel } from "@/lib/format";
 import { Card, ChainBadge, PctBadge, Skeleton, EmptyState } from "@/components/ui";
 import { Flash } from "@/components/Flash";
 import { StarButton, useFavorites } from "@/components/FavoritesProvider";
@@ -15,9 +15,10 @@ import {DiscoveryReasons, DiscoveryStatus, DiscoveryWeights} from "./DiscoveryRe
 import {DiscoveryResearch} from "./DiscoveryResearch";
 import WatchlistPanel from "@/components/WatchlistPanel";
 
-/** 2026-09 起五榜：most_held 是候选池最多 Account 主体持有榜。 */
+/** most_held 是候选池最多 Account 主体持有榜；Gainers 按正 1h 涨幅排名。 */
 const BOARD_LABELS: Record<BoardName, string> = {
   trending: "Trending",
+  gainers: "Gainers",
   discovery_lab: "机会榜 · 测试",
   bonding: "Bonding",
   graduated: "Graduated",
@@ -113,7 +114,7 @@ function TokenRows({ tokens, board }: { tokens: TokenMarket[]; board: BoardName 
             <th className="px-3 py-2 font-medium">Age</th>
             <th className="px-3 py-2 font-medium text-right">Price</th>
             <th className="px-3 py-2 font-medium text-right">{board === "discovery_lab" ? "5m" : "1h"}</th>
-            <th className="px-3 py-2 font-medium text-right">24h</th>
+            {board !== "gainers" && <th className="px-3 py-2 font-medium text-right">24h</th>}
             <th className="px-3 py-2 font-medium text-right">{board === "discovery_lab" ? "FDV" : "Market Cap"}</th>
             <th className="px-3 py-2 font-medium text-right">Liquidity</th>
             <th className="px-3 py-2 font-medium text-right">{board === "discovery_lab" ? "Vol 5m" : "Vol 24h"}</th>
@@ -160,11 +161,11 @@ function TokenRows({ tokens, board }: { tokens: TokenMarket[]; board: BoardName 
                   <PctBadge value={board === "discovery_lab" ? tok.price_change_5min : tok.price_change_1h} />
                 </Flash>
               </td>
-              <td className="px-3 py-2 text-right">
+              {board !== "gainers" && <td className="px-3 py-2 text-right">
                 <Flash value={tok.price_change_24h}>
                   <PctBadge value={tok.price_change_24h} />
                 </Flash>
-              </td>
+              </td>}
               <td className="px-3 py-2 tabular text-right">
                 <Flash value={board === "discovery_lab" ? tok.market_cap_diluted : tok.market_cap}>{fmtCompact(board === "discovery_lab" ? tok.market_cap_diluted : tok.market_cap)}</Flash>
               </td>
@@ -205,16 +206,18 @@ function TokenRows({ tokens, board }: { tokens: TokenMarket[]; board: BoardName 
  * 榜单表。主数据源是 WS（subscribe 即 snapshot，之后增量合并，见 lib/ws.ts）；
  * `initialTrending` 是可选启动快照；当前页面传 null，等待浏览器直连 WS snapshot。
  *
- * 成员与排序由服务端决定；测试榜独立订阅，不复用 Trending 的基线。
+ * Gainers 支持多链合并；成员与排序由服务端决定，测试榜独立订阅。
  */
 type Tab = BoardName | "watchlist" | "discovery_candidates";
 
 export function TokenTable({ initialTrending, initialBoard = "trending" }: { initialTrending: TokenMarket[] | null; initialBoard?: BoardName | "discovery_candidates" }) {
   const [tab, setTab] = useState<Tab>(initialBoard);
+  const [gainersChains, setGainersChains] = useState<Chain[]>([]);
   const isBoard = tab !== "watchlist" && tab !== "discovery_candidates";
   // 启动快照只属于 Trending：切到其它榜时绝不能拿它冒充新榜快照。
   const initial = tab === "trending" ? initialTrending ?? undefined : undefined;
-  const { items, status, discovery } = useBoardStream(isBoard ? tab : null, initial);
+  const scope = tab === "gainers" ? gainersChains.join(",") : undefined;
+  const { items, status, discovery } = useBoardStream(isBoard ? tab : null, initial, scope);
   const rows = items;
 
   return (
@@ -244,7 +247,7 @@ export function TokenTable({ initialTrending, initialBoard = "trending" }: { ini
                 status === "live" ? "bg-up" : status === "rejected" ? "bg-muted" : "animate-pulse bg-muted"
               }`}
             />
-            {status === "live" ? "Live" : status === "rejected" ? "Unavailable" : "Connecting…"}
+            {status === "live" ? "Live" : status === "fallback" ? "Polling" : status === "rejected" || status === "error" ? "Unavailable" : "Connecting…"}
           </span>
         )}
       </div>
@@ -257,12 +260,27 @@ export function TokenTable({ initialTrending, initialBoard = "trending" }: { ini
         <DiscoveryStatus coverage={discovery} />
       </div>}
 
+      {tab === "gainers" && <fieldset className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-3">
+        <legend className="sr-only">Gainers chains</legend>
+        <span className="text-xs text-muted">Chain · {gainersChains.length ? "Selected chains" : "All chains"}</span>
+        {CHAINS.map((chain) => <label key={chain} className="flex items-center gap-1.5 text-sm">
+          <input type="checkbox" checked={gainersChains.includes(chain)} onChange={() => setGainersChains((current) => current.includes(chain) ? current.filter((value) => value !== chain) : [...current, chain])} />
+          {chainLabel(chain)}
+        </label>)}
+        {!!gainersChains.length && <button type="button" className="text-sm underline" onClick={() => setGainersChains([])}>清除筛选</button>}
+        <p className="w-full text-xs text-muted">指定发射台代币 · 按近 1h 正涨幅排名</p>
+      </fieldset>}
+
       {tab === "discovery_candidates" ? <DiscoveryResearch /> : tab === "watchlist" ? (
         <WatchlistPanel />
       ) : status === "rejected" ? (
         <EmptyState>This board is not available in the current backend environment.</EmptyState>
-      ) : status !== "live" && items.length === 0 ? (
+      ) : status === "error" ? (
+        <><p role="status" className="px-4 py-3 text-sm text-muted">榜单暂时无法更新，正在重试。{rows.length > 0 ? "以下为最近一次结果。" : ""}</p>{rows.length > 0 && <TokenRows tokens={rows} board={tab} />}</>
+      ) : status === "connecting" && items.length === 0 ? (
         <TableSkeleton />
+      ) : tab === "gainers" && rows.length === 0 ? (
+        <EmptyState>{gainersChains.length ? "所选链近 1h 暂无符合条件的代币" : "近 1h 暂无符合条件的代币"}</EmptyState>
       ) : (
         <TokenRows tokens={rows} board={tab} />
       )}
