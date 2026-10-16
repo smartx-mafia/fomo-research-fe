@@ -1,13 +1,18 @@
 // @vitest-environment jsdom
 
-import {render, screen, waitFor} from '@testing-library/react';
+import {cleanup, render, screen, waitFor} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import {describe, expect, it, vi} from 'vitest';
+import {afterEach, describe, expect, it, vi} from 'vitest';
 import TokenRiskConsole, {ProviderCard, VolumeRiskMatrix} from './TokenRiskConsole';
 import type {RiskAssessment, RiskSourceStatus} from '@/lib/risk-assessment';
 
 const {getTokenRiskMock} = vi.hoisted(() => ({getTokenRiskMock: vi.fn()}));
 vi.mock('@/api/token-risk', async (original) => ({...await original<typeof import('@/api/token-risk')>(), getTokenRisk: getTokenRiskMock}));
+
+afterEach(() => {
+  cleanup();
+  getTokenRiskMock.mockReset();
+});
 
 const source: RiskSourceStatus = {
   source: 'rugcheck', status: 'partial', observedAtMs: null, fetchedAtMs: null,
@@ -60,6 +65,21 @@ describe('VolumeRiskMatrix', () => {
 });
 
 describe('TokenRiskConsole', () => {
+  it('queries token risk on Robinhood', async () => {
+    const user = userEvent.setup();
+    const tokenAddress = '0x1111111111111111111111111111111111111111';
+    getTokenRiskMock.mockResolvedValue({chain: 'robinhood', address: tokenAddress, risk: {assessment: risk}});
+    render(<TokenRiskConsole />);
+
+    await user.selectOptions(screen.getByRole('combobox', {name: /网络/}), 'robinhood');
+    const address = screen.getByPlaceholderText('输入代币合约地址');
+    await user.clear(address);
+    await user.type(address, tokenAddress);
+    await user.click(screen.getByRole('button', {name: '查询风控'}));
+
+    await waitFor(() => expect(getTokenRiskMock).toHaveBeenLastCalledWith('robinhood', tokenAddress, undefined, expect.any(AbortSignal)));
+  });
+
   it('removes the previous token result while a new query fails', async () => {
     const user = userEvent.setup();
     getTokenRiskMock
