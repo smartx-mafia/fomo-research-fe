@@ -2,15 +2,21 @@
 
 import {cleanup, render, screen, waitFor} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import {afterEach, describe, expect, it, vi} from 'vitest';
-import TokenRiskConsole, {ProviderCard, VolumeRiskMatrix} from './TokenRiskConsole';
+import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+import TokenRiskConsole, {ProviderCard, SerializedAuditCard, VolumeRiskMatrix} from './TokenRiskConsole';
 import type {RiskAssessment, RiskSourceStatus} from '@/lib/risk-assessment';
 
-const {getTokenRiskMock} = vi.hoisted(() => ({getTokenRiskMock: vi.fn()}));
+const {getSerializedAuditMock, getTokenRiskMock} = vi.hoisted(() => ({getSerializedAuditMock: vi.fn(), getTokenRiskMock: vi.fn()}));
 vi.mock('@/api/token-risk', async (original) => ({...await original<typeof import('@/api/token-risk')>(), getTokenRisk: getTokenRiskMock}));
+vi.mock('@/api/serialized-audit', () => ({getSerializedAudit: getSerializedAuditMock}));
+
+beforeEach(() => {
+  getSerializedAuditMock.mockResolvedValue({state: 'unavailable', reason: 'decompile_disabled', message: 'Closed-source audit disabled.'});
+});
 
 afterEach(() => {
   cleanup();
+  getSerializedAuditMock.mockReset();
   getTokenRiskMock.mockReset();
 });
 
@@ -64,6 +70,21 @@ describe('VolumeRiskMatrix', () => {
   });
 });
 
+describe('SerializedAuditCard', () => {
+  it('shows provider findings without presenting them as the SmartX decision', () => {
+    render(<SerializedAuditCard loading={false} result={{state: 'ready', audit: {
+      isSafe: false, isTokenSafe: false, description: 'Owner can mint.', name: 'Risk', symbol: 'RISK',
+      address: '0x1111111111111111111111111111111111111111', chain: 'ROBINHOOD', sourceType: 'verified',
+      isProxy: false, createdAt: '2026-10-16T00:00:00Z', auditSystemVersion: 'prod-v2',
+      vulnerabilities: [{type: 'UnlimitedMinting', impact: 'critical', description: 'Supply is unlimited.', mitigated: false}],
+    }}} />);
+
+    expect(screen.getByText('发现合约风险')).toBeTruthy();
+    expect(screen.getByText('UnlimitedMinting')).toBeTruthy();
+    expect(screen.getByText(/不改变 SmartX 综合等级或交易决策/)).toBeTruthy();
+  });
+});
+
 describe('TokenRiskConsole', () => {
   it('queries token risk on Robinhood', async () => {
     const user = userEvent.setup();
@@ -71,6 +92,7 @@ describe('TokenRiskConsole', () => {
     getTokenRiskMock.mockResolvedValue({chain: 'robinhood', address: tokenAddress, risk: {assessment: risk}});
     render(<TokenRiskConsole />);
 
+    expect(getSerializedAuditMock).not.toHaveBeenCalled();
     await user.selectOptions(screen.getByRole('combobox', {name: /网络/}), 'robinhood');
     const address = screen.getByPlaceholderText('输入代币合约地址');
     await user.clear(address);
@@ -78,6 +100,7 @@ describe('TokenRiskConsole', () => {
     await user.click(screen.getByRole('button', {name: '查询风控'}));
 
     await waitFor(() => expect(getTokenRiskMock).toHaveBeenLastCalledWith('robinhood', tokenAddress, undefined, expect.any(AbortSignal)));
+    await waitFor(() => expect(getSerializedAuditMock).toHaveBeenLastCalledWith('robinhood', tokenAddress, expect.any(AbortSignal)));
   });
 
   it('removes the previous token result while a new query fails', async () => {

@@ -1,11 +1,13 @@
 'use client';
 
 import {FormEvent, useEffect, useMemo, useState} from 'react';
-import {Activity, AlertTriangle, Check, ChevronDown, ChevronRight, CircleDot, Clock3, Database, RefreshCw, Search, ShieldCheck, ShieldQuestion} from 'lucide-react';
+import {Activity, AlertTriangle, Check, ChevronDown, ChevronRight, CircleDot, Clock3, Database, RefreshCw, Search, ShieldAlert, ShieldCheck, ShieldQuestion} from 'lucide-react';
 import {ApiError} from '@/api/envelope';
+import {getSerializedAudit} from '@/api/serialized-audit';
 import {getTokenRisk, type GetRiskReply} from '@/api/token-risk';
 import {BUSINESS_API_BASE, sameBusinessEnvironment} from '@/config';
 import {riskItemCopy, riskSource, type RiskAssessment, type RiskSourceStatus} from '@/lib/risk-assessment';
+import type {SerializedAuditResult} from '@/lib/serialized-audit';
 
 const DEFAULT_CHAIN = 'solana';
 const DEFAULT_ADDRESS = 'So11111111111111111111111111111111111111112';
@@ -116,6 +118,23 @@ export function ProviderCard({source, risk}: {source: RiskSourceStatus; risk: Ri
   </article>;
 }
 
+export function SerializedAuditCard({result, error, loading}: {result?: SerializedAuditResult; error?: unknown; loading: boolean}) {
+  const audit = result?.state === 'ready' ? result.audit : undefined;
+  return <article aria-busy={loading} aria-labelledby="serialized-audit-title" className="overflow-hidden rounded-2xl border border-violet-300/15 bg-[#101513] shadow-[0_18px_50px_rgba(0,0,0,.18)]">
+    <div className="flex flex-wrap items-start justify-between gap-3 border-b border-white/[.07] p-5">
+      <div><div className="flex items-center gap-2"><ShieldAlert className="h-4 w-4 text-violet-300"/><h2 id="serialized-audit-title" className="font-semibold text-white">Serialized Audit</h2></div><p className="mt-1.5 text-xs leading-5 text-white/45">补充合约审计，仅作独立参考，不改变 SmartX 综合等级或交易决策。</p></div>
+      {audit ? <span className={`rounded-full border px-2.5 py-1 text-xs ${audit.isSafe ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-200' : 'border-rose-400/25 bg-rose-400/10 text-rose-200'}`}>{audit.isSafe ? '未发现活跃持有人风险' : '发现合约风险'}</span> : null}
+    </div>
+    <div className="p-5">
+      {loading ? <p className="text-sm text-white/45">正在执行合约审计，首次审计可能需要数秒…</p> : error ? <p role="alert" className="text-sm text-rose-200/75">{error instanceof Error ? error.message : 'Serialized Audit 查询失败。'}</p> : result?.state === 'unavailable' ? <div><p className="text-sm text-white/65">暂无审计结论</p><p className="mt-1 text-xs text-white/35">{result.message}</p></div> : audit ? <>
+        <p className="text-sm leading-6 text-white/70">{audit.description}</p>
+        {audit.vulnerabilities.length ? <ul className="mt-4 grid gap-2 lg:grid-cols-2">{audit.vulnerabilities.map((item, index) => <li key={`${item.type}:${index}`} className="rounded-xl border border-white/[.07] bg-black/15 p-3"><div className="flex items-center justify-between gap-2"><span className="text-sm font-medium text-white/80">{item.type}</span><span className="rounded border border-orange-300/20 px-1.5 py-0.5 font-mono text-[10px] uppercase text-orange-200/80">{item.impact}</span></div><p className="mt-1 text-xs leading-5 text-white/40">{item.description}</p>{item.mitigated === true ? <p className="mt-1 text-[11px] text-emerald-300/60">Provider marks this finding as mitigated.</p> : null}</li>)}</ul> : <p className="mt-3 text-xs text-emerald-200/60">该次审计未返回漏洞项；这不是安全认证。</p>}
+        <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 border-t border-white/[.06] pt-3 font-mono text-[10px] text-white/30"><span>{audit.chain}:{audit.address}</span><span>source {audit.sourceType || 'unknown'}</span><span>version {audit.auditSystemVersion || 'unknown'}</span></div>
+      </> : <p className="text-sm text-white/35">尚未查询。</p>}
+    </div>
+  </article>;
+}
+
 function ErrorNotice({error}: {error: unknown}) {
   const api = error instanceof ApiError ? error : null;
   return <div role="alert" className="rounded-2xl border border-rose-400/20 bg-rose-400/[.07] p-5 text-sm text-rose-100"><p className="font-semibold">查询失败</p><p className="mt-1 text-rose-100/65">{error instanceof Error ? error.message : '无法读取风控结果'}</p>{api?.traceID || api?.sentRequestID ? <p className="mt-3 font-mono text-xs text-rose-100/40">trace: {api.traceID ?? api.sentRequestID}</p> : null}</div>;
@@ -128,26 +147,40 @@ export default function TokenRiskConsole() {
   const [reply, setReply] = useState<GetRiskReply>();
   const [error, setError] = useState<unknown>();
   const [loading, setLoading] = useState(true);
+  const [serialized, setSerialized] = useState<SerializedAuditResult>();
+  const [serializedError, setSerializedError] = useState<unknown>();
+  const [serializedLoading, setSerializedLoading] = useState(false);
+  const [serializedRequested, setSerializedRequested] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true); setError(undefined); setReply(undefined);
+    setSerializedLoading(serializedRequested); setSerializedError(undefined); setSerialized(undefined);
     if (!sameBusinessEnvironment(BUSINESS_API_BASE, SMARTX_TEST_API_BASE)) {
       setError(new Error(`环境配置错误：代币风控台只允许连接 smartx-test，当前为 ${BUSINESS_API_BASE}`));
       setLoading(false);
+      if (serializedRequested) {
+        setSerializedError(new Error('环境配置错误：Serialized Audit 仅随 smartx-test 风控台启用。'));
+        setSerializedLoading(false);
+      }
       return () => controller.abort();
     }
     getTokenRisk(query.chain, query.address, undefined, controller.signal).then(setReply).catch((reason) => {
       if (!controller.signal.aborted) setError(reason);
     }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    if (serializedRequested) {
+      getSerializedAudit(query.chain, query.address, controller.signal).then(setSerialized).catch((reason) => {
+        if (!controller.signal.aborted) setSerializedError(reason);
+      }).finally(() => { if (!controller.signal.aborted) setSerializedLoading(false); });
+    }
     return () => controller.abort();
-  }, [query, refreshKey]);
+  }, [query, refreshKey, serializedRequested]);
   const risk = reply?.risk.assessment;
   const grade = gradeMeta(risk?.grade);
   const flagged = risk?.items.filter((item) => item.grade >= 2).length ?? 0;
   const ready = risk?.sources.filter((source) => source.status === 'ok').length ?? 0;
   const sourceOrder = useMemo(() => [...(risk?.sources ?? [])].sort((a, b) => ['codex', 'goplus', 'rugcheck'].indexOf(a.source) - ['codex', 'goplus', 'rugcheck'].indexOf(b.source)), [risk]);
-  function submit(event: FormEvent) { event.preventDefault(); setQuery({chain: chain.trim().toLowerCase(), address: address.trim()}); }
+  function submit(event: FormEvent) { event.preventDefault(); setSerializedRequested(true); setQuery({chain: chain.trim().toLowerCase(), address: address.trim()}); }
 
   return <main className="min-h-screen bg-[#080b0a] text-slate-100 [background-image:radial-gradient(circle_at_15%_0%,rgba(52,211,153,.09),transparent_28%),radial-gradient(circle_at_90%_10%,rgba(56,189,248,.06),transparent_24%)]">
     <div className="mx-auto max-w-[1440px] px-4 py-6 sm:px-8 lg:px-10">
@@ -171,8 +204,12 @@ export default function TokenRiskConsole() {
             <div className="rounded-2xl border border-white/[.08] bg-[#101513] p-5"><div className="flex items-center justify-between"><span className="text-xs text-white/40">需关注项目</span><AlertTriangle className="h-5 w-5 text-amber-200/70"/></div><p className="mt-5 text-2xl font-semibold text-white">{flagged}</p><p className="mt-1 text-xs text-white/30">R2 及以上风险发现</p></div>
             <div className="rounded-2xl border border-white/[.08] bg-[#101513] p-5"><div className="flex items-center justify-between"><span className="text-xs text-white/40">交易建议</span><ChevronRight className="h-5 w-5 text-white/35"/></div><p className="mt-5 text-2xl font-semibold capitalize text-white">{risk.buyAction === 'allow' ? '允许' : risk.buyAction === 'confirm' ? '需确认' : risk.buyAction === 'block' ? '阻止买入' : '不可用'}</p><p className="mt-1 font-mono text-xs text-white/30">{risk.mode || 'unknown'} mode</p></div>
           </div>
-          <div className="mt-8 flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-lg font-semibold text-white">厂家检查明细</h2><p className="mt-1 text-xs text-white/35">厂家原始结果由后端归一化；页面不基于原始字段自行改写风险等级。</p></div><button onClick={() => setRefreshKey((key) => key + 1)} disabled={loading} className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/55 hover:bg-white/[.04] disabled:opacity-40"><RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`}/>刷新</button></div>
-          {sourceOrder.length ? <div className="mt-4 grid gap-4 lg:grid-cols-2 xl:grid-cols-3">{sourceOrder.map((source) => <ProviderCard key={source.source} source={source} risk={risk}/>)}</div> : <div className="mt-4 rounded-2xl border border-dashed border-white/10 p-10 text-center text-sm text-white/40">后端尚未返回厂家状态。这不代表代币安全。</div>}
+          <div className="mt-8 flex flex-wrap items-end justify-between gap-3"><div><h2 className="text-lg font-semibold text-white">厂家检查明细</h2><p className="mt-1 text-xs text-white/35">厂家原始结果由后端归一化；页面不基于原始字段自行改写风险等级。</p></div><button onClick={() => { setSerializedRequested(true); setRefreshKey((key) => key + 1); }} disabled={loading} className="inline-flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-xs text-white/55 hover:bg-white/[.04] disabled:opacity-40"><RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`}/>刷新</button></div>
+          <div className="mt-4 grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+            {sourceOrder.map((source) => <ProviderCard key={source.source} source={source} risk={risk}/>)}
+            <SerializedAuditCard result={serialized} error={serializedError} loading={serializedLoading} />
+          </div>
+          {!sourceOrder.length ? <p className="mt-3 text-xs text-white/35">后端尚未返回其他厂家状态。这不代表代币安全。</p> : null}
           <div className="mt-6 flex flex-wrap gap-x-6 gap-y-2 border-t border-white/[.06] py-5 text-[11px] text-white/30"><span className="inline-flex items-center gap-1.5"><Clock3 className="h-3.5 w-3.5"/>策略 {risk.policyVersion || '—'}</span><span className="font-mono">decision {risk.decisionVersion || '—'}</span><span className="font-mono">{reply.chain}:{reply.address}</span></div>
         </> : !loading && !error ? <div className="mt-6 rounded-2xl border border-dashed border-white/10 p-12 text-center text-sm text-white/40">暂无风控数据</div> : null}
       </section>
