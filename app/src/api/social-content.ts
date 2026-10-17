@@ -93,7 +93,7 @@ export type UserActor = {
   avatarURL?: string;
 };
 
-export type SmartMoneyActor = {address: string; chains: string[]};
+export type SmartMoneyActor = {address: string; chains: string[]; subjectId?: string; displayName?: string; avatarURL?: string; xHandle?: string};
 
 export type TradeCard = {
   side: 'buy' | 'sell';
@@ -108,6 +108,7 @@ export type TradeCard = {
   marketCapUSDAtTrade?: string;
   occurredAt: ProtoTimestamp;
   txHash?: string;
+  cycleKey?: string;
   positionTargetID?: string;
   txChain?: string;
 };
@@ -365,7 +366,7 @@ function normalizeActor(value: unknown, allowEmpty = false): UserActor {
   };
 }
 
-function normalizeSmartMoney(value: unknown): SmartMoneyActor | undefined {
+function normalizeSmartMoney(value: unknown, actorView?: unknown): SmartMoneyActor | undefined {
   const row = record(value);
   if (!row) return undefined;
   const address = nonEmptyString(row.address);
@@ -374,7 +375,16 @@ function normalizeSmartMoney(value: unknown): SmartMoneyActor | undefined {
   if (chains !== undefined && (!Array.isArray(chains) || chains.some((chain) => typeof chain !== 'string'))) {
     throw new SocialContentShapeError('feed smart_money.chains is invalid');
   }
-  return {address, chains: (chains as string[] | undefined) ?? []};
+  const view = record(actorView), identity = record(view?.identity);
+  const identityID = nonEmptyString(identity?.id) || nonEmptyString(identity?.user_id);
+  const profileID = nonEmptyString(record(view?.profile_subject)?.id);
+  // App dev: consume only explicit, unambiguous subjects; shared wallets must
+  // never be assigned to an arbitrary external user.
+  const candidate = identity?.type === 'external_user' ? identityID : !identityID ? profileID : undefined;
+  const subjectId = view?.has_shared_wallets !== true && candidate && /^subject:[1-9]\d*$/.test(candidate) ? candidate : undefined;
+  return {address, chains: (chains as string[] | undefined) ?? [],
+    ...(subjectId ? {subjectId} : {}), displayName: nonEmptyString(row.display_name),
+    avatarURL: nonEmptyString(row.avatar_url), xHandle: nonEmptyString(row.x_handle) || nonEmptyString(row.handle)};
 }
 
 function normalizePositionToken(card: UnknownRecord, position: PortfolioPosition): PositionToken | undefined {
@@ -421,7 +431,7 @@ function normalizeTrade(value: unknown): TradeCard {
     tokenAmount: nonEmptyString(row.token_amount), usd: nonEmptyString(row.usd),
     executionPriceUSD: nonEmptyString(row.execution_price_usd), marketCapUSDAtTrade: nonEmptyString(row.market_cap_usd_at_trade),
     occurredAt: normalizeTimestamp(row.occurred_at, 'feed trade.occurred_at'),
-    txHash: nonEmptyString(row.tx_hash), positionTargetID: nonEmptyString(row.position_target_id), txChain: nonEmptyString(row.tx_chain)};
+    txHash: nonEmptyString(row.tx_hash), positionTargetID: nonEmptyString(row.position_target_id), txChain: nonEmptyString(row.tx_chain), cycleKey: nonEmptyString(row.cycle_key)};
 }
 
 function normalizeFeedItem(value: unknown): SquareFeedItem | undefined {
@@ -437,7 +447,7 @@ function normalizeFeedItem(value: unknown): SquareFeedItem | undefined {
 
   const actorType = row.actor_type === 'smart_money' ? 'smart_money' : row.actor_type === 'user' ? 'user' : row.type === 2 ? undefined : 'user';
   if (row.type === 2 && !actorType) throw new SocialContentShapeError('feed trade.actor_type is missing');
-  const smartMoney = normalizeSmartMoney(row.smart_money);
+  const smartMoney = normalizeSmartMoney(row.smart_money, row.actor_view);
   const actor = normalizeActor(row.actor, actorType === 'smart_money');
   if (actorType === 'smart_money' && (!smartMoney || smartMoney.address !== actorIdentifier)) throw new SocialContentShapeError('feed smart money identity mismatch');
   if (actorType === 'user' && actor.identifier !== actorIdentifier) throw new SocialContentShapeError('feed user identity mismatch');

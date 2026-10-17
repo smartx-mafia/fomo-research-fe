@@ -67,3 +67,7 @@
 .identityLink:hover .name { text-decoration: underline; }
 .identityLink:hover .handle { color: #d4d4d4; }
 .identityLink:focus-visible { outline: 2px solid #00cdae; outline-offset: 2px; border-radius: 4px; }
+.positionInteractive { cursor: pointer; }
+.positionInteractive:hover { background: #171717; }
+.positionInteractive:focus-visible, .bodyButton:focus-visible { outline: 2px solid #00cdae; outline-offset: 3px; }
+.bodyButton { display: block; width: 100%; text-align: left; cursor: pointer; }

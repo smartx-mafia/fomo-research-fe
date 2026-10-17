@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import dynamic from 'next/dynamic';
 import {
   ListFilter,
   LoaderCircle,
@@ -33,6 +34,10 @@ import {
 } from '@/api/social-content';
 import {useSquareAuthorRelations} from '@/hooks/useSquareAuthorRelations';
 import {clearSite, useSession} from '@/session/storage';
+
+import {squarePositionTarget, type SquarePositionTarget} from '@/lib/square-position';
+
+const SquarePositionDialog = dynamic(() => import('./SquarePositionDialog').then((module) => module.SquarePositionDialog), {ssr: false});
 
 export type SquareLaneSlug = 'for-you' | 'newest' | 'friends';
 
@@ -262,6 +267,13 @@ function InlineNotice({notice, onDismiss}: {notice: Notice; onDismiss: () => voi
 
 export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
   const session = useSession();
+  const [openedPosition, setOpenedPosition] = useState<{target: SquarePositionTarget; sessionKey: string}>();
+  useEffect(() => {setOpenedPosition(undefined);}, [session?.jwt]);
+  const openPosition = (item: SquareFeedItem) => {
+    const target = squarePositionTarget(item);
+    if (!target) {setNotice({kind: 'failed', message: 'Token information is not ready. Please try again later.'}); return;}
+    setOpenedPosition({target, sessionKey: session?.jwt ?? ''});
+  };
   const [displayNow, setDisplayNow] = useState(() => Date.now());
   useEffect(() => {
     const update = () => { if (document.visibilityState === 'visible') setDisplayNow(Date.now()); };
@@ -645,6 +657,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
 
   const selectLane = (lane: SquareLaneSlug) => {
     if (lane === activeLaneRef.current) return;
+    setOpenedPosition(undefined);
     scrollByLaneRef.current[activeLaneRef.current] = window.scrollY;
     activeLaneRef.current = lane;
     setActiveLane(lane);
@@ -925,6 +938,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
             <Fragment key={`${item.type}:${item.sourceID}`}>
               {item.type === 1 ? <SquareOpinionCard
                 now={displayNow} item={item}
+                onOpenPosition={openPosition}
                 remark={item.actor.identifier === session?.user?.identifier ? undefined : authorRelations.entries[item.actor.identifier]?.remark}
                 followControl={(item.actorType ?? (item.type === 1 ? 'user' : undefined)) === 'user' && item.actor.identifier !== session?.user?.identifier ? {
                   phase: session?.jwt ? authorRelations.entries[item.actor.identifier]?.phase ?? 'loading' : 'anonymous',
@@ -935,6 +949,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
                 onToggleLike={(candidate) => void toggleLike(candidate)}
               /> : <SquareTradeCard
                 now={displayNow} item={item}
+                onOpenPosition={openPosition}
                 followControl={item.actorType === 'user' && item.actor.identifier !== session?.user?.identifier ? {
                   phase: session?.jwt ? authorRelations.entries[item.actor.identifier]?.phase ?? 'loading' : 'anonymous',
                   following: authorRelations.entries[item.actor.identifier]?.following,
@@ -968,6 +983,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
           </div>
         </div>
       )}
+      {openedPosition && openedPosition.sessionKey === (session?.jwt ?? '') ? <SquarePositionDialog target={openedPosition.target} onClose={() => setOpenedPosition(undefined)} /> : null}
     </section>
   );
 }

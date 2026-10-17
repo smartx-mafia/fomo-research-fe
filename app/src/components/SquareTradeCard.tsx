@@ -10,20 +10,21 @@ import {opinionAge} from '@/lib/opinion-card-display';
 import {TokenAvatar} from '@/components/TokenAvatar';
 import styles from './SquareOpinionCard.module.css';
 
-export function SquareTradeCard({item, followControl, now}: {
+export function SquareTradeCard({item, followControl, onOpenPosition, now}: {
   item: SquareTradeItem;
   followControl?: {phase: 'anonymous' | 'loading' | 'ready' | 'saving' | 'failed'; following?: boolean; onToggle: () => void};
   now: number;
+  onOpenPosition?: (item: SquareTradeItem) => void;
 }) {
   const [failedAvatar, setFailedAvatar] = useState<string>();
   const trade = item.content.trade;
   const isSmartMoney = item.actorType === 'smart_money';
-  const actorName = isSmartMoney ? shortAddress(item.actorIdentifier) : actorLabel(item.actor);
+  const actorName = isSmartMoney ? item.smartMoney?.displayName || shortAddress(item.smartMoney?.subjectId || item.actorIdentifier) : actorLabel(item.actor);
   const tokenSymbol = trade.token?.symbol || shortAddress(trade.tokenAddress);
   const tokenHref = `/token/${encodeURIComponent(trade.chain)}/${encodeURIComponent(trade.tokenAddress)}`;
   const occurredSeconds = trade.occurredAt.seconds;
   const sideClass = trade.side === 'buy' ? styles.buy : styles.sell;
-  const actorAvatar = !isSmartMoney ? item.actor.avatarURL : undefined;
+  const actorAvatar = isSmartMoney ? item.smartMoney?.avatarURL : item.actor.avatarURL;
 
   return (
     <article className={styles.card} aria-label={`${trade.side} activity by ${actorName}`}>
@@ -45,12 +46,14 @@ export function SquareTradeCard({item, followControl, now}: {
           </div>
         </header>
 
-        <div className={styles.tradePosition}>
-          <TokenAvatar chain={trade.chain} address={trade.tokenAddress} size={32}
-            fallbackLogo={trade.token?.logo} fallbackSymbol={tokenSymbol} fallbackName={trade.token?.name} />
+        <div className={`${styles.tradePosition} ${onOpenPosition ? styles.positionInteractive : ''}`} role={onOpenPosition ? 'button' : undefined} tabIndex={onOpenPosition ? 0 : undefined} aria-label={onOpenPosition ? `查看 ${tokenSymbol} 持仓` : undefined}
+          onClick={onOpenPosition ? (event) => {if (!(event.target as HTMLElement).closest('a,button')) onOpenPosition(item);} : undefined}
+          onKeyDown={onOpenPosition ? (event) => {if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {event.preventDefault(); onOpenPosition(item);}} : undefined}>
+          <a href={tokenHref} aria-label={`查看 ${tokenSymbol} 代币详情`}><TokenAvatar chain={trade.chain} address={trade.tokenAddress} size={32}
+            fallbackLogo={trade.token?.logo} fallbackSymbol={tokenSymbol} fallbackName={trade.token?.name} /></a>
           <div className={styles.tokenInfo}>
             <div className={styles.positionLabel}>{trade.chain} · {trade.side === 'buy' ? 'Bought' : 'Sold'}</div>
-            <p className={styles.symbol}><a href={tokenHref}>{tokenSymbol}</a></p>
+            <p className={styles.symbol}>{onOpenPosition ? <span>{tokenSymbol}</span> : <a href={tokenHref}>{tokenSymbol}</a>}</p>
             <p className={styles.tradeAmount}>{trade.tokenAmount ? `${formatDecimalExact(trade.tokenAmount, 4)} ${tokenSymbol}` : 'Token amount unavailable'}</p>
           </div>
           <div className={styles.tradeValues}>

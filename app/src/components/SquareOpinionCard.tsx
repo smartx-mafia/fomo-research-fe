@@ -9,13 +9,15 @@ import {decimalSign, formatDecimalExact} from '@/lib/exact-decimal';
 import {TokenAvatar} from '@/components/TokenAvatar';
 import styles from './SquareOpinionCard.module.css';
 
-export function SquareOpinionCard({item, remark, followControl, likePending, onToggleLike, now}: {
+export function SquareOpinionCard({item, remark, followControl, likePending, onToggleLike, onOpenPosition, logoToToken = false, now}: {
   item: SquareOpinionItem;
   remark?: string;
   followControl?: {phase: 'anonymous' | 'loading' | 'ready' | 'saving' | 'failed'; following?: boolean; onToggle: () => void};
   likePending: boolean;
   onToggleLike: (item: SquareOpinionItem) => void;
   now: number;
+  onOpenPosition?: (item: SquareOpinionItem) => void;
+  logoToToken?: boolean;
 }) {
   const [failedAvatar, setFailedAvatar] = useState<string>();
   const {actor, content} = item;
@@ -64,16 +66,18 @@ export function SquareOpinionCard({item, remark, followControl, likePending, onT
           </div>
         </header>
 
-        <p className={styles.body}>{version.body}</p>
+        {onOpenPosition ? <button type="button" className={`${styles.body} ${styles.bodyButton}`} aria-label={`查看 ${symbol || 'Token'} 持仓与观点`} onClick={() => onOpenPosition(item)}>{version.body}</button> : <p className={styles.body}>{version.body}</p>}
 
-        <div className={styles.position} aria-label="Position summary">
-          <TokenAvatar chain={position.asset.chain} address={position.asset.token_address} size={32}
-            fallbackLogo={content.token?.logo} fallbackSymbol={symbol} fallbackName={content.token?.name} />
+        <div className={`${styles.position} ${onOpenPosition ? styles.positionInteractive : ''}`} aria-label={onOpenPosition ? `查看 ${symbol || 'Token'} 持仓` : 'Position summary'} role={onOpenPosition ? 'button' : undefined} tabIndex={onOpenPosition ? 0 : undefined}
+          onClick={onOpenPosition ? (event) => {if (!(event.target as HTMLElement).closest('a,button')) onOpenPosition(item);} : undefined}
+          onKeyDown={onOpenPosition ? (event) => {if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {event.preventDefault(); onOpenPosition(item);}} : undefined}>
+          {logoToToken ? <a href={href} aria-label={`查看 ${symbol || 'Token'} 代币详情`}><TokenAvatar chain={position.asset.chain} address={position.asset.token_address} size={32} fallbackLogo={content.token?.logo} fallbackSymbol={symbol} fallbackName={content.token?.name} /></a>
+            : <TokenAvatar chain={position.asset.chain} address={position.asset.token_address} size={32} fallbackLogo={content.token?.logo} fallbackSymbol={symbol} fallbackName={content.token?.name} />}
           <div className={styles.tokenInfo}>
             <div className={styles.positionLabel}>{closed ? 'Closed' : 'Open'}<span className={styles.dot} aria-hidden="true" /></div>
             <p className={styles.symbol} title={`${symbol ?? 'Token'} · ${position.asset.chain}:${position.asset.token_address}`}>
               {/* 路径式详情页在静态导出下无客户端路由，走整页加载经 _redirects 重写 */}
-              <a href={href}>{symbol || 'Token unavailable'}</a>
+              {onOpenPosition ? <span>{symbol || 'Token unavailable'}</span> : <a href={href}>{symbol || 'Token unavailable'}</a>}
             </p>
           </div>
           <div className={styles.values}>

@@ -19,5 +19,26 @@
 无值降级和多值 `filters` query 编码。New Feed 默认不带 filters 表示全部；后续 Filter UI 应传重复 query key：
 `filters=SQUARE_FILTER_BUY&filters=SQUARE_FILTER_SELL`，并使 cursor/refresh anchor 随筛选变化一起失效。
 
-当前未实现的 PRD 能力仍保持关闭：Trade 与 Opinion 混合 Filter UI、Live/Pause 缓冲流、Trade Position Details、后端成交时 Market Cap 字段、
+当前未实现的 PRD 能力仍保持关闭：Trade 与 Opinion 混合 Filter UI、Live/Pause 缓冲流、后端成交时 Market Cap 字段、
 PnL Milestone 和官方置顶。Trade 卡片展示真实接口字段，不用占位数据补齐这些字段。
+
+
+## 持仓小卡片与回扫状态
+
+点击交易或观点的持仓区域按需加载持仓弹窗，关闭或切换账号后中止请求。平台用户使用原始周期标识；
+聪明钱只采用 `actor_view` 明确给出的外部主体，共享钱包不推断主体，使用钱包身份查询。
+
+聪明钱从 `/v2/smartmoney/positions/page` 精确查询选中的身份、实际链和 `token_address`，固定
+`status=all&include_details=true&limit=100`。仅读取 `list[].status` 与平面字段、`detail`，
+不混用旧全量快照结构。最多读取 5 页，并校验成员版本与游标；超限或同一优先状态存在多个
+无法区分的轮次时明确报错，不任取一轮。状态优先级为 open、closed、pending。
+交易历史仍读取 `/v1/smartmoney/new-position-trades`。`pending` 显示「待回扫确认」，
+不解释成持仓中或已平仓，数量、成本和盈亏未知时显示 `—`。原有来源行继续展示来源已确认数值。
+
+`observation.bought_usd` / `sold_usd` / `bought_amount` / `sold_amount` 独立显示为「已观测」买卖小计，
+明确说明不代表完整历史累计、转账不计入。正式累计买入金额使用 `history_bought_cost`，不以剩余持仓成本
+`accu_cost` 或已观测小计替代。客户端不推算成本和盈亏。
+
+仅弹窗挂载且仓位为 `pending` 或 `observation.status=pending_source_refresh` 时每 10 秒重读持仓；
+来源返回 `source_reported` 后停止，关闭弹窗后停止，不新增广场全局轮询。列表和交易历史独立取数，
+缺少汇总不会抹掉已采集交易。
