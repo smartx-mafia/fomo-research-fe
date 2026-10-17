@@ -219,16 +219,10 @@ button.chip[aria-expanded="true"] { background: var(--card-2); border-color: cur
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
 
 /* ---------- 版心与两栏 ---------- */
-.page { max-width: var(--w); margin: 0 auto; padding: var(--s4); }
+/* 主区占满页面 100% 宽度、单栏（2026-09-30 机主定：去掉右侧「过程」栏，不再设 1400px 版心上限）。
+   错误面板挪到主区最上方；过程日志改写浏览器控制台（[harness]）。 */
+.page { max-width: none; width: 100%; margin: 0; padding: var(--s4); }
 .cols { display: grid; gap: var(--s4); grid-template-columns: minmax(0, 1fr); align-items: start; }
-/* 1024 起分两栏（清单点名的四档之一）：左边是**做事**的（下单、持仓），右边是**看结果**的
-   （回包、日志）。跑一笔时三者同屏 —— 从前它们竖着排，广播之后要往下滚
-   两屏才看得到日志，而那正是最需要盯着它的十几秒。 */
-@media (min-width: 1024px) {
-  .cols { grid-template-columns: minmax(0, 1fr) minmax(340px, 380px); }
-  .rail { position: sticky; top: calc(var(--topbar-h) + var(--s4)); max-height: calc(100dvh - var(--topbar-h) - var(--s5)); overflow-y: auto; }
-}
-.rail > .card:last-child { margin-bottom: 0; }
 /* 单栏的那一页（X 绑定）收窄。整幅 1400px 摊开时一行文字有一百多个字符，
    而人眼一行读到七八十个就开始丢行 —— 两栏那边靠栏宽自然挡住了，这里没有
    第二栏，只能自己收。 */

@@ -5,6 +5,7 @@ import {
   normalizeTokenRef,
   TOKEN_META_STATUS_MISS,
   TOKEN_META_STATUS_OK,
+  TOKEN_META_STATUS_UNAVAILABLE,
   tokenKey,
 } from './token-metadata';
 
@@ -35,6 +36,23 @@ describe('token metadata contract', () => {
     expect(() => normalizeBatchTokenMetadata({results: []}, refs)).toThrow(/align/);
     expect(() => normalizeBatchTokenMetadata({results: [{status: 1, chain: 'bsc', address: '0xabc', info: {chain: 'bsc', address: '0xother', decimals: 18}, personal: {is_favorited: false}}]}, refs)).toThrow(/mismatched/);
     expect(() => normalizeBatchTokenMetadata({results: [{status: 1, chain: 'bsc', address: '0xabc', info: {chain: 'bsc', address: '0xabc', decimals: 18}, personal: {}}]}, refs)).toThrow(/personal/);
+  });
+
+  it('isolates unknown precision without discarding other token logos or inventing zero decimals', () => {
+    const refs = [{chain: 'bsc', address: '0xknown'}, {chain: 'robinhood', address: '0xunknown'}, {chain: 'solana', address: 'ZeroDecimalsMint'}];
+    const rows = refs.map((ref, index) => ({...ref, status: TOKEN_META_STATUS_OK, source: 2,
+      info: {...ref, decimals: [18, -1, 0][index], logo: `https://images.example/${index}.png`},
+      personal: {is_favorited: false}, risk: {result_is_scam: true}}));
+    const response = normalizeBatchTokenMetadata({results: rows}, refs);
+    expect(response.results[0].info?.logo).toBe('https://images.example/0.png');
+    expect(response.results[1].status).toBe(TOKEN_META_STATUS_UNAVAILABLE);
+    expect(response.results[1].info).toBeUndefined();
+    expect(response.results[1].presentation).toMatchObject({logo: 'https://images.example/1.png'});
+    expect(response.results[1].presentation?.decimals).toBeUndefined();
+    expect(response.results[1].risk).toEqual(response.results[0].risk);
+    expect(response.results[2].info).toMatchObject({decimals: 0, logo: 'https://images.example/2.png'});
+    rows[1].info.address = '0xwrong';
+    expect(() => normalizeBatchTokenMetadata({results: rows}, refs)).toThrow(/mismatched/);
   });
 
   it('posts normalized refs and rejects more than 500 client-side', async () => {

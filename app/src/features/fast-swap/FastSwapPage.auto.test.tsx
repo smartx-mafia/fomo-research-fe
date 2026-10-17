@@ -16,6 +16,7 @@ const mocks = vi.hoisted(()=>({
 }));
 vi.mock('next/navigation',()=>({useSearchParams:()=>mocks.params}));
 vi.mock('@/session/storage',()=>({useSession:()=>mocks.session}));
+vi.mock('@/api/settings',()=>({getSlippageMode:async()=>({data:{slippage_mode:1,slippage_bps:300,default_slippage:'0.030000',currency:'USD'}})}));
 vi.mock('@privy-io/react-auth',()=>({usePrivy:()=>({ready:true,authenticated:true,user:mocks.user,getAccessToken:mocks.accessToken}),useWallets:()=>({ready:true,wallets:mocks.evmWallets})}));
 vi.mock('@privy-io/react-auth/solana',()=>({useWallets:()=>({ready:true,wallets:mocks.solanaWallets}),useSignMessage:()=>({signMessage:mocks.prewarmSign}),useSignTransaction:()=>({signTransaction:mocks.sign})}));
 vi.mock('./pending-execution',()=>({readPendingExecution:async()=>null,writePendingExecution:(value:unknown)=>mocks.pendingWrite(value),clearPendingExecutionIfMatch:async()=>true}));

@@ -2,7 +2,7 @@
  * 客态用户公开资料 —— docs/contracts/settings.md §3.5（2026-09-12）。
  *
  * 看**别人**主页时的头部数据。与 /v1/profile（自己）刻意不同形：
- * 回包**只有六个字段**且恒在场（零值空串也在）—— 邮箱、Privy DID、语言、
+ * 回包提供公开资料字段（含新增 background_url）—— 邮箱、Privy DID、语言、
  * 注册时间都不下发，不要按主态资料的形状解析。
  *
  * 两条 remark 硬约束（§3.5）：
@@ -24,6 +24,7 @@ export type UserPublicProfile = {
   /** 昵称原值，未设置为空串。服务端不代算展示名。 */
   nickname?: string;
   avatar_url?: string;
+  background_url?: string;
   /** 简介，未设置 / 已清空为空串。 */
   bio?: string;
   /** **你**给这个人设的备注名（客态页 Custom name），没设为空串。 */

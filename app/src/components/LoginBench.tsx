@@ -30,7 +30,7 @@ import {SessionCard} from '@/components/SessionCard';
 import {WalletProvisionCard} from '@/components/WalletProvisionCard';
 import {Button} from '@/components/ui/button';
 import {Card, CardContent, CardHeader, CardTitle} from '@/components/ui/card';
-import {BUSINESS_ORIGIN_LABEL, missingConfig, PRIVY_APP_ID} from '@/config';
+import {BUSINESS_ORIGIN_LABEL, PRIVY_APP_ID} from '@/config';
 import {useEventLog} from '@/hooks/useEventLog';
 import {useOAuthAvail} from '@/hooks/useOAuthAvail';
 import {clearSite, readSite, writeSite, type SiteSession} from '@/session/storage';
@@ -74,8 +74,6 @@ export function LoginBench() {
   const [prompt, setPrompt] = useState<OnboardingItem | null>(null);
 
   const methodRef = useRef<AuthMethod>('AUTH_METHOD_EMAIL');
-
-  const missing = missingConfig();
 
   // localStorage 读取放到挂载后：SSR 阶段没有 localStorage，服务端渲染时
   // readSite() 会抛错。跨标签页同步也在这里一并接上。
@@ -299,14 +297,6 @@ export function LoginBench() {
     await logout();
     history.replaceState(null, '', location.pathname);
     log.push('info', '已全部退出并清空');
-  }
-
-  if (missing.length > 0) {
-    return (
-      <div className="mx-auto max-w-2xl p-6 font-mono text-sm leading-7 text-red-500">
-        登录域缺配置：{missing.join('、')}。复制 .env.example 成 .env.local 并填上。
-      </div>
-    );
   }
 
   const nextAction: InviteNextAction | null = session

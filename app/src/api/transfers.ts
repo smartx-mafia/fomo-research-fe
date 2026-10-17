@@ -3,15 +3,18 @@ import type {ProtoTimestamp} from './portfolio';
 
 export type TransferEntry = {
   direction: 1 | 2;
-  chain: 'solana';
-  asset_symbol: 'USDC';
+  chain: string;
+  asset_symbol: string;
   asset_address: string;
-  asset_decimals: 6;
+  asset_decimals: number;
   amount_raw: string;
   counterparty?: string;
   tx_hash: string;
   occurred_at: ProtoTimestamp;
   logo?: string;
+  record_id?: string;
+  kind?: 'deposit' | 'withdrawal';
+  status?: 'pending' | 'completed' | 'failed';
 };
 
 export type TransferPage = {transfers: TransferEntry[]; next_cursor?: string};
@@ -49,23 +52,36 @@ export function normalizeTransferPage(value: unknown): TransferPage {
   if (!row || (row.transfers !== undefined && !Array.isArray(row.transfers))) throw new Error('Transfer history response is invalid.');
   const transfers = (row.transfers as unknown[] | undefined ?? []).map((item) => {
     const transfer = object(item);
+    if (!transfer) throw new Error('Transfer history returned an invalid transfer entry.');
+    const business = transfer.kind === 'deposit' || transfer.kind === 'withdrawal';
+    if (transfer.kind && !business) throw new Error('Transfer history returned an invalid kind.');
+    if (business && (typeof transfer.record_id !== 'string' || !transfer.record_id || !['pending', 'completed', 'failed'].includes(String(transfer.status)))) {
+      throw new Error('Transfer history returned an invalid business record.');
+    }
+    const unsettled = business && transfer.status !== 'completed';
     if (
-      !transfer || (transfer.direction !== 1 && transfer.direction !== 2) ||
-      transfer.chain !== 'solana' || transfer.asset_symbol !== 'USDC' || transfer.asset_decimals !== 6 ||
-      typeof transfer.amount_raw !== 'string' || !/^[1-9]\d*$/.test(transfer.amount_raw)
+      (transfer.direction !== 1 && transfer.direction !== 2) ||
+      typeof transfer.chain !== 'string' || !transfer.chain || typeof transfer.asset_symbol !== 'string' ||
+      !Number.isInteger(transfer.asset_decimals) || Number(transfer.asset_decimals) < 0 || Number(transfer.asset_decimals) > 255 ||
+      typeof transfer.amount_raw !== 'string' ||
+      (!(unsettled && transfer.amount_raw === '') && !/^[1-9]\d*$/.test(transfer.amount_raw)) ||
+      (!business && (transfer.chain !== 'solana' || transfer.asset_symbol !== 'USDC' || transfer.asset_decimals !== 6))
     ) throw new Error('Transfer history returned an invalid transfer entry.');
+    if (typeof transfer.tx_hash !== 'string' || (!unsettled && !transfer.tx_hash)) throw new Error('Transfer history returned an invalid tx_hash.');
+    if (business && typeof transfer.asset_address !== 'string') throw new Error('Transfer history returned an invalid asset_address.');
     if (typeof transfer.counterparty !== 'string') throw new Error('Transfer history returned an invalid counterparty.');
     return {
       direction: transfer.direction,
       chain: transfer.chain,
       asset_symbol: transfer.asset_symbol,
-      asset_address: requiredString(transfer.asset_address, 'asset_address'),
-      asset_decimals: transfer.asset_decimals,
+      asset_address: business ? transfer.asset_address as string : requiredString(transfer.asset_address, 'asset_address'),
+      asset_decimals: transfer.asset_decimals as number,
       amount_raw: transfer.amount_raw,
       counterparty: transfer.counterparty || undefined,
-      tx_hash: requiredString(transfer.tx_hash, 'tx_hash'),
+      tx_hash: transfer.tx_hash,
       occurred_at: timestamp(transfer.occurred_at),
       logo: optionalHttpURL(transfer.logo, 'logo'),
+      ...(business ? {record_id: transfer.record_id as string, kind: transfer.kind as 'deposit' | 'withdrawal', status: transfer.status as 'pending' | 'completed' | 'failed'} : {}),
     } satisfies TransferEntry;
   });
   if (typeof row.next_cursor !== 'string') throw new Error('Transfer history returned an invalid next_cursor.');

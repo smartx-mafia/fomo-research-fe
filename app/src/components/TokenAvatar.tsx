@@ -2,7 +2,7 @@
 
 import {useEffect, useMemo, useState} from 'react';
 
-import {tokenKey, type TokenInfo} from '@/api/token-metadata';
+import {tokenKey, type TokenDisplayInfo} from '@/api/token-metadata';
 import {useOptionalTokenContext} from '@/components/FavoritesProvider';
 
 export type TokenAvatarSize = 24 | 28 | 32 | 36 | 44;
@@ -26,7 +26,7 @@ export function usableTokenImage(value: string | undefined): string | undefined 
 }
 
 /** The only badge precedence implementation in the frontend. */
-export function selectTokenBadge(info: TokenInfo | undefined, isFavorited: boolean): TokenBadge {
+export function selectTokenBadge(info: TokenDisplayInfo | undefined, isFavorited: boolean): TokenBadge {
   if (!info) return undefined;
   if (info.is_verify) return {kind: 'verified', label: 'Verified token'};
   if (isFavorited) return {kind: 'favorite', label: 'Favorite token'};
@@ -46,7 +46,7 @@ export function TokenAvatarView({
   fallbackName,
   className = '',
 }: {
-  info?: TokenInfo;
+  info?: TokenDisplayInfo;
   isFavorited: boolean;
   personalReady?: boolean;
   size?: TokenAvatarSize;

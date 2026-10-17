@@ -14,6 +14,7 @@ import {OpinionComposer} from '@/components/OpinionComposer';
 import {PortfolioActivity} from '@/components/PortfolioActivity';
 import {PortfolioPnlChart} from '@/components/PortfolioPnlChart';
 import {PortfolioTokenIdentity} from '@/components/PortfolioTokenIdentity';
+import {PortfolioProfile} from '@/components/PortfolioProfile';
 import {
   decimalSign,
   formatBaseUnitsExact,
@@ -77,7 +78,11 @@ function PositionRow({position, onOpenOpinion, onOpenCycle}: {position: Portfoli
 
 export function PortfolioView() {
   const session = useSession();
-  return <PortfolioAccountView key={`${session?.user?.identifier ?? ''}:${session?.jwt ?? ''}`} />;
+  const accountKey = `${session?.user?.identifier ?? ''}:${session?.jwt ?? ''}`;
+  return <>
+    {session?.user?.identifier ? <PortfolioProfile key={`profile:${accountKey}`} bearer={session.jwt} initialUser={session.user} /> : null}
+    <PortfolioAccountView key={`holdings:${accountKey}`} />
+  </>;
 }
 
 function PortfolioAccountView() {

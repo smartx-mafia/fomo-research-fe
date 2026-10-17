@@ -1,5 +1,8 @@
 "use client";
 
+import {normalizeDiscoveryCoverage, type DiscoveryCoverage} from "./discovery";
+
+
 /**
  * SmartX 行情 WebSocket 层（docs/api/market.md §3）。
  *
@@ -12,7 +15,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { normalizeTokenMarket, getWsUrl } from "./market";
+import { boardChainScope, fetchBoard, MarketApiError, normalizeTokenMarket, getWsUrl } from "./market";
 import { num } from "./format";
 import type { BoardName, TokenMarket, WsFrame } from "./types";
 
@@ -97,7 +100,7 @@ class MarketSocket {
     }
     set.add(cb);
     this.connect();
-    // 重复 subscribe 无害：服务端回一份新 snapshot，正好重置基线
+    // 服务端对重复订阅幂等；新监听者会在周期快照到达时建立基线。
     this.send({ op: "subscribe", topic });
   }
 
@@ -113,6 +116,8 @@ class MarketSocket {
 
   /** seq 跳号 / stream reset 后重订，拿新 snapshot */
   resubscribe(topic: string) {
+    // 服务端忽略同连接的重复subscribe，必须先退订才能主动取得新基线。
+    this.send({ op: "unsubscribe", topic });
     this.send({ op: "subscribe", topic });
   }
 
@@ -133,7 +138,7 @@ export function getMarketSocket(): MarketSocket {
   return singleton;
 }
 
-export type StreamStatus = "connecting" | "live" | "rejected";
+export type StreamStatus = "connecting" | "live" | "fallback" | "error" | "rejected";
 
 /** Merge normalized backend rows only; membership/risk qualification stays server-owned. */
 export function mergeBoardUpdates(current: TokenMarket[], data: unknown): TokenMarket[] {
@@ -148,110 +153,193 @@ export function mergeBoardUpdates(current: TokenMarket[], data: unknown): TokenM
   return next;
 }
 
-/**
- * 订阅一个榜单 topic，维护 snapshot + update/remove 合并后的列表。
- * `initial` 是可选启动快照，只在首次挂载时生效，WS snapshot 到达即被替换。
- *
- * 2026-09 起榜单只有五个跨链聚合 topic（另含 board:most_held），
- * 链变体 topic（board:{board}:{chain}）已被网关删除，订阅会收到 op=error 帧。
- */
-export function useBoardStream(board: BoardName, initial?: TokenMarket[]) {
-  const [items, setItems] = useState<TokenMarket[]>(initial ?? []);
-  const [status, setStatus] = useState<StreamStatus>("connecting");
-  const initialRef = useRef(initial);
+/** Only Gainers accepts a canonical multi-chain scope; existing boards remain cross-chain. */
+export function boardTopic(board: BoardName, chain?: string): string {
+  const scope = boardChainScope(board, chain);
+  return `board:${board}${scope ? `:${scope}` : ""}`;
+}
+
+/** 按完整topic绑定基线，切链不能复用旧链的列表、状态或seq。null表示暂停订阅。 */
+export function useBoardStream(board: BoardName | null, initial?: TokenMarket[], chain?: string) {
+  const topic = board ? boardTopic(board, chain) : null;
+  const bootstrap = useRef({topic, items: initial});
+  const [view, setView] = useState<{topic: string | null; items: TokenMarket[]; status: StreamStatus; discovery?: DiscoveryCoverage}>(() => ({
+    topic, items: initial ?? [], status: "connecting",
+  }));
 
   useEffect(() => {
-    const topic = `board:${board}`;
+    // StrictMode的同topic重挂可复用启动值；第一次换topic后永不重放这份旧快照。
+    if (bootstrap.current.topic !== topic) bootstrap.current = {topic: null, items: undefined};
+    if (!topic) {
+      setView({topic: null, items: [], status: "connecting"});
+      return;
+    }
     const sock = getMarketSocket();
-    // StrictMode 下 effect 会跑两遍，initial 只能消费一次：
-    // 用 prop 快照而非可变 ref，第二遍仍能拿到同一份启动数据
-    const initialItems = initial;
-
-    // 列表本体放在闭包里，setItems 只发副本，避免并发帧覆盖彼此的 state 更新
-    let list: TokenMarket[] = [];
+    let active = true;
+    let list: TokenMarket[] = bootstrap.current.items ? [...bootstrap.current.items] : [];
     let lastSeq: number | null = null;
     let hasSnapshot = false;
-
-    // 启动快照只用一次（切 tab 回来不再用，等 WS snapshot）
-    if (initialRef.current) {
-      list = [...initialRef.current];
-      initialRef.current = undefined;
-    } else if (initialItems) {
-      list = [...initialItems];
-    }
-    setItems([...list]);
-    setStatus("connecting");
-
-    const reset = () => {
+    const isGainers = topic === "board:gainers" || topic.startsWith("board:gainers:");
+    let rejected = false;
+    let fetching = false;
+    let generation = 0;
+    let failed = false;
+    let staleTimer: ReturnType<typeof setTimeout> | undefined;
+    // Retain this watermark across expiry/reconnect: repeated cached snapshots
+    // neither renew freshness nor resurrect rows after the stale deadline.
+    let acceptedSnapshot = false;
+    let acceptedSeq: number | undefined;
+    let acceptedUpdatedAt: number | undefined;
+    const acceptSnapshot = (seq?: number, updatedAt?: number) => {
+      if (!isGainers) return true;
+      const newer = !acceptedSnapshot
+        || (seq !== undefined && (acceptedSeq === undefined || seq > acceptedSeq))
+        || (updatedAt !== undefined && (acceptedUpdatedAt === undefined || updatedAt > acceptedUpdatedAt));
+      if (!newer) return false;
+      acceptedSnapshot = true;
+      if (seq !== undefined) acceptedSeq = Math.max(acceptedSeq ?? seq, seq);
+      if (updatedAt !== undefined) acceptedUpdatedAt = Math.max(acceptedUpdatedAt ?? updatedAt, updatedAt);
+      return true;
+    };
+    const controller = new AbortController();
+    let discovery: DiscoveryCoverage | undefined;
+    const publish = (status: StreamStatus) => {
+      failed = status === "error" || status === "rejected";
+      // Defense against delayed/malformed upstream updates; preserve backend rank order.
+      if (isGainers) list = list.filter((token) => typeof token.price_change_1h === "number" && Number.isFinite(token.price_change_1h) && token.price_change_1h > 0);
+      if (active) setView({topic, items: [...list], status, discovery});
+    };
+    const expire = () => {
+      generation++;
+      list = [];
       hasSnapshot = false;
       lastSeq = null;
-      setStatus("connecting");
+      if (staleTimer) clearTimeout(staleTimer);
+      staleTimer = undefined;
+      publish("error");
+    };
+    const markFresh = () => {
+      if (!isGainers) return;
+      if (staleTimer) clearTimeout(staleTimer);
+      staleTimer = setTimeout(() => {
+        if (!active) return;
+        expire();
+        sock.resubscribe(topic);
+        void poll();
+      }, 90_000);
+    };
+    const poll = async () => {
+      if (!isGainers || fetching || hasSnapshot || rejected || !active) return;
+      fetching = true;
+      const requestedGeneration = generation;
+      try {
+        const snapshot = await fetchBoard("gainers", {chain: topic.split(":")[2], signal: controller.signal});
+        // HTTP is only a fallback, never overwrite an authoritative WS snapshot.
+        if (!active || hasSnapshot || rejected || requestedGeneration !== generation) return;
+        if (!acceptSnapshot(snapshot.seq, snapshot.updated_at)) return;
+        list = snapshot.items;
+        markFresh();
+        publish("fallback");
+      } catch (error) {
+        if (active && !hasSnapshot && !rejected && requestedGeneration === generation) {
+          if (error instanceof MarketApiError && error.code === 500304) expire();
+          else publish("error");
+        }
+      } finally {
+        fetching = false;
+      }
+    };
+    const invalidate = (retain = false) => {
+      generation++;
+      if (!retain) list = [];
+      discovery = undefined;
+      hasSnapshot = false;
+      lastSeq = null;
+      publish(isGainers && (retain || failed) ? "error" : "connecting");
+    };
+    const reset = () => {
+      invalidate();
       sock.resubscribe(topic);
     };
+    publish("connecting");
 
     const onFrame = (f: WsFrame) => {
-      // op=error = 订阅参数错（如退役 topic），重订一万次也不会对，绝不自动重订。
-      // 只有 kind:"error"（stream reset）才走下面 reset() 的重订路径。
+      if (!active) return;
+      if (isGainers && (f.op === "error" || f.kind === "error") && String(f.reason).includes("500304")) {
+        expire();
+        return;
+      }
       if (f.op === "error") {
         console.warn(`[market-ws] subscribe rejected (${topic}):`, f.reason);
-        setStatus("rejected");
+        list = [];
+        hasSnapshot = false;
+        lastSeq = null;
+        rejected = true;
+        if (staleTimer) clearTimeout(staleTimer);
+        staleTimer = undefined;
+        publish("rejected");
         return;
       }
-
       if (f.kind === "snapshot") {
-        const data = f.data as { seq?: unknown; items?: unknown[] } | undefined;
+        const data = f.data as {seq?: unknown; updated_at?: unknown; items?: unknown[]; discovery?: unknown} | undefined;
+        const nextSeq = f.seq ?? num(data?.seq);
+        if (hasSnapshot && nextSeq !== undefined && lastSeq !== null && nextSeq < lastSeq) return;
+        if (!acceptSnapshot(nextSeq, num(data?.updated_at))) return;
+        generation++;
         list = (data?.items ?? []).map(normalizeTokenMarket);
-        // 帧外层 seq 恒为数字；snapshot 内层 seq 在 WS 里是字符串（§3.5）
+        discovery = normalizeDiscoveryCoverage(data?.discovery);
         lastSeq = f.seq ?? num(data?.seq) ?? null;
         hasSnapshot = true;
-        setItems([...list]);
-        setStatus("live");
+        markFresh();
+        publish("live");
         return;
       }
-
       if (f.kind === "update" || f.kind === "remove") {
-        // snapshot 之前的增量没有基线可合并，丢弃（协议保证订阅首帧是 snapshot）
         if (!hasSnapshot) return;
         const seq = f.seq;
-        if (seq !== undefined && lastSeq !== null && seq > lastSeq + 1) {
-          // 跳号 = 漏了一版：错误基线上继续合并会得到"看起来正常、内容是错的"榜单（规则 2）
-          reset();
-          return;
+        if (seq !== undefined && lastSeq !== null) {
+          if (seq < lastSeq) return;
+          if (seq > lastSeq + 1) { reset(); return; }
         }
         if (seq !== undefined) lastSeq = Math.max(lastSeq ?? seq, seq);
-
         if (f.kind === "update") {
-          // 协议 v2：update 的 data 是合批后的 TokenMarket 数组（窗口内同币只发最后一次状态）
           list = mergeBoardUpdates(list, f.data);
         } else {
-          // remove 同样是数组：漏处理会残留已出榜的币（周期快照 10s 内会冲正，但用户看得见）
           const batch = Array.isArray(f.data) ? f.data : [f.data];
-          for (const d of batch as { chain?: string; address?: string }[]) {
+          for (const d of batch as {chain?: string; address?: string}[]) {
             list = list.filter((t) => !(t.chain === d?.chain && t.address === d?.address));
           }
         }
-        setItems([...list]);
+        // Gainers uses full ordered snapshots. Unexpected deltas may hide an
+        // invalid row, but cannot renew the age of the authoritative snapshot.
+        if (!isGainers) markFresh();
+        publish("live");
         return;
       }
-
-      if (f.kind === "error") {
-        // stream reset：topic 已被服务端移除，不重订就永远没数据（规则 3）
-        reset();
-      }
+      if (f.kind === "error") reset();
     };
 
     sock.subscribe(topic, onFrame);
-    const offState = sock.onState((s) => {
-      if (s !== "open") setStatus("connecting");
+    const offState = sock.onState((state) => {
+      if (state !== "open") {
+        if (hasSnapshot) invalidate(isGainers);
+        else publish(isGainers && (list.length > 0 || failed) ? "error" : "connecting");
+      }
     });
-
+    void poll();
+    const pollTimer = isGainers ? setInterval(() => { void poll(); }, 15_000) : undefined;
     return () => {
+      active = false;
+      controller.abort();
+      if (pollTimer) clearInterval(pollTimer);
+      if (staleTimer) clearTimeout(staleTimer);
       offState();
       sock.unsubscribe(topic, onFrame);
     };
-  }, [board]);
+  }, [topic]);
 
-  return { items, status };
+  // effect清理之前的那次render也不能把旧榜数据画到新榜标题下。
+  return view.topic === topic && topic ? {items: view.items, status: view.status, discovery: view.discovery} : {items: [], status: "connecting" as StreamStatus};
 }
 
 /**

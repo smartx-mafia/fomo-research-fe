@@ -11,6 +11,9 @@ import {useSign7702Authorization, useSignTypedData, type ConnectedWallet} from '
 import {useSignMessage, useSignTransaction, type ConnectedStandardSolanaWallet} from '@privy-io/react-auth/solana';
 
 import {formatUnits, USDC_MINT} from '../balance';
+import {confirmTokenRisk, getTokenRisk} from '@/api/token-risk';
+import {RiskDialog} from '@/components/TokenRisk';
+import type {RiskAssessment} from '@/lib/risk-assessment';
 import {CHAINS, caipOf, chainOfCaip, type Chain} from '../chains';
 import {isSolanaAddress} from '../transfer';
 import {Badge, Btn, Copy, Field, Info, Note, Tabs} from '../ui';
@@ -20,6 +23,8 @@ import {createSwapStore, withSwapLock, type SwapRecord} from './store';
 import {StageLog, secs, type TraceView} from './stagelog';
 import {TokenPicker} from './TokenPicker';
 import {acceptedMinOut} from './verify';
+import {keepPreviousWireValue} from '../stable-state';
+import {LatestTaskRunner} from './latest-task';
 import {
   ExecutionStatus,
   FeePolicy,
@@ -83,6 +88,7 @@ export type SwapPanelProps = {
 const CHAIN_OPTS = CHAINS.map((k) => ({k, wire: caipOf(k)}));
 type ChainKey = Chain;
 type Dir = 'buy' | 'sell';
+type PendingRiskReview = {key: string; run: SwapRun; chain: string; address: string; risk: RiskAssessment};
 
 /**
  * 链 + 方向 → 线上的 origin / destination / side。页面像 v1 一样选「标的在哪条链」与方向，
@@ -201,6 +207,7 @@ export function SwapPanel(p: SwapPanelProps) {
   // ── 能力 ──────────────────────────────────────────────────────────
   const [routes, setRoutes] = useState<SwapRoute[] | null>(null);
   const [routesErr, setRoutesErr] = useState<string | null>(null);
+  const [pendingRisk, setPendingRisk] = useState<PendingRiskReview | null>(null);
   const loadRoutes = useCallback(async () => {
     if (!p.token) return;
     try {
@@ -334,7 +341,7 @@ export function SwapPanel(p: SwapPanelProps) {
   const [settledPrepareQuoteKey, setSettledPrepareQuoteKey] = useState('');
   const [pageVisible, setPageVisible] = useState(true);
   const preparedRef = useRef<{key: string; run: SwapRun} | null>(null);
-  const prepareQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const prepareQueueRef = useRef(new LatestTaskRunner());
   const prepareGenerationRef = useRef(0);
   const consumedPrepareKeyRef = useRef('');
   const [prepareNonce, setPrepareNonce] = useState(0);
@@ -488,30 +495,72 @@ export function SwapPanel(p: SwapPanelProps) {
     const generation = ++prepareGenerationRef.current;
     setPreparing(true);
     setPrepareError(null);
-    prepareQueueRef.current = prepareQueueRef.current.then(async () => {
-      const old = preparedRef.current;
-      if (old && old.key !== prepareKey) await cancelPrepared(old);
-      if (generation !== prepareGenerationRef.current) return;
-      if (!prepareKey || !quoteReq || !srcWallet || !signer) return;
+    prepareQueueRef.current.schedule(async () => {
+      try {
+        const old = preparedRef.current;
+        if (old && old.key !== prepareKey) await cancelPrepared(old);
+        if (generation !== prepareGenerationRef.current) return;
+        if (!prepareKey || !quoteReq || !srcWallet || !signer) return;
 
-      const next = SwapRun.start(depsFor(srcWallet.address), quoteReq, null);
-      preparedRef.current = {key: prepareKey, run: next};
-      runRef.current = next;
-      p.say(`⏱ 输入稳定，后台准备完整可签交易 · client_intent_id=${next.snapshotState.clientIntentID}`);
-      const state = await next.prepare();
-      // 输入在请求期间变化时，下一项串行任务会取消这笔；这里不并发 cancel。
-      if (generation !== prepareGenerationRef.current) return;
-      if (state.stage === 'ready') {
-        p.say(`[trade_id ${state.swapID}] 可签交易 READY（预构建 ${ms(state.timeline.create_ms)}），点击时只签名并上报`);
-      } else {
-        setPrepareError(state.stopReason ?? '可签交易准备失败');
+        const next = SwapRun.start(depsFor(srcWallet.address), quoteReq, null);
+        preparedRef.current = {key: prepareKey, run: next};
+        runRef.current = next;
+        p.say(`⏱ 输入稳定，后台准备完整可签交易 · client_intent_id=${next.snapshotState.clientIntentID}`);
+        const state = await next.prepare();
+        // 输入在请求期间变化时，最新一项会取消这笔；这里不并发 cancel。
+        if (generation !== prepareGenerationRef.current) return;
+        if (state.stage === 'ready') {
+          p.say(`[trade_id ${state.swapID}] 可签交易 READY（预构建 ${ms(state.timeline.create_ms)}），点击时只签名并上报`);
+        } else if (state.error instanceof SwapApiError && state.error.code === 430310) {
+          const riskChain = chainOfCaip(quoteReq.destination_chain);
+          if (!riskChain) throw new Error(`风险确认不支持链 ${quoteReq.destination_chain}`);
+          const reply = await getTokenRisk(riskChain, quoteReq.destination_asset, p.token);
+          const risk = reply.risk.assessment;
+          if (!risk?.confirmationVersion || !risk.items.length) throw new Error('当前风险详情不完整，不能确认购买。');
+          setPendingRisk({key: prepareKey, run: next, chain: riskChain, address: quoteReq.destination_asset, risk});
+          setPrepareError(null);
+        } else {
+          setPrepareError(state.stopReason ?? '可签交易准备失败');
+        }
+      } catch (e: unknown) {
+        if (generation === prepareGenerationRef.current) setPrepareError(errText(e));
+      } finally {
+        if (generation === prepareGenerationRef.current) setPreparing(false);
       }
-    }).catch((e: unknown) => {
-      if (generation === prepareGenerationRef.current) setPrepareError(errText(e));
-    }).finally(() => {
-      if (generation === prepareGenerationRef.current) setPreparing(false);
     });
   }, [cancelPrepared, depsFor, p.say, prepareKey, quoteReq, running, signer, srcWallet]);
+
+  const confirmPreparedRisk = useCallback(async () => {
+    const review = pendingRisk;
+    if (!review || review.key !== prepareKey) return;
+    setPreparing(true);
+    setPrepareError(null);
+    try {
+      const confirmed = await confirmTokenRisk(
+        review.chain,
+        review.address,
+        p.token,
+        `fastswap:${review.run.snapshotState.clientIntentID}`,
+        review.risk.confirmationVersion,
+      );
+      const current = confirmed.risk.assessment;
+      if (!current || current.confirmationVersion !== review.risk.confirmationVersion) {
+        if (current?.confirmationVersion && current.items.length) setPendingRisk({...review, risk: current});
+        throw new Error('代币风险版本已变化，请阅读更新后的风险后重新确认。');
+      }
+      setPendingRisk(null);
+      const state = await review.run.prepare();
+      if (state.stage === 'ready') {
+        p.say(`[trade_id ${state.swapID}] 风险已确认，可签交易 READY`);
+      } else {
+        setPrepareError(state.stopReason ?? '风险确认后仍未完成可签交易准备');
+      }
+    } catch (error) {
+      setPrepareError(errText(error));
+    } finally {
+      setPreparing(false);
+    }
+  }, [p.say, p.token, pendingRisk, prepareKey]);
 
   const prepared = preparedRef.current?.key === prepareKey ? preparedRef.current.run.snapshotState : null;
   const preparedReady = prepared?.stage === 'ready' && prepared.snapshot?.execution.status === ExecutionStatus.NOT_REPORTED;
@@ -589,6 +638,20 @@ export function SwapPanel(p: SwapPanelProps) {
       if (s.stage === 'done') {
         p.say(`[trade_id ${s.swapID}] 到终态：${outcomeLabel(s.snapshot?.settlement.outcome)}`);
         p.onTerminal();
+        // **成交之后清掉这一笔的输入，只清「完成」这一种终态。**
+        //
+        // 不清的话，下一笔的起点是上一笔的代币与金额 —— 而这个台子上最常见的
+        // 下一步恰恰是换一只币再试，于是要么手工全选删掉，要么在旧金额上改几位
+        // 数字（改错一位不报错，直接按旧金额下单，花的是真钱）。
+        //
+        // 其余终态（取消 / 过期未执行 / 失败未扣款 / 已退款）**不清**：那几种
+        // 多半要照着同样的输入再来一次，清掉等于逼人重填一遍。
+        //
+        // 链、方向、滑点是「设置」不是「这一笔」，一并清掉会让人每笔都重选一次。
+        if (s.snapshot?.settlement.outcome === Outcome.COMPLETED) {
+          setTokenAddr('');
+          setAmount('');
+        }
       } else if (s.stage === 'stopped') {
         p.say(`[trade_id ${s.swapID ?? '（未建单）'}] 停下：${s.stopReason}`, true);
       }
@@ -635,7 +698,7 @@ export function SwapPanel(p: SwapPanelProps) {
   const activeBusyRef = useRef(false);
   const activeGenRef = useRef(0);
   const loadActive = useCallback(async () => {
-    setLocalRecs(store.list());
+    setLocalRecs((previous) => keepPreviousWireValue(previous, store.list()));
     if (!p.token || activeBusyRef.current) return;
     activeBusyRef.current = true;
     const gen = ++activeGenRef.current;
@@ -649,7 +712,7 @@ export function SwapPanel(p: SwapPanelProps) {
         cursor = r.next_cursor;
       }
       if (gen !== activeGenRef.current) return;
-      setActive(out);
+      setActive((previous) => keepPreviousWireValue(previous, out));
       setActiveErr(null);
     } catch (e) {
       // 失败只更新卡片上那一行，不写「过程」日志 —— 1 秒一条会把右栏冲掉
@@ -795,6 +858,12 @@ export function SwapPanel(p: SwapPanelProps) {
 
   return (
     <div className="form">
+      <RiskDialog
+        risk={pendingRisk?.risk}
+        open={!!pendingRisk}
+        onClose={() => { setPendingRisk(null); setPrepareError('需要确认当前代币风险后才能继续买入。'); }}
+        onConfirm={() => void confirmPreparedRisk()}
+      />
       {routesErr && <Note tone="err">capabilities 失败：{routesErr}</Note>}
       {!store.durable() && <Note tone="warn">localStorage 不可用 —— 签名产物只在内存里，刷新页面就丢。</Note>}
 

@@ -10,6 +10,16 @@ describe('canonical assessment', () => {
       expect(normalizeRiskAssessment({valid_until_ms: value}).validUntilMs).toBeNull();
     }
   });
+  it('normalizes each provider summary without losing int64 timestamps', () => {
+    const risk = normalizeRiskAssessment({sources: [{
+      source: 'rugcheck', status: 'partial', observed_at_ms: '9223372036854775807',
+      fetched_at_ms: 1789000060000, valid_until_ms: 0, report_hash: 'report-1', checks_complete: false,
+    }, {source: '', status: 'ok'}]});
+    expect(risk.sources).toEqual([{
+      source: 'rugcheck', status: 'partial', observedAtMs: '9223372036854775807',
+      fetchedAtMs: '1789000060000', validUntilMs: null, reportHash: 'report-1', checksComplete: false,
+    }]);
+  });
   it('preserves exact decimal rates in 0..100, including endpoints and leading/trailing zeros', () => {
     for (const rate of ['0', '0.000', '3.8800', '99.999999999999999999999', '100', '100.000000000000000000000', '000100.00', '000.0001']) {
       expect(normalizeRiskParams('goplus_buy_tax', {rate})).toEqual({rate});
@@ -92,5 +102,22 @@ describe('canonical assessment', () => {
     expect(result.items[0].evidence[0].observedAtMs).toBe('9223372036854775807');
     expect(result.confirmationVersion).toBe('v4');
     expect(riskCopy('<script>')).toEqual(['Additional risk flagged', 'The risk service reported an additional risk for this token.']);
+  });
+  it('uses server-curated RugCheck display copy and keeps the generic copy as a legacy fallback', () => {
+    const [item] = normalizeRiskAssessment({items: [{
+      code: 'rugcheck_freeze_authority', grade: 4, display_source: 'rugcheck',
+      title: 'Freeze authority enabled',
+      detail: 'An active freeze authority can restrict token transfers.',
+    }]}).items;
+    expect(riskItemCopy(item)).toEqual([
+      'Freeze authority enabled',
+      'An active freeze authority can restrict token transfers.',
+    ]);
+
+    const [legacy] = normalizeRiskAssessment({items: [{code: 'rugcheck_freeze_authority', grade: 4}]}).items;
+    expect(riskItemCopy(legacy)).toEqual([
+      'Additional risk flagged',
+      'The risk service reported an additional risk for this token.',
+    ]);
   });
 });

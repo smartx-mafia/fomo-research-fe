@@ -7,6 +7,7 @@ export type UserInfo = {
   identifier: string;
   nickname?: string;
   avatar_url?: string;
+  background_url?: string;
   language?: string;
   /** Unix 秒。契约文档说是数字，但 protojson 有把 int64 编成字符串的先例，
    *  所以两种都要能吃 —— 显示时统一 Number()。 */
@@ -53,8 +54,8 @@ export function login(authMethod: AuthMethod, identityToken: string) {
 }
 
 /** GET /v1/user/info —— 需要本站 JWT。 */
-export function getUserInfo(bearer: string) {
-  return call<UserInfo>('/v1/user/info', {bearer});
+export function getUserInfo(bearer: string, signal?: AbortSignal) {
+  return call<UserInfo>('/v1/user/info', {bearer, signal});
 }
 
 /**

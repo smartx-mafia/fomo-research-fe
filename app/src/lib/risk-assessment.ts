@@ -3,10 +3,24 @@ export type RiskItem = {
   code: string;
   grade: number;
   displaySource: string;
+  /** Server-curated display copy; never raw provider text. */
+  title: string;
+  detail: string;
   evidence: {source: string; field: string; value: string; observedAtMs: string | null}[];
   params: Record<string, string>;
 };
+export type RiskSourceStatus = {
+  source: string;
+  status: string;
+  observedAtMs: string | null;
+  fetchedAtMs: string | null;
+  validUntilMs: string | null;
+  reportHash: string;
+  checksComplete: boolean;
+};
 export type RiskAssessment = {
+  /** Backend platform qualification for display only; never overrides buyAction. */
+  verification?: {eligible: boolean; suspended: boolean};
   mode: 'enforce' | 'observe' | '';
   grade: number;
   checksComplete: boolean;
@@ -17,6 +31,7 @@ export type RiskAssessment = {
   confirmationVersion: string;
   items: RiskItem[];
   checks: {code: string; state: string; value: string}[];
+  sources: RiskSourceStatus[];
   goplusStatus: string;
   goplusObservedAtMs: string | null;
   lastAttemptAtMs: string | null;
@@ -71,12 +86,15 @@ export function normalizeRiskAssessment(value: unknown): RiskAssessment {
     if (!code || items.has(code)) continue; // Count canonical backend items, not evidence or provider flags.
     items.set(code, {
       code, grade: grade(item.grade), displaySource: text(field(item, 'displaySource', 'display_source')),
+      title: text(item.title), detail: text(item.detail),
       params: normalizeRiskParams(code, item.params),
       evidence: rows(item.evidence).map((e) => ({source: text(e.source), field: text(e.field), value: text(e.value), observedAtMs: time(field(e, 'observedAtMs', 'observed_at_ms'))})),
     });
   }
   const action = field(raw, 'buyAction', 'buy_action');
+  const verification = record(raw.verification);
   return {
+    ...(Object.keys(verification).length ? {verification: {eligible: verification.eligible === true, suspended: verification.suspended === true}} : {}),
     mode: raw.mode === 'enforce' || raw.mode === 'observe' ? raw.mode : '',
     grade: grade(raw.grade), checksComplete: field(raw, 'checksComplete', 'checks_complete') === true,
     validUntilMs: time(field(raw, 'validUntilMs', 'valid_until_ms')),
@@ -85,6 +103,19 @@ export function normalizeRiskAssessment(value: unknown): RiskAssessment {
     confirmationVersion: text(field(raw, 'confirmationVersion', 'confirmation_version')),
     items: [...items.values()],
     checks: rows(raw.checks).map((c) => ({code: text(c.code), state: text(c.state), value: text(c.value)})),
+    sources: rows(raw.sources).flatMap((source) => {
+      const name = text(source.source);
+      if (!name) return [];
+      return [{
+        source: name,
+        status: text(source.status),
+        observedAtMs: time(field(source, 'observedAtMs', 'observed_at_ms')),
+        fetchedAtMs: time(field(source, 'fetchedAtMs', 'fetched_at_ms')),
+        validUntilMs: time(field(source, 'validUntilMs', 'valid_until_ms')),
+        reportHash: text(field(source, 'reportHash', 'report_hash')),
+        checksComplete: field(source, 'checksComplete', 'checks_complete') === true,
+      }];
+    }),
     goplusStatus: text(field(raw, 'goplusStatus', 'goplus_status')),
     goplusObservedAtMs: time(field(raw, 'goplusObservedAtMs', 'goplus_observed_at_ms')),
     lastAttemptAtMs: time(field(raw, 'lastAttemptAtMs', 'last_attempt_at_ms')),
@@ -171,6 +202,7 @@ export function riskCopy(code: string) {
   return Object.hasOwn(RISK_COPY, code) ? RISK_COPY[code] : ['Additional risk flagged', 'The risk service reported an additional risk for this token.'] as const;
 }
 export function riskItemCopy(item: RiskItem): readonly [string, string] {
+  if (item.title && item.detail) return [item.title, item.detail];
   if (item.code === 'goplus_transfer_hook') {
     if (item.grade === 5) return ['Malicious transfer hook', 'A transfer hook program was flagged as malicious. It can affect token transfers and may put funds at risk.'];
     if (item.grade === 4) return ['Transfer hook can be modified', 'An authority can modify the transfer hook program, changing the logic that runs during transfers.'];
@@ -195,7 +227,7 @@ export function riskDisplayParams(item: RiskItem): {key: string; label: string; 
 export function riskItemTitle(item: RiskItem) {
   const title = riskItemCopy(item)[0];
   const rate = normalizeRiskParams(item.code, item.params).rate;
-  return rate !== undefined ? `${title} (${rate}%)` : title;
+  return rate !== undefined && !item.title ? `${title} (${rate}%)` : title;
 }
 export function riskSource(source: string) {
   return source === 'goplus' ? 'GoPlus' : source === 'codex' ? 'Codex' : 'Risk service';

@@ -1,11 +1,25 @@
+import {overlayTradeMetadata, type TradeTokenMetadata} from '@/lib/trade-token-metadata';
 /** 聪明钱详情公共接口（docs/contracts/smartmoney-detail.md）。 */
 import {call} from './envelope';
+import type {SmartMoneyAccounting} from './smartmoney-accounting';
 
 export type SmartMoneyHolding = {
   chain?: string;
   launchpad?: string;
   /** Average holding cost × collected total supply (FDV), decimal USD; empty means unavailable. */
   avg_cost_market_cap_usd?: string;
+  position_quantity?: string;
+  balance_quantity?: string;
+  quantity_gap?: string;
+  balance_market_value?: string;
+  performance_market_value?: string;
+  performance_included?: boolean | null;
+  asset_role?: string;
+  source_decimals?: number | null;
+  position_pnl_basis?: string;
+  cost_basis_kind?: string;
+  source_lifetime_realized_reference?: string;
+  realized_since_baseline?: string;
   token_address?: string;
   symbol?: string;
   name?: string;
@@ -35,6 +49,7 @@ export type SmartMoneyHolding = {
 };
 
 export type SmartMoneyHoldings = {
+  accounting?: SmartMoneyAccounting;
   chain: string;
   address: string;
   total_profit?: string;
@@ -46,6 +61,7 @@ export type SmartMoneyHoldings = {
 };
 
 export type SmartMoneyPnlWindow = {
+  accounting?: SmartMoneyAccounting;
   window: string;
   total_profit?: string;
   realized_profit?: string;
@@ -57,6 +73,7 @@ export type SmartMoneyTrade = {
   occurred_at?: number;
   token_address?: string;
   token_symbol?: string;
+  token_name?: string;
   token_logo?: string;
   token_amount?: string;
   quote_amount?: string;
@@ -72,10 +89,11 @@ export type SmartMoneyTokenTrade = {
 };
 export type SmartMoneyTokenTrades = {
   chain: string; address: string; token_address: string; list?: SmartMoneyTokenTrade[];
-  next_cursor?: string; complete?: boolean;
+  next_cursor?: string; complete?: boolean; token_metadata?: TradeTokenMetadata[];
 };
 
 export type SmartMoneyTrades = {
+  token_metadata?: TradeTokenMetadata[];
   chain: string;
   address: string;
   fetched_at?: number;
@@ -87,9 +105,10 @@ function detailPath(path: 'holdings' | 'trades', chain: string, address: string)
   return `/v1/smartmoney/${path}?${params.toString()}`;
 }
 
-export function getSmartMoneyTokenTrades(chain: string, address: string, tokenAddress: string, cursor = '', signal?: AbortSignal) {
+export function getSmartMoneyTokenTrades(chain: string, address: string, tokenAddress: string, cursor = '', signal?: AbortSignal, options?: {backgroundRefresh?: boolean}) {
   const params = new URLSearchParams({chain, address, token_address: tokenAddress, limit: '50'});
   if (cursor) params.set('cursor', cursor);
+  if (options?.backgroundRefresh !== undefined) params.set('background_refresh', String(options.backgroundRefresh));
   return call<SmartMoneyTokenTrades>(`/v1/smartmoney/token-trades?${params}`, {signal});
 }
 
@@ -97,6 +116,9 @@ export function getSmartMoneyHoldings(chain: string, address: string, signal?: A
   return call<SmartMoneyHoldings>(detailPath('holdings', chain, address), {signal});
 }
 
-export function getSmartMoneyTrades(chain: string, address: string, signal?: AbortSignal) {
-  return call<SmartMoneyTrades>(detailPath('trades', chain, address), {signal});
+export async function getSmartMoneyTrades(chain: string, address: string, signal?: AbortSignal, options?: {backgroundRefresh?: boolean}) {
+  const suffix = options?.backgroundRefresh === undefined ? '' : `&background_refresh=${options.backgroundRefresh}`;
+  const result = await call<SmartMoneyTrades>(detailPath('trades', chain, address) + suffix, {signal});
+  const data = result.data;
+  return {...result, data: {...data, list: overlayTradeMetadata((data.list ?? []).map((row) => ({...row, chain: data.chain})), data.token_metadata)}};
 }

@@ -1,6 +1,7 @@
 'use client';
 
 import {useState} from 'react';
+import {SmartMoneyAccountingNote} from './SmartMoneyAccountingNote';
 import type {SmartMoneyPnlWindow} from '@/api/smartmoney';
 import {decimalSign, formatDecimalExact} from '@/lib/exact-decimal';
 
@@ -16,5 +17,6 @@ export function SmartMoneyPnlSummary({data}: {data?: SmartMoneyPnlWindow[]}) {
       const formatted = formatDecimalExact(amount, 2);
       return <div key={label} className="rounded-xl border border-border bg-surface p-4"><p className="text-xs text-muted">{label}</p><p className={`mt-2 font-mono text-xl font-semibold ${sign === 1 ? 'text-up' : sign === -1 ? 'text-down' : 'text-muted'}`}>{formatted === '—' ? '—' : `${sign === -1 ? '-' : ''}$${formatted.replace(/^-/, '')}`}</p></div>;
     })}</div>
+    <SmartMoneyAccountingNote accounting={selected?.accounting} />
   </section>;
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import {SmartMoneyAccountingNote} from "./SmartMoneyAccountingNote";
 import {
   getSmartMoneyHoldings,
   getSmartMoneyTrades,
@@ -9,13 +10,14 @@ import {
   type SmartMoneyTrades,
 } from "@/api/smartmoney";
 import { chainLabel, fmtCompact, shortAddr } from "@/lib/format";
+import {metadataRetryMs} from '@/lib/trade-token-metadata';
 import {TokenAvatarView, useTokenDisplay} from '@/components/TokenAvatar';
 
-function TokenIdentity({chain, address, symbol, name}: {chain: string; address: string; symbol?: string; name?: string}) {
+function TokenIdentity({chain, address, symbol, name, logo}: {chain: string; address: string; symbol?: string; name?: string; logo?: string}) {
   const {info, isFavorited, personalReady} = useTokenDisplay(chain, address);
   return <div className="flex min-w-0 items-center gap-2.5">
     <TokenAvatarView info={info} isFavorited={isFavorited} personalReady={personalReady} size={32}
-      fallbackSymbol={symbol} fallbackName={name} />
+      fallbackSymbol={symbol} fallbackName={name} fallbackLogo={logo} />
     <div className="min-w-0"><div className="truncate text-sm font-medium text-foreground">{info?.symbol ?? symbol ?? info?.name ?? name ?? shortAddr(address, 6, 4)}</div><div className="truncate text-xs text-muted">{info?.name ?? name ?? address}</div></div>
   </div>;
 }
@@ -27,20 +29,26 @@ export function SmartMoneyProfile({ chain, address }: { chain: string; address: 
   const [tradesFailed, setTradesFailed] = useState(false);
 
   useEffect(() => {
-    let active = true;
-    setHoldingsFailed(false);
-    setTradesFailed(false);
-    Promise.allSettled([getSmartMoneyHoldings(chain, address), getSmartMoneyTrades(chain, address)])
-      .then(([holdingsResult, tradesResult]) => {
-        if (!active) return;
-        if (holdingsResult.status === "fulfilled") setHoldings(holdingsResult.value.data);
-        else setHoldingsFailed(true);
-        if (tradesResult.status === "fulfilled") setTrades(tradesResult.value.data);
-        else setTradesFailed(true);
-      });
-    return () => {
-      active = false;
+    const controller = new AbortController();
+    const startedAt = Date.now();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    setHoldings(null); setTrades(null);
+    setHoldingsFailed(false); setTradesFailed(false);
+    void getSmartMoneyHoldings(chain, address, controller.signal).then((result) => {
+      if (!controller.signal.aborted) setHoldings(result.data);
+    }).catch(() => {if (!controller.signal.aborted) setHoldingsFailed(true);});
+    const loadTrades = async (backgroundRefresh = false) => {
+      if (controller.signal.aborted || (backgroundRefresh && document.visibilityState !== 'visible')) return;
+      try {
+        const result = await getSmartMoneyTrades(chain, address, controller.signal, {backgroundRefresh});
+        if (controller.signal.aborted) return;
+        setTrades(result.data);
+        const delay = metadataRetryMs(result.data.token_metadata, startedAt, Date.now());
+        if (delay) timer = setTimeout(() => {void loadTrades(true);}, delay);
+      } catch {if (!controller.signal.aborted && !backgroundRefresh) setTradesFailed(true);}
     };
+    void loadTrades();
+    return () => {controller.abort(); if (timer) clearTimeout(timer);};
   }, [address, chain]);
 
   return (
@@ -58,6 +66,7 @@ export function SmartMoneyProfile({ chain, address }: { chain: string; address: 
             <span className="ml-2">({formatRatio(holdings.total_profit_ratio)})</span>
           )}
         </div>
+        <SmartMoneyAccountingNote accounting={holdings?.accounting} />
       </div>
 
       <section className="rounded-lg border border-border bg-surface">
@@ -67,7 +76,7 @@ export function SmartMoneyProfile({ chain, address }: { chain: string; address: 
         ) : holdings === null ? (
           <p className="p-4 text-sm text-muted">Loading holdings…</p>
         ) : (holdings.open?.length ?? 0) === 0 ? (
-          <p className="p-4 text-sm text-muted">No open holdings.</p>
+          <p className="p-4 text-sm text-muted">{holdings.accounting?.source === 'gmgn' && holdings.accounting.total_status === 'unavailable' ? 'Current holdings are unavailable; this does not mean the account is empty.' : 'No open holdings.'}</p>
         ) : (
           holdings.open?.map((item, index) => (
             <div key={`${item.token_address ?? "unknown"}:${index}`} className="flex items-center justify-between gap-3 border-b border-border/50 px-4 py-3 last:border-0">
@@ -75,6 +84,8 @@ export function SmartMoneyProfile({ chain, address }: { chain: string; address: 
               <div className="shrink-0 text-right text-xs text-muted">
                 <div className="text-sm text-foreground">{formatMoney(item.usd_value)}</div>
                 <div>PnL {formatMoney(item.total_profit)}</div>
+                {item.balance_quantity !== undefined && item.balance_quantity !== '' ? <div>Balance {item.balance_quantity} · Position {item.position_quantity || '—'}</div> : null}
+                {item.asset_role === 'native_observation' ? <div>Native balance · excluded from performance</div> : null}
               </div>
             </div>
           ))
@@ -88,7 +99,7 @@ export function SmartMoneyProfile({ chain, address }: { chain: string; address: 
         ) : holdings === null ? (
           <p className="p-4 text-sm text-muted">Loading holdings…</p>
         ) : (holdings.closed?.length ?? 0) === 0 ? (
-          <p className="p-4 text-sm text-muted">No closed holdings.</p>
+          <p className="p-4 text-sm text-muted">{holdings.accounting?.source === 'gmgn' && holdings.accounting.total_status === 'unavailable' ? 'Closed holdings are unavailable.' : 'No closed holdings.'}</p>
         ) : (
           holdings.closed?.map((item, index) => (
             <div key={`${item.token_address ?? "unknown"}:${index}`} className="flex items-center justify-between gap-3 border-b border-border/50 px-4 py-3 last:border-0">
@@ -115,7 +126,7 @@ export function SmartMoneyProfile({ chain, address }: { chain: string; address: 
         ) : (
           trades.list?.map((trade: SmartMoneyTrade, index: number) => (
             <div key={`${trade.tx_hash ?? "unknown"}:${index}`} className="flex items-center justify-between gap-3 border-b border-border/50 px-4 py-3 last:border-0">
-              <div className="min-w-0"><div className="mb-1 truncate text-xs font-medium capitalize text-muted">{trade.event_type ?? "Unknown event"}</div><TokenIdentity chain={chain} address={trade.token_address ?? ''} symbol={trade.token_symbol} /></div>
+              <div className="min-w-0"><div className="mb-1 truncate text-xs font-medium capitalize text-muted">{trade.event_type ?? "Unknown event"}</div><TokenIdentity chain={chain} address={trade.token_address ?? ''} symbol={trade.token_symbol} name={trade.token_name} logo={trade.token_logo} /></div>
               <div className="shrink-0 text-right text-xs text-muted">
                 <div className="text-sm text-foreground">{formatMoney(trade.cost_usd)}</div>
                 <div>{formatTime(trade.occurred_at)}</div>
