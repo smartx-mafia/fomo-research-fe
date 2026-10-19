@@ -1,6 +1,7 @@
 'use client';
 
 import {Dialog} from 'radix-ui';
+import {useState} from 'react';
 import {X} from 'lucide-react';
 import dynamic from 'next/dynamic';
 import {useSession} from '@/session/storage';
@@ -31,25 +32,29 @@ export function SquarePositionDialog({target, onClose}: {target: SquarePositionT
 
 function SquarePositionContent({target, bearer}: {target: SquarePositionTarget; bearer?: string}) {
   const data = useSquarePositionData(target, bearer);
-  const awaitingSnapshot = data.holding?.state === 'pending';
-  const closed = awaitingSnapshot ? undefined : data.holding ? data.holding.state === 'closed' : target.closedHint;
-  const observation = data.holding?.observation;
-  const pnl = data.holding?.pnlUSD, sign = decimalSign(pnl);
-  const roi = opinionCycleReturn(data.holding?.ratio);
+  const [selectedRecordKey, selectRecord] = useState('');
+  const records = data.closedRecords;
+  const selectedRecord = records?.find((record) => record.key === selectedRecordKey);
+  const holding = records?.length ? selectedRecord?.holding : data.holding;
+  const awaitingSnapshot = holding?.state === 'pending';
+  const closed = awaitingSnapshot ? undefined : holding ? holding.state === 'closed' : records?.length ? true : target.closedHint;
+  const observation = holding?.observation;
+  const pnl = holding?.pnlUSD, sign = decimalSign(pnl);
+  const roi = opinionCycleReturn(holding?.ratio);
   const ratioText = roi.text === '—' ? '—' : `${roi.direction === 'down' ? '-' : roi.direction === 'up' ? '+' : ''}${roi.text}`;
   const profileHref = target.kind === 'user' ? `/user?identifier=${encodeURIComponent(target.identifier)}`
     : target.kind === 'external_user' ? `/smart-money?subject_id=${encodeURIComponent(target.identifier)}`
     : `/smart-money?${new URLSearchParams({namespace: target.chain === 'solana' || target.chain === 'sol' ? 'solana' : 'evm', wallet_address: target.identifier, source_chain: target.chain === 'sol' ? 'solana' : target.chain === 'eth' ? 'ethereum' : target.chain})}`;
   const authExpired = [data.positionError, data.historyError].some((error) => error instanceof ApiError && error.code === 400000);
   const metrics = [
-    {label: '持仓市值', value: closed ? '—' : usd(data.holding?.valueUSD)},
-    {label: '持仓数量', value: closed ? '—' : data.holding?.quantity === undefined ? '—' : `${formatQuantity(data.holding.quantity)} ${target.symbol || ''}`},
+    {label: '持仓市值', value: closed ? '—' : usd(holding?.valueUSD)},
+    {label: '持仓数量', value: closed ? '—' : holding?.quantity === undefined ? '—' : `${formatQuantity(holding.quantity)} ${target.symbol || ''}`},
     {label: closed ? '已实现收益' : '总收益', value: pnl === undefined ? '—' : `${sign === 1 ? '+' : ''}${usd(pnl)}`, tone: sign === -1 ? 'text-down' : sign === 1 ? 'text-up' : ''},
     {label: '收益率', value: ratioText},
-    {label: '累计买入金额', value: usd(data.holding?.investedUSD)},
-    {label: '平均买入价', value: price(data.holding?.avgBuyPrice)},
-    {label: '平均卖出价', value: price(data.holding?.avgSellPrice)},
-    {label: '当前价格', value: closed ? '—' : price(data.holding?.currentPrice)},
+    {label: '累计买入金额', value: usd(holding?.investedUSD)},
+    {label: '平均买入价', value: price(holding?.avgBuyPrice)},
+    {label: '平均卖出价', value: price(holding?.avgSellPrice)},
+    {label: '当前价格', value: closed ? '—' : price(holding?.currentPrice)},
   ];
   return <div className="space-y-5">
     <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex min-w-0 items-center gap-3"><TokenAvatar chain={target.chain} address={target.address} fallbackLogo={target.logo} fallbackSymbol={target.symbol} size={36} /><div><a href={profileHref} className="break-all text-sm font-semibold hover:underline">{target.name}</a><p className="text-xs text-muted">{target.kind === 'user' ? '平台用户' : '聪明钱'} · {awaitingSnapshot ? '待回扫确认' : closed === undefined ? '状态待确认' : closed ? '已平仓' : '持仓中'}</p></div></div><button type="button" onClick={data.refresh} disabled={data.pending || data.historyPending} className="rounded-md border border-border px-3 py-2 text-xs text-accent disabled:opacity-50">刷新持仓</button></div>
@@ -59,6 +64,14 @@ function SquarePositionContent({target, bearer}: {target: SquarePositionTarget; 
       {data.unavailable ? <p role="status" className="text-sm text-muted">{data.unavailable}</p> : null}
       {data.stale ? <p role="status" className="text-sm text-down">当前持仓快照较旧，请刷新后再查看。</p> : null}
       {data.coverage && data.coverage !== 'complete' ? <p role="status" className="text-sm text-muted">持仓或交易记录覆盖不完整（{data.coverage}），缺失数值以 — 展示。</p> : null}
+      {records?.length ? <div className="space-y-2 rounded-xl border border-border p-4">
+        <label htmlFor="closed-position-record" className="block text-sm font-semibold">已平仓记录（{records.length}）</label>
+        <select id="closed-position-record" value={selectedRecord?.key ?? ''} onChange={(event) => selectRecord(event.target.value)} className="w-full rounded-md border border-border bg-surface p-2 text-sm">
+          <option value="">请选择要查看的记录</option>
+          {records.map((record, index) => <option key={record.key} value={record.key}>记录 {index + 1} · {record.at ? tradeTime(record.at) : '时间未知'}</option>)}
+        </select>
+        <p className="text-xs text-muted">指标按所选历史记录展示。下方交易历史为该币已采集交易，不代表所选记录的完整周期。</p>
+      </div> : null}
       {awaitingSnapshot || observation?.status === 'pending_source_refresh' ? <p role="status" className="text-sm text-muted">已采集到交易，正在等待持仓来源回扫更新。持仓数量、成本和盈亏以回扫结果为准。</p> : null}
       {observation ? <section aria-label="已观测交易小计" className="rounded-xl border border-border p-4">
         <h2 className="text-sm font-semibold">已观测交易</h2>
@@ -71,7 +84,7 @@ function SquarePositionContent({target, bearer}: {target: SquarePositionTarget; 
         </dl>
       </section> : null}
       <dl aria-label="持仓指标" className="grid grid-cols-2 gap-4 rounded-xl border border-border bg-surface-2/40 p-4 sm:grid-cols-4">{metrics.map((metric) => <div key={metric.label}><dt className="text-xs text-muted">{metric.label}</dt><dd className={`mt-1 break-all font-mono text-sm ${metric.tone || 'text-foreground'}`}>{metric.value}</dd></div>)}</dl>
-      {(['transferIn', 'transferOut'] as const).map((field) => decimalSign(data.holding?.[field]) === 1 ? <p key={field} className="text-sm text-muted">{field === 'transferIn' ? '外部转入' : '外部转出'}：{formatQuantity(data.holding![field]!)} {target.symbol}</p> : null)}
+      {(['transferIn', 'transferOut'] as const).map((field) => decimalSign(holding?.[field]) === 1 ? <p key={field} className="text-sm text-muted">{field === 'transferIn' ? '外部转入' : '外部转出'}：{formatQuantity(holding![field]!)} {target.symbol}</p> : null)}
     </>}
     <PriceChart chain={target.chain === 'sol' ? 'solana' : target.chain === 'eth' ? 'ethereum' : target.chain} address={target.address} />
     {target.opinionBody ? <section className="rounded-xl border border-border p-4"><h2 className="mb-2 text-sm font-semibold">作者观点</h2><p className="whitespace-pre-wrap break-words text-sm text-muted">{target.opinionBody}</p></section> : null}

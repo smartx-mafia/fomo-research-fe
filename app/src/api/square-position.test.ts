@@ -75,9 +75,27 @@ describe('Square smart-money exact position routes', () => {
     callMock.mockReset().mockResolvedValueOnce(page([], {next_cursor: 'page2'})).mockResolvedValueOnce(page([], {snapshot_id: 'changed'}));
     await expect(getSquareSmartMoneyPosition(target)).rejects.toThrow('changed');
   });
-  it('refuses ambiguous same-token closed rounds rather than choosing an arbitrary one', async () => {
-    callMock.mockResolvedValue(page([row({status: 'closed', position_id: 'round1'}), row({status: 'closed', position_id: 'round2'})]));
+  it('returns every closed source record for explicit selection instead of choosing or merging histories', async () => {
+    callMock.mockResolvedValue(page([row({status: 'closed', position_id: 'same-asset', realized_profit: '12', detail: {end_holding_at: '1792422045', avg_sold_price: '3'}}), row({status: 'closed', position_id: 'same-asset', realized_profit: '-4', detail: {end_holding_at: '1791995586', avg_sold_price: ''}})]));
+    const result = await getSquareSmartMoneyPosition(target);
+    expect(result.holding).toBeUndefined();
+    expect(result.closedRecords).toHaveLength(2);
+    expect(result.closedRecords?.[0]).toMatchObject({at: '1792422045', holding: {state: 'closed', pnlUSD: '12', avgSellPrice: '3'}});
+    expect(result.closedRecords?.[1]).toMatchObject({at: '1791995586', holding: {state: 'closed', pnlUSD: '-4', avgSellPrice: undefined}});
+    expect(result.closedRecords?.[0].key).not.toBe(result.closedRecords?.[1].key);
+  });
+  it('uses source activity time when the wire closed timestamp is zero', async () => {
+    callMock.mockResolvedValue(page([row({status: 'closed', last_active_at: '1792422045', detail: {end_holding_at: '0'}}), row({status: 'closed', last_active_at: '1791995586', detail: {end_holding_at: 0}})]));
+    const result = await getSquareSmartMoneyPosition(target);
+    expect(result.closedRecords?.map((record) => record.at)).toEqual(['1792422045', '1791995586']);
+  });
+  it('keeps ambiguous open rows rejected and gives undated closed records separate snapshot keys', async () => {
+    callMock.mockResolvedValueOnce(page([row(), row()]));
     await expect(getSquareSmartMoneyPosition(target)).rejects.toThrow('Multiple position rounds');
+    callMock.mockResolvedValue(page([row({status: 'closed'}), row({status: 'closed'})]));
+    const result = await getSquareSmartMoneyPosition(target);
+    expect(result.closedRecords?.[0].at).toBeUndefined();
+    expect(result.closedRecords?.[0].key).not.toBe(result.closedRecords?.[1].key);
   });
   it('fails explicitly when the selected token history exceeds five pages', async () => {
     callMock.mockImplementation(async () => page([], {next_cursor: `page${callMock.mock.calls.length}`}));

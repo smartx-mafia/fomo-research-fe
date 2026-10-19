@@ -93,6 +93,19 @@ it.each(['pending', 'open'])('polls only the opened %s position while its source
   expect(history).toHaveBeenCalledTimes(1);
   view.unmount();
 });
+it('keeps rescan polling for selectable closed records without choosing one implicitly', async () => {
+  vi.useFakeTimers();
+  snapshot.mockResolvedValueOnce({closedRecords: [{key: 'old', holding: {state: 'closed', observation: {status: 'pending_source_refresh'}}}], stale: false})
+    .mockResolvedValue({closedRecords: [{key: 'new', holding: {state: 'closed', observation: {status: 'source_reported'}}}], stale: false});
+  const view = mount({...target, kind: 'external_user', identifier: 'subject:3', cycleKey: undefined});
+  await act(async () => {await vi.advanceTimersByTimeAsync(1);});
+  expect(screen.getByTestId('result').textContent).not.toContain('当前已采集快照中没有');
+  await act(async () => {await vi.advanceTimersByTimeAsync(10_000);});
+  expect(snapshot).toHaveBeenCalledTimes(2);
+  await act(async () => {await vi.advanceTimersByTimeAsync(30_000);});
+  expect(snapshot).toHaveBeenCalledTimes(2);
+  view.unmount();
+});
 it('stops a pending position polling when the modal unmounts', async () => {
   vi.useFakeTimers();
   snapshot.mockResolvedValue({holding: {state: 'pending', observation: {status: 'pending_source_refresh'}}, stale: false});

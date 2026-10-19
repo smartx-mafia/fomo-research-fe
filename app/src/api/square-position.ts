@@ -17,7 +17,8 @@ export type SquarePositionTrade = {
   event: string; at?: number | string; txHash?: string; chain?: string; wallet?: string;
   amountUSD?: string; priceUSD?: string; quantity?: string;
 };
-export type SquareSmartMoneySnapshot = {holding?: SquareHolding; coverage?: string; stale: boolean};
+export type SquareClosedRecord = {key: string; at?: string | number; holding: SquareHolding};
+export type SquareSmartMoneySnapshot = {holding?: SquareHolding; closedRecords?: SquareClosedRecord[]; coverage?: string; stale: boolean};
 export type SquarePositionTrades = {list: SquarePositionTrade[]; coverage?: string};
 const record = (value: unknown): Record<string, unknown> => value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
 const text = (value: unknown): string | undefined => typeof value === 'string' && value !== '' ? value : undefined;
@@ -76,29 +77,50 @@ export async function getSquareSmartMoneyPosition(target: SquarePositionTarget, 
   });
   if (matches.some((row) => !['open', 'closed', 'pending'].includes(String(row.status)))) throw new Error('Position state is invalid.');
   let holding: SquareHolding | undefined;
-  // 外部普通交易没有可靠轮次键，按契约状态优先级匹配；同状态多轮绝不任取。
+  let closedRecords: SquareClosedRecord[] | undefined;
+  // 外部成交没有可靠轮次键。保留状态优先级；多条已平仓来源记录由用户明确选择。
   for (const state of ['open', 'closed', 'pending'] as const) {
     const candidates = matches.filter((position) => position.status === state);
-    if (candidates.length > 1) throw new Error('Multiple position rounds match this asset. A specific round is required.');
+    if (candidates.length > 1) {
+      if (state !== 'closed') throw new Error('Multiple position rounds match this asset. A specific round is required.');
+      closedRecords = candidates.map((row, index) => {
+        const holding = holdingFromPage(row, state);
+        const at = positiveRecordTime(record(row.detail).end_holding_at) ?? positiveRecordTime(row.last_active_at);
+        // position_id 可能只标资产；把本次快照和行值纳入选择键，刷新后不能串到另一条记录。
+        return {key: JSON.stringify([snapshotID, text(row.position_id), at, index, holding]), at, holding};
+      });
+      break;
+    }
     const row = candidates[0];
     if (!row) continue;
-    const detail = record(row.detail);
-    const itemObservation = record(row.observation);
-    const observed = text(itemObservation.status) ? itemObservation : record(detail.observation);
-    const observation = text(observed.status) ? {status: text(observed.status),
-      boughtQuantity: decimal(observed.bought_amount), boughtUSD: decimal(observed.bought_usd),
-      soldQuantity: decimal(observed.sold_amount), soldUSD: decimal(observed.sold_usd), coverage: text(observed.coverage)} : undefined;
-    if (state === 'pending') {holding = {state, observation}; break;}
-    holding = {state, observation, quantity: state === 'open' ? decimal(row.balance) : undefined,
-      valueUSD: state === 'open' ? decimal(row.usd_value) : undefined,
-      currentPrice: state === 'open' ? decimal(row.price) : undefined,
-      pnlUSD: decimal(state === 'closed' ? row.realized_profit : row.total_profit),
-      ratio: decimal(state === 'closed' ? row.realized_profit_pnl : row.total_profit_pnl),
-      investedUSD: decimal(row.history_bought_cost), avgBuyPrice: decimal(detail.avg_bought_price), avgSellPrice: decimal(detail.avg_sold_price),
-      transferIn: decimal(detail.transfer_in_quantity), transferOut: decimal(detail.transfer_out_quantity)};
+    holding = holdingFromPage(row, state);
     break;
   }
-  return {holding, coverage: coverages.find((value) => value !== 'complete') || coverages[0], stale};
+  return {holding, closedRecords, coverage: coverages.find((value) => value !== 'complete') || coverages[0], stale};
+}
+
+
+function positiveRecordTime(value: unknown): string | number | undefined {
+  if (typeof value === 'string' && /^\d{1,19}$/.test(value) && BigInt(value) > 0n) return value;
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value > 0) return value;
+  return undefined;
+}
+
+function holdingFromPage(row: Record<string, unknown>, state: SquareHolding['state']): SquareHolding {
+  const detail = record(row.detail);
+  const itemObservation = record(row.observation);
+  const observed = text(itemObservation.status) ? itemObservation : record(detail.observation);
+  const observation = text(observed.status) ? {status: text(observed.status),
+    boughtQuantity: decimal(observed.bought_amount), boughtUSD: decimal(observed.bought_usd),
+    soldQuantity: decimal(observed.sold_amount), soldUSD: decimal(observed.sold_usd), coverage: text(observed.coverage)} : undefined;
+  if (state === 'pending') return {state, observation};
+  return {state, observation, quantity: state === 'open' ? decimal(row.balance) : undefined,
+    valueUSD: state === 'open' ? decimal(row.usd_value) : undefined,
+    currentPrice: state === 'open' ? decimal(row.price) : undefined,
+    pnlUSD: decimal(state === 'closed' ? row.realized_profit : row.total_profit),
+    ratio: decimal(state === 'closed' ? row.realized_profit_pnl : row.total_profit_pnl),
+    investedUSD: decimal(row.history_bought_cost), avgBuyPrice: decimal(detail.avg_bought_price), avgSellPrice: decimal(detail.avg_sold_price),
+    transferIn: decimal(detail.transfer_in_quantity), transferOut: decimal(detail.transfer_out_quantity)};
 }
 
 /** Single-position facts are not paginated or deduplicated by transaction hash:

@@ -43,7 +43,7 @@ export function useSquarePositionData(target: SquarePositionTarget, bearer?: str
   const snapshot = useSWR(positionsEnabled ? ['square-holder-snapshot', ...key] : null,
     () => read((signal) => getSquareSmartMoneyPosition(target, signal)), {
       ...config,
-      refreshInterval: (value) => value?.holding?.state === 'pending' || value?.holding?.observation?.status === 'pending_source_refresh' ? 10_000 : 0,
+      refreshInterval: (value) => value?.holding?.state === 'pending' || value?.holding?.observation?.status === 'pending_source_refresh' || value?.closedRecords?.some((record) => record.holding.observation?.status === 'pending_source_refresh') ? 10_000 : 0,
       // SWR 在缓存存在错误时暂停 refreshInterval；只为快照暂时性失败恢复，
       // 最多连续重试三次。业务拒绝、鉴权/参数错误仍由用户处理。
       shouldRetryOnError: (error) => error instanceof ApiError && (error.kind === 'network' || error.kind === 'transport' && (error.code >= 500 || error.code === 408 || error.code === 429)),
@@ -79,7 +79,7 @@ export function useSquarePositionData(target: SquarePositionTarget, bearer?: str
   const unavailable = !user && capability.data?.ready === false ? '持仓数据暂不可用。'
 
     : user && !pending && !positionError && !cycleKey ? target.closedHint === true ? '这条历史持仓未提供周期标识，暂时无法读取该轮详情。' : '作者当前没有可用的该代币持仓周期。'
-    : !user && snapshot.data && !holding ? '当前已采集快照中没有该代币持仓。' : undefined;
+    : !user && snapshot.data && !holding && !snapshot.data.closedRecords?.length ? '当前已采集快照中没有该代币持仓。' : undefined;
   const refresh = () => {
     cancelSnapshotRetry();
     const queries = user ? [current, detail] : [capability, snapshot, history];
@@ -90,7 +90,7 @@ export function useSquarePositionData(target: SquarePositionTarget, bearer?: str
   };
   const coverages = [history.data?.coverage, snapshot.data?.coverage].filter((value): value is string => Boolean(value));
   const incomplete = [...new Set(coverages.filter((value) => value !== 'complete'))];
-  return {holding, trades, pending, historyPending: user ? pending : history.isLoading, positionError, historyError, unavailable,
+  return {holding, closedRecords: snapshot.data?.closedRecords, trades, pending, historyPending: user ? pending : history.isLoading, positionError, historyError, unavailable,
     coverage: user ? detail.data?.completeness : incomplete.length ? incomplete.join(' / ') : coverages[0],
     stale: snapshot.data?.stale, refresh};
 }

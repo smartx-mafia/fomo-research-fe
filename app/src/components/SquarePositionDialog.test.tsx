@@ -49,3 +49,26 @@ it('labels a provisional smart-money position as awaiting a rescan and displays 
   expect(screen.getByLabelText('已观测交易小计').textContent).toContain('$45,400.2');
   expect(screen.getByLabelText('持仓指标').textContent).not.toContain('$');
 });
+
+it('requires a closed record selection, keeps metrics separate and invalidates a replaced snapshot', () => {
+  const records = [
+    {key: 'snapshot1:new', at: '1792422045', holding: {state: 'closed', pnlUSD: '12', avgSellPrice: '3', ratio: '0.5'}},
+    {key: 'snapshot1:old', at: '1791995586', holding: {state: 'closed', pnlUSD: '-4', avgSellPrice: undefined, ratio: '-0.25'}},
+  ];
+  const result = {pending: false, refresh: vi.fn(), closedRecords: records, trades: []};
+  data.mockReturnValue(result);
+  const props = {target: {...target, kind: 'external_user' as const, identifier: 'subject:137185'}, onClose: () => {}};
+  const view = render(<SquarePositionDialog {...props} />);
+  const selector = screen.getByLabelText('已平仓记录（2）');
+  expect(screen.getByLabelText('持仓指标').textContent).not.toContain('$');
+  fireEvent.change(selector, {target: {value: records[0].key}});
+  expect(screen.getByLabelText('持仓指标').textContent).toContain('+$12');
+  expect(screen.getByLabelText('持仓指标').textContent).toContain('$3');
+  fireEvent.change(selector, {target: {value: records[1].key}});
+  expect(screen.getByLabelText('持仓指标').textContent).toContain('-$4');
+  expect(screen.getByLabelText('持仓指标').textContent).not.toContain('$3');
+  data.mockReturnValue({...result, closedRecords: records.map((record) => ({...record, key: record.key.replace('snapshot1', 'snapshot2')}))});
+  view.rerender(<SquarePositionDialog {...props} />);
+  expect(screen.getByLabelText('持仓指标').textContent).not.toContain('$');
+  expect((screen.getByLabelText('已平仓记录（2）') as HTMLSelectElement).value).toBe('');
+});
