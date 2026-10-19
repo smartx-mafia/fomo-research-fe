@@ -8,6 +8,7 @@ export type SquarePositionObservation = {
 };
 export type SquareHolding = {
   state: 'open' | 'closed' | 'pending';
+  buyAmountScope?: 'history' | 'record';
   observation?: SquarePositionObservation;
   quantity?: string; valueUSD?: string; pnlUSD?: string; ratio?: string;
   investedUSD?: string; avgBuyPrice?: string; avgSellPrice?: string; currentPrice?: string;
@@ -52,9 +53,11 @@ export async function getSquareSmartMoneyPosition(target: SquarePositionTarget, 
   const coverages: string[] = [];
   let snapshotID: string | undefined;
   let stale = false;
+  let buyAmountScope: 'history' | 'record' = 'history';
   for (let page = 0; page < 5; page++) {
     const {data} = await call<unknown>(`/v2/smartmoney/positions/page?${query}`, {signal, preserveInt64Fields: ['total', 'last_active_at', 'snapshot_at', 'first_observed_at', 'last_observed_at', 'start_holding_at', 'end_holding_at']});
     const raw = record(data), meta = record(raw.meta);
+    if (page === 0 && meta.source === 'fomo' && text(meta.calculation_version)?.startsWith('fomo-')) buyAmountScope = 'record';
     if (!Array.isArray(raw.list)) throw new Error('Position page list is missing.');
     if (raw.list.length > 100) throw new Error('Position page exceeds the requested limit.');
     const revision = text(raw.snapshot_id);
@@ -84,7 +87,7 @@ export async function getSquareSmartMoneyPosition(target: SquarePositionTarget, 
     if (candidates.length > 1) {
       if (state !== 'closed') throw new Error('Multiple position rounds match this asset. A specific round is required.');
       closedRecords = candidates.map((row, index) => {
-        const holding = holdingFromPage(row, state);
+        const holding = holdingFromPage(row, state, buyAmountScope);
         const at = positiveRecordTime(record(row.detail).end_holding_at) ?? positiveRecordTime(row.last_active_at);
         // position_id 可能只标资产；把本次快照和行值纳入选择键，刷新后不能串到另一条记录。
         return {key: JSON.stringify([snapshotID, text(row.position_id), at, index, holding]), at, holding};
@@ -93,7 +96,7 @@ export async function getSquareSmartMoneyPosition(target: SquarePositionTarget, 
     }
     const row = candidates[0];
     if (!row) continue;
-    holding = holdingFromPage(row, state);
+    holding = holdingFromPage(row, state, buyAmountScope);
     break;
   }
   return {holding, closedRecords, coverage: coverages.find((value) => value !== 'complete') || coverages[0], stale};
@@ -106,7 +109,7 @@ function positiveRecordTime(value: unknown): string | number | undefined {
   return undefined;
 }
 
-function holdingFromPage(row: Record<string, unknown>, state: SquareHolding['state']): SquareHolding {
+function holdingFromPage(row: Record<string, unknown>, state: SquareHolding['state'], buyAmountScope: 'history' | 'record'): SquareHolding {
   const detail = record(row.detail);
   const itemObservation = record(row.observation);
   const observed = text(itemObservation.status) ? itemObservation : record(detail.observation);
@@ -119,7 +122,7 @@ function holdingFromPage(row: Record<string, unknown>, state: SquareHolding['sta
     currentPrice: state === 'open' ? decimal(row.price) : undefined,
     pnlUSD: decimal(state === 'closed' ? row.realized_profit : row.total_profit),
     ratio: decimal(state === 'closed' ? row.realized_profit_pnl : row.total_profit_pnl),
-    investedUSD: decimal(row.history_bought_cost), avgBuyPrice: decimal(detail.avg_bought_price), avgSellPrice: decimal(detail.avg_sold_price),
+    investedUSD: decimal(buyAmountScope === 'record' ? detail.round_bought_amount : row.history_bought_cost), buyAmountScope, avgBuyPrice: decimal(detail.avg_bought_price), avgSellPrice: decimal(detail.avg_sold_price),
     transferIn: decimal(detail.transfer_in_quantity), transferOut: decimal(detail.transfer_out_quantity)};
 }
 

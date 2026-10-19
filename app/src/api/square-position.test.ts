@@ -108,3 +108,19 @@ describe('Square smart-money exact position routes', () => {
     expect((await getSquarePositionCapability()).ready).toBe(true);
   });
 });
+
+it.each(['20', '0', ''])('keeps FOMO pure record buys %s separate from transfer-inclusive cost', async (amount) => {
+  callMock.mockResolvedValue(page([row({history_bought_cost: '900', detail: {round_bought_amount: amount, transfer_in_amount: '880'}})], {meta: {source: 'fomo', calculation_version: 'fomo-profile-ledger-v1'}}));
+  expect((await getSquareSmartMoneyPosition(target)).holding).toMatchObject({investedUSD: amount || undefined, buyAmountScope: 'record'});
+});
+it('keeps Codex lifetime buys when the identity originated from FOMO', async () => {
+  callMock.mockResolvedValue(page([row({history_bought_cost: '900', detail: {round_bought_amount: ''}})], {meta: {source: 'fomo', calculation_version: 'codex-realized+own-unrealized-v3'}}));
+  expect((await getSquareSmartMoneyPosition(target)).holding).toMatchObject({investedUSD: '900', buyAmountScope: 'history'});
+});
+
+it('keeps each FOMO windows closed record pure buy amount separate', async () => {
+  callMock.mockResolvedValue(page([row({status: 'closed', history_bought_cost: '900', detail: {round_bought_amount: '20'}}), row({status: 'closed', history_bought_cost: '700', detail: {round_bought_amount: '0'}})], {meta: {source: 'fomo', calculation_version: 'fomo-profile-windows-v1'}}));
+  const result = await getSquareSmartMoneyPosition(target);
+  expect(result.holding).toBeUndefined();
+  expect(result.closedRecords?.map((record) => [record.holding.investedUSD, record.holding.buyAmountScope])).toEqual([['20', 'record'], ['0', 'record']]);
+});

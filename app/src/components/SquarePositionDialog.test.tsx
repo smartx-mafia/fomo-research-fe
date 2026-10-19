@@ -72,3 +72,11 @@ it('requires a closed record selection, keeps metrics separate and invalidates a
   expect(screen.getByLabelText('持仓指标').textContent).not.toContain('$');
   expect((screen.getByLabelText('已平仓记录（2）') as HTMLSelectElement).value).toBe('');
 });
+
+it('labels record-scope pure buys without presenting transfer-inclusive cost as cumulative buys', () => {
+  data.mockReturnValue({pending: false, refresh: vi.fn(), holding: {state: 'closed', investedUSD: '20', buyAmountScope: 'record', transferIn: '8'}, trades: []});
+  render(<SquarePositionDialog target={target} onClose={() => {}} />);
+  expect(screen.getByText('记录买入金额')).toBeTruthy();
+  expect(screen.queryByText('累计买入金额')).toBeNull();
+  expect(screen.getByLabelText('持仓指标').textContent).toContain('$20');
+});

@@ -66,7 +66,7 @@ export function useSquarePositionData(target: SquarePositionTarget, bearer?: str
     state: detail.data.status, quantity: detail.data.status === 'open' ? formatBaseUnitsExact(position.shares_raw, position.decimals) : undefined,
     valueUSD: position.market_value_usd, currentPrice: position.price_usd,
     pnlUSD: detail.data.status === 'closed' ? position.realized_pnl_usd : position.total_pnl_usd,
-    ratio: position.pnl_ratio, investedUSD: position.buy_value_usd,
+    ratio: position.pnl_ratio, investedUSD: position.buy_value_usd, buyAmountScope: 'record',
     avgBuyPrice: position.avg_buy_price_usd, avgSellPrice: position.avg_sell_price_usd,
   } : snapshot.data?.holding;
   const trades: SquarePositionTrade[] | undefined = detail.data ? detail.data.trades.map((trade) => ({

@@ -51,7 +51,7 @@ function SquarePositionContent({target, bearer}: {target: SquarePositionTarget; 
     {label: '持仓数量', value: closed ? '—' : holding?.quantity === undefined ? '—' : `${formatQuantity(holding.quantity)} ${target.symbol || ''}`},
     {label: closed ? '已实现收益' : '总收益', value: pnl === undefined ? '—' : `${sign === 1 ? '+' : ''}${usd(pnl)}`, tone: sign === -1 ? 'text-down' : sign === 1 ? 'text-up' : ''},
     {label: '收益率', value: ratioText},
-    {label: '累计买入金额', value: usd(holding?.investedUSD)},
+    {label: holding?.buyAmountScope === 'record' ? '记录买入金额' : '累计买入金额', value: usd(holding?.investedUSD)},
     {label: '平均买入价', value: price(holding?.avgBuyPrice)},
     {label: '平均卖出价', value: price(holding?.avgSellPrice)},
     {label: '当前价格', value: closed ? '—' : price(holding?.currentPrice)},
