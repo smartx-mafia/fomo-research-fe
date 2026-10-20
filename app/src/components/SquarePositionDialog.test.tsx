@@ -80,3 +80,37 @@ it('labels record-scope pure buys without presenting transfer-inclusive cost as 
   expect(screen.queryByText('累计买入金额')).toBeNull();
   expect(screen.getByLabelText('持仓指标').textContent).toContain('$20');
 });
+
+const tcgObservation = {status: 'pending_source_refresh', buyCount: 3, sellCount: 2, firstObservedAt: '1792476282', lastObservedAt: '1792491982', metrics: {
+  avg_sold_price: {value: '0.003957780340556271', status: 'available'},
+  avg_bought_price: {value: '0.004290928769405355', status: 'available'},
+  sold_usd: {value: '9999.989938', status: 'available'}, bought_usd: {value: '20000.01851945', status: 'available'},
+  cash_flow_difference: {value: '-10000.02858145', status: 'available'},
+}};
+it('shows TCG observed average sell with its scope when the formal source has none', () => {
+  data.mockReturnValue({pending: false, refresh: vi.fn(), holding: {state: 'open', pnlUSD: '-1370.90774356', observation: tcgObservation}, trades: []});
+  render(<SquarePositionDialog target={{...target, kind: 'external_user', identifier: 'subject:180'}} onClose={() => {}} />);
+  expect(screen.getByLabelText('持仓指标').textContent).toContain('平均卖出价（已记录交易）');
+  expect(screen.getByLabelText('持仓指标').textContent).toContain('0.00395778');
+  expect(screen.getByLabelText('已观测交易小计').textContent).toContain('已记录平均卖出价');
+  expect(screen.getByLabelText('已观测交易小计').textContent).toContain('卖出 2 笔');
+  expect(screen.getByLabelText('持仓指标').textContent).not.toContain('10,000.028');
+});
+it('prefers the formal source average and never fills a closed record from all-token observations', () => {
+  data.mockReturnValue({pending: false, refresh: vi.fn(), holding: {state: 'open', avgSellPrice: '0', observation: tcgObservation}, trades: []});
+  const props = {target: {...target, kind: 'external_user' as const, identifier: 'subject:180'}, onClose: () => {}};
+  const view = render(<SquarePositionDialog {...props} />);
+  expect(screen.getByLabelText('持仓指标').textContent).not.toContain('平均卖出价（已记录交易）');
+  expect(screen.getByLabelText('持仓指标').textContent).not.toContain('0.00395778');
+  data.mockReturnValue({pending: false, refresh: vi.fn(), holding: {state: 'closed', observation: tcgObservation}, trades: []});
+  view.rerender(<SquarePositionDialog {...props} />);
+  expect(screen.getByLabelText('持仓指标').textContent).not.toContain('0.00395778');
+});
+it('preserves unknown metric status instead of using old totals or showing zero', () => {
+  data.mockReturnValue({pending: false, refresh: vi.fn(), holding: {state: 'pending', observation: {
+    ...tcgObservation, boughtUSD: '987654321', metrics: {bought_usd: {status: 'unavailable'}, avg_sold_price: {status: 'truncated'}},
+  }}, trades: []});
+  render(<SquarePositionDialog target={{...target, kind: 'external_user', identifier: 'subject:180'}} onClose={() => {}} />);
+  expect(screen.getByLabelText('已观测交易小计').textContent).not.toContain('987,654,321');
+  expect(screen.getByLabelText('持仓指标').textContent).not.toContain('$0');
+});

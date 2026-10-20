@@ -124,3 +124,34 @@ it('keeps each FOMO windows closed record pure buy amount separate', async () =>
   expect(result.holding).toBeUndefined();
   expect(result.closedRecords?.map((record) => [record.holding.investedUSD, record.holding.buyAmountScope])).toEqual([['20', 'record'], ['0', 'record']]);
 });
+
+it('preserves independently available observed sell average without inventing a formal source average', async () => {
+  callMock.mockResolvedValue(page([row({detail: {avg_sold_price: ''}, observation: {
+    status: 'pending_source_refresh', sold_amount: '2526666.231455', sold_usd: '9999.989938', buy_count: 3, sell_count: 2,
+    first_observed_at: '1792476282', last_observed_at: '1792491982', metrics: {
+      avg_sold_price: {value: '0.003957780340556271', status: 'available', reason: ''},
+      bought_usd: {value: '0', status: 'available', reason: ''},
+      sold_usd: {value: '9999.989938', status: 'available', reason: ''},
+      avg_bought_price: {value: '', status: 'unavailable', reason: 'trade_value_missing'},
+    },
+  }})]));
+  const result = await getSquareSmartMoneyPosition(target);
+  expect(result.holding?.avgSellPrice).toBeUndefined();
+  expect(result.holding?.observation).toMatchObject({buyCount: 3, sellCount: 2,
+    firstObservedAt: '1792476282', lastObservedAt: '1792491982', metrics: {
+      avg_sold_price: {value: '0.003957780340556271', status: 'available'},
+      bought_usd: {value: '0', status: 'available'}, avg_bought_price: {status: 'unavailable'},
+    }});
+});
+
+it('does not replace an unavailable new metric with legacy observed totals or malformed averages', async () => {
+  callMock.mockResolvedValue(page([row({observation: {status: 'pending_source_refresh', bought_usd: '999', metrics: {
+    bought_usd: {value: '999', status: 'unavailable'}, avg_bought_price: {value: 'NaN', status: 'available'},
+    avg_sold_price: {value: '0', status: 'available'},
+  }}})]));
+  const result = await getSquareSmartMoneyPosition(target);
+  expect(result.holding?.observation).toMatchObject({metrics: {
+    bought_usd: {value: undefined, status: 'unavailable'}, avg_bought_price: {value: undefined, status: 'unavailable'},
+    avg_sold_price: {value: '0', status: 'available'},
+  }});
+});

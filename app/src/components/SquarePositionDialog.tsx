@@ -39,6 +39,13 @@ function SquarePositionContent({target, bearer}: {target: SquarePositionTarget; 
   const awaitingSnapshot = holding?.state === 'pending';
   const closed = awaitingSnapshot ? undefined : holding ? holding.state === 'closed' : records?.length ? true : target.closedHint;
   const observation = holding?.observation;
+  const observedValue = (key: string, legacy?: string) => observation?.metrics
+    ? observation.metrics[key]?.status === 'available' ? observation.metrics[key].value : undefined
+    : legacy;
+  const observedBuyPrice = observedValue('avg_bought_price'), observedSellPrice = observedValue('avg_sold_price');
+  // 只能在非历史仓位使用明确标注的观察均价；正式零值仍优先。
+  const buyFromObservation = !closed && holding?.avgBuyPrice === undefined && observedBuyPrice !== undefined;
+  const sellFromObservation = !closed && holding?.avgSellPrice === undefined && observedSellPrice !== undefined;
   const pnl = holding?.pnlUSD, sign = decimalSign(pnl);
   const roi = opinionCycleReturn(holding?.ratio);
   const ratioText = roi.text === '—' ? '—' : `${roi.direction === 'down' ? '-' : roi.direction === 'up' ? '+' : ''}${roi.text}`;
@@ -52,8 +59,8 @@ function SquarePositionContent({target, bearer}: {target: SquarePositionTarget; 
     {label: closed ? '已实现收益' : '总收益', value: pnl === undefined ? '—' : `${sign === 1 ? '+' : ''}${usd(pnl)}`, tone: sign === -1 ? 'text-down' : sign === 1 ? 'text-up' : ''},
     {label: '收益率', value: ratioText},
     {label: holding?.buyAmountScope === 'record' ? '记录买入金额' : '累计买入金额', value: usd(holding?.investedUSD)},
-    {label: '平均买入价', value: price(holding?.avgBuyPrice)},
-    {label: '平均卖出价', value: price(holding?.avgSellPrice)},
+    {label: buyFromObservation ? '平均买入价（已记录交易）' : '平均买入价', value: price(buyFromObservation ? observedBuyPrice : holding?.avgBuyPrice)},
+    {label: sellFromObservation ? '平均卖出价（已记录交易）' : '平均卖出价', value: price(sellFromObservation ? observedSellPrice : holding?.avgSellPrice)},
     {label: '当前价格', value: closed ? '—' : price(holding?.currentPrice)},
   ];
   return <div className="space-y-5">
@@ -75,13 +82,20 @@ function SquarePositionContent({target, bearer}: {target: SquarePositionTarget; 
       {awaitingSnapshot || observation?.status === 'pending_source_refresh' ? <p role="status" className="text-sm text-muted">已采集到交易，正在等待持仓来源回扫更新。持仓数量、成本和盈亏以回扫结果为准。</p> : null}
       {observation ? <section aria-label="已观测交易小计" className="rounded-xl border border-border p-4">
         <h2 className="text-sm font-semibold">已观测交易</h2>
-        <p className="mt-1 text-xs text-muted">仅汇总已采集的买卖，不代表完整历史累计；转账不计入，未知金额显示 —。</p>
+        <p className="mt-1 text-xs text-muted">仅汇总该币已采集的买卖，不代表完整历史累计或所选历史仓位；转账不计入，未知金额显示 —。买卖收支差不等于持仓收益。</p>
         <dl className="mt-3 grid grid-cols-2 gap-4">
-          <div><dt className="text-xs text-muted">已观测买入金额</dt><dd>{usd(observation.boughtUSD)}</dd></div>
-          <div><dt className="text-xs text-muted">已观测卖出金额</dt><dd>{usd(observation.soldUSD)}</dd></div>
-          <div><dt className="text-xs text-muted">已观测买入数量</dt><dd>{observation.boughtQuantity === undefined ? '—' : formatQuantity(observation.boughtQuantity)}</dd></div>
-          <div><dt className="text-xs text-muted">已观测卖出数量</dt><dd>{observation.soldQuantity === undefined ? '—' : formatQuantity(observation.soldQuantity)}</dd></div>
+          <div><dt className="text-xs text-muted">已观测买入金额</dt><dd className="break-all font-mono text-sm">{usd(observedValue('bought_usd', observation.boughtUSD))}</dd></div>
+          <div><dt className="text-xs text-muted">已观测卖出金额</dt><dd className="break-all font-mono text-sm">{usd(observedValue('sold_usd', observation.soldUSD))}</dd></div>
+          <div><dt className="text-xs text-muted">已观测买入数量</dt><dd className="break-all font-mono text-sm">{observedValue('bought_amount', observation.boughtQuantity) === undefined ? '—' : formatQuantity(observedValue('bought_amount', observation.boughtQuantity)!)}</dd></div>
+          <div><dt className="text-xs text-muted">已观测卖出数量</dt><dd className="break-all font-mono text-sm">{observedValue('sold_amount', observation.soldQuantity) === undefined ? '—' : formatQuantity(observedValue('sold_amount', observation.soldQuantity)!)}</dd></div>
+          {observation.metrics ? <>
+            <div><dt className="text-xs text-muted">已记录平均买入价</dt><dd className="break-all font-mono text-sm">{price(observedBuyPrice)}</dd></div>
+            <div><dt className="text-xs text-muted">已记录平均卖出价</dt><dd className="break-all font-mono text-sm">{price(observedSellPrice)}</dd></div>
+            <div><dt className="text-xs text-muted">买卖收支差（非收益）</dt><dd className="break-all font-mono text-sm">{usd(observedValue('cash_flow_difference'))}</dd></div>
+          </> : null}
         </dl>
+        {observation.buyCount !== undefined || observation.sellCount !== undefined ? <p className="mt-3 text-xs text-muted">买入 {observation.buyCount ?? '—'} 笔 · 卖出 {observation.sellCount ?? '—'} 笔</p> : null}
+        {observation.firstObservedAt || observation.lastObservedAt ? <p className="mt-1 text-xs text-muted">记录范围：{tradeTime(observation.firstObservedAt)} 至 {tradeTime(observation.lastObservedAt)}</p> : null}
       </section> : null}
       <dl aria-label="持仓指标" className="grid grid-cols-2 gap-4 rounded-xl border border-border bg-surface-2/40 p-4 sm:grid-cols-4">{metrics.map((metric) => <div key={metric.label}><dt className="text-xs text-muted">{metric.label}</dt><dd className={`mt-1 break-all font-mono text-sm ${metric.tone || 'text-foreground'}`}>{metric.value}</dd></div>)}</dl>
       {(['transferIn', 'transferOut'] as const).map((field) => decimalSign(holding?.[field]) === 1 ? <p key={field} className="text-sm text-muted">{field === 'transferIn' ? '外部转入' : '外部转出'}：{formatQuantity(holding![field]!)} {target.symbol}</p> : null)}
