@@ -36,7 +36,8 @@ function SquarePositionContent({target, bearer}: {target: SquarePositionTarget; 
   const records = data.closedRecords;
   const selectedRecord = records?.find((record) => record.key === selectedRecordKey);
   const holding = records?.length ? selectedRecord?.holding : data.holding;
-  const awaitingSnapshot = holding?.state === 'pending';
+  const sourceStateUnconfirmed = holding?.state === 'open' && holding.financeStatus === 'unavailable' && holding.quantity === undefined;
+  const awaitingSnapshot = holding?.state === 'pending' || sourceStateUnconfirmed;
   const closed = awaitingSnapshot ? undefined : holding ? holding.state === 'closed' : records?.length ? true : target.closedHint;
   const observation = holding?.observation;
   const observedValue = (key: string, legacy?: string) => observation?.metrics
@@ -64,7 +65,7 @@ function SquarePositionContent({target, bearer}: {target: SquarePositionTarget; 
     {label: '当前价格', value: closed ? '—' : price(holding?.currentPrice)},
   ];
   return <div className="space-y-5">
-    <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex min-w-0 items-center gap-3"><TokenAvatar chain={target.chain} address={target.address} fallbackLogo={target.logo} fallbackSymbol={target.symbol} size={36} /><div><a href={profileHref} className="break-all text-sm font-semibold hover:underline">{target.name}</a><p className="text-xs text-muted">{target.kind === 'user' ? '平台用户' : '聪明钱'} · {awaitingSnapshot ? '待回扫确认' : closed === undefined ? '状态待确认' : closed ? '已平仓' : '持仓中'}</p></div></div><button type="button" onClick={data.refresh} disabled={data.pending || data.historyPending} className="rounded-md border border-border px-3 py-2 text-xs text-accent disabled:opacity-50">刷新持仓</button></div>
+    <div className="flex flex-wrap items-center justify-between gap-3"><div className="flex min-w-0 items-center gap-3"><TokenAvatar chain={target.chain} address={target.address} fallbackLogo={target.logo} fallbackSymbol={target.symbol} size={36} /><div><a href={profileHref} className="break-all text-sm font-semibold hover:underline">{target.name}</a><p className="text-xs text-muted">{target.kind === 'user' ? '平台用户' : '聪明钱'} · {sourceStateUnconfirmed ? '状态待确认' : awaitingSnapshot ? '待回扫确认' : closed === undefined ? '状态待确认' : closed ? '已平仓' : '持仓中'}</p></div></div><button type="button" onClick={data.refresh} disabled={data.pending || data.historyPending} className="rounded-md border border-border px-3 py-2 text-xs text-accent disabled:opacity-50">刷新持仓</button></div>
     {authExpired ? <p role="alert" className="text-sm text-muted">登录已过期，请<a href="/login" className="text-accent underline">重新登录</a>后查看。</p> : <>
       {data.pending ? <p role="status" className="text-sm text-muted">正在读取作者持仓…</p> : null}
       {data.positionError ? <PositionError error={data.positionError} retry={data.refresh} /> : null}
@@ -79,6 +80,7 @@ function SquarePositionContent({target, bearer}: {target: SquarePositionTarget; 
         </select>
         <p className="text-xs text-muted">指标按所选历史记录展示。下方交易历史为该币已采集交易，不代表所选记录的完整周期。</p>
       </div> : null}
+      {sourceStateUnconfirmed ? <p role="status" className="text-sm text-muted">上次来源记录为持仓中，当前状态、数量和收益尚未确认。来源快照时间：{tradeTime(holding?.financeAsOf)}。已记录交易均价与收支差继续单独展示。</p> : null}
       {awaitingSnapshot || observation?.status === 'pending_source_refresh' ? <p role="status" className="text-sm text-muted">已采集到交易，正在等待持仓来源回扫更新。持仓数量、成本和盈亏以回扫结果为准。</p> : null}
       {observation ? <section aria-label="已观测交易小计" className="rounded-xl border border-border p-4">
         <h2 className="text-sm font-semibold">已观测交易</h2>

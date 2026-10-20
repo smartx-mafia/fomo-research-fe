@@ -4,6 +4,7 @@ import {samePositionAsset, squareSmartMoneyChain, type SquarePositionTarget} fro
 
 export type SquareHolding = {
   state: 'open' | 'closed' | 'pending';
+  financeStatus?: string; financeAsOf?: string;
   buyAmountScope?: 'history' | 'record';
   observation?: SquarePositionObservation;
   quantity?: string; valueUSD?: string; pnlUSD?: string; ratio?: string;
@@ -111,7 +112,7 @@ function holdingFromPage(row: Record<string, unknown>, state: SquareHolding['sta
   const observed = text(itemObservation.status) ? itemObservation : record(detail.observation);
   const observation = readPositionObservation(observed);
   if (state === 'pending') return {state, observation};
-  return {state, observation, quantity: state === 'open' ? decimal(row.balance) : undefined,
+  return {state, observation, financeStatus: text(row.finance_status), financeAsOf: text(row.finance_as_of), quantity: state === 'open' ? decimal(row.balance) : undefined,
     valueUSD: state === 'open' ? decimal(row.usd_value) : undefined,
     currentPrice: state === 'open' ? decimal(row.price) : undefined,
     pnlUSD: decimal(state === 'closed' ? row.realized_profit : row.total_profit),

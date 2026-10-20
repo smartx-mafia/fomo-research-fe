@@ -155,3 +155,8 @@ it('does not replace an unavailable new metric with legacy observed totals or ma
     avg_sold_price: {value: '0', status: 'available'},
   }});
 });
+
+it('preserves per-position unavailable finance and its original source time independently of account refresh', async () => {
+  callMock.mockResolvedValue(page([row({finance_status: 'unavailable', finance_as_of: '2026-10-20T08:49:26Z', balance: '', observation: {status: 'pending_source_refresh'}})], {meta: {as_of: '2026-10-20T11:00:00Z'}}));
+  expect((await getSquareSmartMoneyPosition(target)).holding).toMatchObject({state: 'open', quantity: undefined, financeStatus: 'unavailable', financeAsOf: '2026-10-20T08:49:26Z'});
+});

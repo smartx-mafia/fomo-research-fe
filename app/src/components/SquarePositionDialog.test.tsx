@@ -114,3 +114,18 @@ it('preserves unknown metric status instead of using old totals or showing zero'
   expect(screen.getByLabelText('已观测交易小计').textContent).not.toContain('987,654,321');
   expect(screen.getByLabelText('持仓指标').textContent).not.toContain('$0');
 });
+
+it('does not present an unavailable retained open snapshot as a confirmed current holding', () => {
+  data.mockReturnValue({pending: false, refresh: vi.fn(), holding: {state: 'open', financeStatus: 'unavailable', financeAsOf: '2026-10-20T08:49:26.827697889Z', observation: tcgObservation}, trades: []});
+  render(<SquarePositionDialog target={{...target, kind: 'external_user', identifier: 'subject:177'}} onClose={() => {}} />);
+  expect(screen.queryByText('聪明钱 · 持仓中')).toBeNull();
+  expect(screen.getByText('聪明钱 · 状态待确认')).toBeTruthy();
+  expect(screen.getByText(/上次来源记录为持仓中/)).toBeTruthy();
+  expect(screen.getByLabelText('持仓指标').textContent).toContain('平均卖出价（已记录交易）');
+  expect(screen.queryByText('聪明钱 · 已平仓')).toBeNull();
+});
+it('keeps a known holding quantity visible when only finance is unavailable', () => {
+  data.mockReturnValue({pending: false, refresh: vi.fn(), holding: {state: 'open', quantity: '3', financeStatus: 'unavailable', observation: tcgObservation}, trades: []});
+  render(<SquarePositionDialog target={{...target, kind: 'external_user', identifier: 'subject:177'}} onClose={() => {}} />);
+  expect(screen.getByText('聪明钱 · 持仓中')).toBeTruthy();
+});
