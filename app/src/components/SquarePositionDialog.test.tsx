@@ -129,3 +129,38 @@ it('keeps a known holding quantity visible when only finance is unavailable', ()
   render(<SquarePositionDialog target={{...target, kind: 'external_user', identifier: 'subject:177'}} onClose={() => {}} />);
   expect(screen.getByText('聪明钱 · 持仓中')).toBeTruthy();
 });
+
+
+it('waits for current holdings after post-close activity and switches to the reopened snapshot', () => {
+  const props = {target: {...target, kind: 'external_user' as const, identifier: 'subject:197165', cycleKey: undefined}, onClose: () => {}};
+  const observation = {status: 'pending_source_refresh', boughtQuantity: '700848.772504', soldQuantity: '613284.320155'};
+  data.mockReturnValue({pending: false, refresh: vi.fn(), holding: {state: 'closed', pnlUSD: '-192.67951272', ratio: '-0.009026556', investedUSD: '21345.85', observation}, trades: []});
+  const view = render(<SquarePositionDialog {...props} />);
+  expect(screen.queryByText('聪明钱 · 已平仓')).toBeNull();
+  expect(screen.getByText('聪明钱 · 待回扫确认')).toBeTruthy();
+  expect(screen.getByLabelText('持仓指标').textContent).not.toContain('192.68');
+  expect(screen.getByLabelText('持仓指标').textContent).not.toContain('21,345.85');
+  data.mockReturnValue({pending: false, refresh: vi.fn(), holding: {state: 'open', quantity: '87564.452349', valueUSD: '3210', pnlUSD: '0', ratio: '0', observation: {status: 'source_reported'}}, trades: []});
+  view.rerender(<SquarePositionDialog {...props} />);
+  expect(screen.getByText('聪明钱 · 持仓中')).toBeTruthy();
+  expect(screen.getByLabelText('持仓指标').textContent).toContain('87,564.452349');
+  expect(screen.getByLabelText('持仓指标').textContent).toContain('$3,210');
+  expect(screen.getByLabelText('持仓指标').textContent).toContain('$0');
+});
+it('keeps explicitly requested historical holdings visible while current activity is pending', () => {
+  data.mockReturnValue({pending: false, refresh: vi.fn(), holding: {state: 'closed', pnlUSD: '-192.67951272', observation: {status: 'pending_source_refresh'}}, trades: []});
+  render(<SquarePositionDialog target={{...target, kind: 'external_user', closedHint: true}} onClose={() => {}} />);
+  expect(screen.getByText('聪明钱 · 已平仓')).toBeTruthy();
+  expect(screen.getByLabelText('持仓指标').textContent).toContain('192.68');
+});
+
+it('does not label unselected closed history as current closure while a refresh is pending', () => {
+  data.mockReturnValue({pending: false, refresh: vi.fn(), closedRecords: [{key: 'a', holding: {state: 'closed', pnlUSD: '123', observation: {status: 'pending_source_refresh'}}}, {key: 'b', holding: {state: 'closed', pnlUSD: '456'}}], trades: []});
+  render(<SquarePositionDialog target={{...target, kind: 'external_user', cycleKey: undefined}} onClose={() => {}} />);
+  expect(screen.getByText('聪明钱 · 待回扫确认')).toBeTruthy();
+  expect(screen.getByLabelText('持仓指标').textContent).not.toContain('$123');
+  expect(screen.getByLabelText('持仓指标').textContent).not.toContain('$456');
+  fireEvent.change(screen.getByLabelText('已平仓记录（2）'), {target: {value: 'a'}});
+  expect(screen.getByText('聪明钱 · 已平仓')).toBeTruthy();
+  expect(screen.getByLabelText('持仓指标').textContent).toContain('$123');
+});

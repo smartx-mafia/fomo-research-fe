@@ -35,7 +35,10 @@ function SquarePositionContent({target, bearer}: {target: SquarePositionTarget; 
   const [selectedRecordKey, selectRecord] = useState('');
   const records = data.closedRecords;
   const selectedRecord = records?.find((record) => record.key === selectedRecordKey);
-  const holding = records?.length ? selectedRecord?.holding : data.holding;
+  const retainedHolding = records?.length ? selectedRecord?.holding : data.holding;
+  const pendingAfterClose = target.kind !== 'user' && target.closedHint !== true && !selectedRecord && (records?.length ? records.some((record) => record.holding.observation?.status === 'pending_source_refresh') : retainedHolding?.state === 'closed' && retainedHolding.observation?.status === 'pending_source_refresh');
+  // 旧清仓快照不能代表后续活动后的当前仓位；历史记录仍由明确选择保留。
+  const holding = pendingAfterClose ? {state: 'pending' as const, observation: retainedHolding?.observation} : retainedHolding;
   const sourceStateUnconfirmed = holding?.state === 'open' && holding.financeStatus === 'unavailable' && holding.quantity === undefined;
   const awaitingSnapshot = holding?.state === 'pending' || sourceStateUnconfirmed;
   const closed = awaitingSnapshot ? undefined : holding ? holding.state === 'closed' : records?.length ? true : target.closedHint;
@@ -45,8 +48,8 @@ function SquarePositionContent({target, bearer}: {target: SquarePositionTarget; 
     : legacy;
   const observedBuyPrice = observedValue('avg_bought_price'), observedSellPrice = observedValue('avg_sold_price');
   // 只能在非历史仓位使用明确标注的观察均价；正式零值仍优先。
-  const buyFromObservation = !closed && holding?.avgBuyPrice === undefined && observedBuyPrice !== undefined;
-  const sellFromObservation = !closed && holding?.avgSellPrice === undefined && observedSellPrice !== undefined;
+  const buyFromObservation = !closed && !pendingAfterClose && holding?.avgBuyPrice === undefined && observedBuyPrice !== undefined;
+  const sellFromObservation = !closed && !pendingAfterClose && holding?.avgSellPrice === undefined && observedSellPrice !== undefined;
   const pnl = holding?.pnlUSD, sign = decimalSign(pnl);
   const roi = opinionCycleReturn(holding?.ratio);
   const ratioText = roi.text === '—' ? '—' : `${roi.direction === 'down' ? '-' : roi.direction === 'up' ? '+' : ''}${roi.text}`;
@@ -81,6 +84,7 @@ function SquarePositionContent({target, bearer}: {target: SquarePositionTarget; 
         <p className="text-xs text-muted">指标按所选历史记录展示。下方交易历史为该币已采集交易，不代表所选记录的完整周期。</p>
       </div> : null}
       {sourceStateUnconfirmed ? <p role="status" className="text-sm text-muted">上次来源记录为持仓中，当前状态、数量和收益尚未确认。来源快照时间：{tradeTime(holding?.financeAsOf)}。已记录交易均价与收支差继续单独展示。</p> : null}
+      {pendingAfterClose ? <p role="status" className="text-sm text-muted">上次来源记录已平仓，但后续有新交易或修订。当前数量、市值和盈亏等待新快照确认；旧平仓收益不作为本次持仓收益。</p> : null}
       {awaitingSnapshot || observation?.status === 'pending_source_refresh' ? <p role="status" className="text-sm text-muted">已采集到交易，正在等待持仓来源回扫更新。持仓数量、成本和盈亏以回扫结果为准。</p> : null}
       {observation ? <section aria-label="已观测交易小计" className="rounded-xl border border-border p-4">
         <h2 className="text-sm font-semibold">已观测交易</h2>

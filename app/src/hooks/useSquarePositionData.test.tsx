@@ -79,7 +79,7 @@ it('does not let complete history hide partial holding coverage', async () => {
   await waitFor(() => expect(screen.getByTestId('result').textContent).toContain('"holding"'));
   expect(screen.getByTestId('result').textContent).toContain('"coverage":"partial"');
 });
-it.each(['pending', 'open'])('polls only the opened %s position while its source refresh is pending, then stops', async (state) => {
+it.each(['pending', 'open', 'closed'])('polls only the opened %s position while its source refresh is pending, then stops', async (state) => {
   vi.useFakeTimers();
   snapshot.mockResolvedValueOnce({holding: {state, observation: {status: 'pending_source_refresh'}}, stale: false})
     .mockResolvedValue({holding: {state: 'open', quantity: '5', observation: {status: 'source_reported'}}, stale: false});
