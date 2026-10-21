@@ -37,6 +37,15 @@ const risk = {
 } satisfies RiskAssessment;
 
 describe('ProviderCard', () => {
+  it('does not present an invalid provider response as a clean report', () => {
+    render(<ProviderCard source={{...source, status: 'invalid'}} risk={{...risk, items: []}} />);
+
+    expect(screen.getByText('数据无效')).toBeTruthy();
+    expect(screen.getByText('暂无有效检查结果')).toBeTruthy();
+    expect(screen.getByText('不能据此判断代币安全')).toBeTruthy();
+    expect(screen.queryByText('未报告风险项')).toBeNull();
+  });
+
   it('expands and collapses all provider risk findings', async () => {
     const user = userEvent.setup();
     render(<ProviderCard source={source} risk={risk} />);

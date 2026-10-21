@@ -38,7 +38,7 @@ function tone(status: string) {
   if (status === 'ok') return {label: '可用', classes: 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300', dot: 'bg-emerald-300'};
   if (status === 'partial') return {label: '部分可用', classes: 'border-amber-300/25 bg-amber-300/10 text-amber-200', dot: 'bg-amber-300'};
   if (status === 'pending') return {label: '等待中', classes: 'border-sky-300/25 bg-sky-300/10 text-sky-200', dot: 'bg-sky-300'};
-  return {label: status === 'error' ? '异常' : '不可用', classes: 'border-rose-300/25 bg-rose-300/10 text-rose-200', dot: 'bg-rose-300'};
+  return {label: status === 'error' ? '异常' : status === 'invalid' ? '数据无效' : '不可用', classes: 'border-rose-300/25 bg-rose-300/10 text-rose-200', dot: 'bg-rose-300'};
 }
 function gradeMeta(grade = 0) {
   if (grade >= 5) return {label: '极高风险', color: 'text-rose-300', ring: 'border-rose-400/30 bg-rose-400/10'};
@@ -88,6 +88,7 @@ export function ProviderCard({source, risk}: {source: RiskSourceStatus; risk: Ri
   const state = tone(source.status);
   const items = risk.items.filter((item) => item.displaySource === source.source);
   const visibleItems = expanded ? items : items.slice(0, 4);
+  const hasReport = source.status === 'ok' || source.status === 'partial';
   return <article className="group overflow-hidden rounded-2xl border border-white/[.08] bg-[#101513] shadow-[0_18px_50px_rgba(0,0,0,.18)] transition hover:border-emerald-300/20">
     <div className="border-b border-white/[.07] p-5">
       <div className="flex items-start justify-between gap-4">
@@ -108,7 +109,7 @@ export function ProviderCard({source, risk}: {source: RiskSourceStatus; risk: Ri
         const [title, detail] = riskItemCopy(item);
         const mappedGrade = itemGradeMeta(item.grade);
         return <li key={item.code} className="rounded-xl border border-white/[.06] bg-black/15 p-3"><div className="flex gap-2"><AlertTriangle className={`mt-0.5 h-4 w-4 shrink-0 ${item.grade >= 4 ? 'text-orange-300' : 'text-amber-200'}`} /><div className="min-w-0 flex-1"><div className="flex items-start justify-between gap-2"><p className="text-sm font-medium text-white/85">{title}</p><span title={mappedGrade.title} aria-label={mappedGrade.title} className={`shrink-0 rounded-md border px-1.5 py-0.5 font-mono text-[10px] font-semibold ${mappedGrade.classes}`}>{mappedGrade.label}</span></div><p className="mt-1 line-clamp-2 text-xs leading-5 text-white/40">{detail}</p></div></div></li>;
-      })}</ul> : <div className="flex min-h-28 flex-col items-center justify-center rounded-xl border border-dashed border-white/10 bg-black/10 text-center"><Check className="h-5 w-5 text-emerald-300/70"/><p className="mt-2 text-sm text-white/55">未报告风险项</p><p className="mt-1 text-xs text-white/30">不代表安全认证</p></div>}
+      })}</ul> : <div className="flex min-h-28 flex-col items-center justify-center rounded-xl border border-dashed border-white/10 bg-black/10 text-center">{hasReport ? <Check className="h-5 w-5 text-emerald-300/70"/> : <ShieldQuestion className="h-5 w-5 text-rose-300/70"/>}<p className="mt-2 text-sm text-white/55">{hasReport ? '未报告风险项' : '暂无有效检查结果'}</p><p className="mt-1 text-xs text-white/30">{hasReport ? '不代表安全认证' : '不能据此判断代币安全'}</p></div>}
       {items.length > 4 ? <button type="button" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)} className="mt-3 flex w-full items-center justify-center gap-1.5 rounded-lg border border-white/[.07] bg-white/[.025] px-3 py-2 text-xs text-white/50 transition hover:border-emerald-300/20 hover:bg-emerald-300/[.05] hover:text-emerald-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-300">
         {expanded ? '收起风险项' : `展开其余 ${items.length - 4} 项`}
         <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} />
