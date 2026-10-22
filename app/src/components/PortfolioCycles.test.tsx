@@ -37,10 +37,10 @@ describe('Holding cycle navigation', () => {
     expect(element.querySelector('img')?.getAttribute('src')).toBe('https://images.test/closed.png');
     expect(element.querySelectorAll('section[aria-label="Closed positions"] tbody tr')).toHaveLength(2);
     await click('Cycle trades', 0);
-    expect(control.trades).toHaveBeenLastCalledWith('A', {chain: 'solana', asset: 'MintA', cycle_key: '10'}, 'A');
+    expect(control.trades).toHaveBeenLastCalledWith('A', {chain: 'solana', asset: 'MintA', cycle_key: '10'}, 'A', expect.any(AbortSignal), {cursor: undefined});
     expect(element.textContent).not.toContain('Load more cycle trades');
     await click('Cycle trades', 2);
-    expect(control.trades).toHaveBeenLastCalledWith('A', {chain: 'solana', asset: 'MintA', cycle_key: '3'}, 'A');
+    expect(control.trades).toHaveBeenLastCalledWith('A', {chain: 'solana', asset: 'MintA', cycle_key: '3'}, 'A', expect.any(AbortSignal), {cursor: undefined});
     expect(element.querySelector('section[aria-label="Holding cycle trades"]')?.textContent).not.toContain('open-trade');
   });
   it('disables a pending current cycle but still loads closed positions', async () => {

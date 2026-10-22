@@ -2,8 +2,9 @@
 
 import {useEffect, useRef} from 'react';
 import useSWRInfinite from 'swr/infinite';
-import useSWR from 'swr';
-import {getUserClosedPositions, getUserPortfolioPosition} from '@/api/user-portfolio';
+import {useCycleActivities} from '@/hooks/useCycleActivities';
+import {PortfolioCycleActivityRow} from './PortfolioCycleActivityRow';
+import {getUserClosedPositions} from '@/api/user-portfolio';
 import {ApiError} from '@/api/envelope';
 import {PortfolioDataError, type PortfolioClosedPage, type PortfolioCycleScope} from '@/api/portfolio';
 import {TradeRow} from '@/components/PortfolioActivity';
@@ -66,19 +67,22 @@ export function ClosedPortfolioPositions({bearer, userIdentifier, historyEpoch, 
 }
 
 /** Parent keys this panel by account + chain + asset + cycle to isolate pagination. */
-export function PortfolioCycleTrades({bearer, userIdentifier, scope, onClose}: {bearer: string; userIdentifier: string; scope: PortfolioCycleScope; onClose: () => void}) {
+export function PortfolioCycleTrades({bearer, userIdentifier, scope, onClose, refreshKey}: {bearer?: string; userIdentifier: string; scope: PortfolioCycleScope; onClose: () => void; refreshKey?: unknown}) {
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {heading.current?.focus({preventScroll: true}); heading.current?.scrollIntoView?.({block: 'nearest', behavior: 'smooth'});}, []);
-  const {data, error, isLoading, isValidating, mutate} = useSWR(['user-portfolio-position', userIdentifier, bearer, scope.chain, scope.asset, scope.cycle_key],
-    () => protectedRead(bearer, () => getUserPortfolioPosition(userIdentifier, scope, bearer)), {keepPreviousData: false, shouldRetryOnError: false});
-  const rows = data?.trades ?? [];
-  const reset = () => {void mutate();};
+  const {data, error, isLoading, isValidating, reset, retry, more} = useCycleActivities(userIdentifier, scope, bearer, refreshKey);
+  const activities = data?.activities_status === 'complete';
+  const rows = activities ? [] : data?.trades ?? [];
   return <section aria-label="Holding cycle trades" className="overflow-hidden rounded-lg border border-accent/40 bg-surface">
-    <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-4"><div><h2 ref={heading} tabIndex={-1} className="font-semibold outline-none">Holding cycle trades</h2><p className="mt-1 break-all text-xs text-muted">{chainLabel(scope.chain)} · {scope.asset} · Cycle {scope.cycle_key}</p></div><div className="flex gap-4 text-xs"><button type="button" disabled={isValidating} onClick={reset} className="text-accent disabled:opacity-50">Refresh cycle</button><button type="button" onClick={onClose} className="text-muted">Close cycle trades</button></div></header>
+    <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-4"><div><h2 ref={heading} tabIndex={-1} className="font-semibold outline-none">Holding cycle activity</h2><p className="mt-1 break-all text-xs text-muted">{chainLabel(scope.chain)} · {scope.asset} · Cycle {scope.cycle_key}</p></div><div className="flex gap-4 text-xs"><button type="button" disabled={isValidating} onClick={reset} className="text-accent disabled:opacity-50">Refresh cycle</button><button type="button" onClick={onClose} className="text-muted">Close cycle trades</button></div></header>
     {data ? <div className="flex flex-wrap gap-5 border-b border-border p-4 text-xs"><span>Status: {data.status}</span><span>Total bought: {usd(data.position.buy_value_usd)}</span><span>Total sold: {usd(data.position.sell_value_usd)}</span><span>Realized PnL: {usd(data.position.realized_pnl_usd)}</span>{data.status === 'open' ? <span>Position value: {usd(data.position.market_value_usd)}</span> : null}{data.completeness && data.completeness !== 'complete' ? <span className="text-accent">Data: {data.completeness}</span> : null}</div> : null}
-    <p className="border-b border-border px-4 py-3 text-xs text-muted">Executed trades for this holding cycle, newest first. Quantity, USD value and price use actual settlement amounts; unavailable legacy values show —.</p>
-    {error ? <ReadError error={error} retry={() => void mutate()} reset={reset} /> : null}
-    {isLoading ? <p role="status" className="p-6 text-sm text-muted">Loading cycle trades…</p> : !error && rows.length === 0 ? <p className="p-6 text-sm text-muted">No trades returned for this cycle. Its ledger attribution may have changed; refresh positions and select the cycle again.</p> : null}
+    <p className="border-b border-border px-4 py-3 text-xs text-muted">Activity for this holding cycle, newest first. Transfers use reference acquisition costs; buys and sells use actual settlement values.</p>
+    {data ? <p className="px-4 py-2 text-xs text-muted">History · {activities ? data.activities?.length ?? 0 : rows.length} loaded</p> : null}
+    {error ? <ReadError error={error} retry={retry} reset={reset} /> : null}
+    {isLoading ? <p role="status" className="p-6 text-sm text-muted">Loading cycle activity…</p> : !error && rows.length === 0 && !data?.activities?.length ? <p className="p-6 text-sm text-muted">No records available for this cycle.</p> : null}
+    {data && !activities ? <p role="status" className="px-4 py-3 text-xs text-accent">Transfer records are temporarily unavailable. Showing platform trades only; activity history is incomplete.</p> : null}
+    {activities && !!data?.activities?.length ? <div className="overflow-x-auto"><table className="w-full min-w-[900px] text-left"><thead className="text-xs text-muted"><tr>{['Type', 'Quantity', 'Amount', 'Unit price', 'Time', 'Transaction'].map(label => <th key={label} className="px-3 py-2">{label}</th>)}</tr></thead><tbody>{data.activities.map(record => <PortfolioCycleActivityRow key={record.record_id} record={record} symbol={data.position.symbol} />)}</tbody></table></div> : null}
+    {activities && data?.next_activity_cursor ? <button type="button" disabled={isValidating || !!error} onClick={more} className="m-4 rounded border border-border px-3 py-2 text-xs disabled:opacity-50">{isValidating ? 'Loading…' : 'Load more activity'}</button> : null}
     {rows.length > 0 ? <div className="overflow-x-auto"><table className="w-full min-w-[1080px] text-left"><thead className="text-[11px] uppercase text-muted"><tr><th className="px-3 py-2">Token</th><th className="px-3 py-2">Side</th><th className="px-3 py-2 text-right">Execution price</th><th className="px-3 py-2 text-right">Quantity</th><th className="px-3 py-2 text-right">Trade value</th><th className="px-3 py-2">Time</th><th className="px-3 py-2">Status</th><th className="px-3 py-2">Transaction</th></tr></thead><tbody>{rows.map((trade) => <TradeRow key={trade.trade_id} trade={trade} />)}</tbody></table></div> : null}
 
   </section>;

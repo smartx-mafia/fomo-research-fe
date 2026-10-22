@@ -10,6 +10,8 @@
 import {cleanup, render, screen, waitFor, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest';
+const {sessionState, getPosition} = vi.hoisted(() => ({sessionState: {anonymous: false}, getPosition: vi.fn()}));
+vi.mock('@/api/user-portfolio', () => ({getUserPortfolioPosition: getPosition}));
 
 const {
   getUserPublicProfile,
@@ -34,17 +36,20 @@ vi.mock('@/api/social', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/api/social')>();
   return {...actual, getFollowCounts, getRelations, getKnownFollowers, followTarget, unfollowTarget, setRemark};
 });
-vi.mock('@/api/portfolio', () => ({
+vi.mock('@/api/portfolio', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/api/portfolio')>(),
   getUserPortfolio: vi.fn().mockResolvedValue({positions: [], partial_errors: []}),
   getUserPortfolioTrades: vi.fn().mockResolvedValue({trades: []}),
   getUserClosedPositions: vi.fn().mockResolvedValue({items: []}),
 }));
 vi.mock('@/session/storage', () => ({
-  useSession: () => ({jwt: 'jwt', user: {identifier: 'self-identifier'}}),
+  useSession: () => sessionState.anonymous ? undefined : ({jwt: 'jwt', user: {identifier: 'self-identifier'}}),
+  readSite: () => sessionState.anonymous ? undefined : ({jwt: 'jwt'}),
+  clearSite: vi.fn(),
 }));
 
 import {UserProfileView} from './UserProfileView';
-import {getUserPortfolio} from '@/api/portfolio';
+import {getUserPortfolio, getUserClosedPositions, type PortfolioPosition} from '@/api/portfolio';
 
 const profile = {
   identifier: 'target-identifier',
@@ -60,6 +65,9 @@ function setup() {
 }
 
 beforeEach(() => {
+  sessionState.anonymous = false;
+  getPosition.mockReset().mockResolvedValue({status: 'open', position: {}, trades: [], activities_status: 'complete', activities: []});
+  vi.mocked(getUserClosedPositions).mockReset().mockResolvedValue({items: []});
   vi.mocked(getUserPortfolio).mockReset().mockResolvedValue({positions: [], partial_errors: []});
   for (const m of [getUserPublicProfile, getFollowCounts, getRelations, getKnownFollowers, followTarget, unfollowTarget, setRemark]) m.mockReset();
   getUserPublicProfile.mockResolvedValue({data: {...profile}});
@@ -69,6 +77,43 @@ beforeEach(() => {
 });
 
 afterEach(() => cleanup());
+
+const testPosition: PortfolioPosition = {asset: {chain: 'bsc', chain_id: '56', kind: 'erc20', token_address: '0xasset'}, shares_raw: '500', opened_entry_id: '0', cycle_key: 'external:cycle', cycle_status: 'ready'};
+
+describe('User profile cycle activity', () => {
+  it.each([false, true])('opens the target user current and closed cycles (anonymous=%s)', async anonymous => {
+    sessionState.anonymous = anonymous;
+    vi.mocked(getUserPortfolio).mockResolvedValue({positions: [testPosition], partial_errors: []});
+    vi.mocked(getUserClosedPositions).mockResolvedValue({items: [{...testPosition, cycle_key: 'closed-cycle', closed_entry_id: '0', status: 'closed'}]});
+    setup();
+    await waitFor(() => expect(screen.getAllByRole('button', {name: '查看活动历史'})).toHaveLength(2));
+    await userEvent.click(screen.getAllByRole('button', {name: '查看活动历史'})[0]);
+    await waitFor(() => expect(getPosition).toHaveBeenLastCalledWith('target-identifier', {chain: 'bsc', asset: '0xasset', cycle_key: 'external:cycle'}, anonymous ? undefined : 'jwt', expect.any(AbortSignal), {cursor: undefined}));
+    expect(screen.getByRole('heading', {name: 'Holding cycle activity'})).toBeTruthy();
+    await userEvent.click(screen.getAllByRole('button', {name: '查看活动历史'})[1]);
+    await waitFor(() => expect(getPosition).toHaveBeenLastCalledWith('target-identifier', {chain: 'bsc', asset: '0xasset', cycle_key: 'closed-cycle'}, anonymous ? undefined : 'jwt', expect.any(AbortSignal), {cursor: undefined}));
+  });
+
+  it('disables records without a cycle key', async () => {
+    vi.mocked(getUserPortfolio).mockResolvedValue({positions: [{...testPosition, cycle_key: undefined}], partial_errors: []});
+    setup();
+    const button = await screen.findByRole('button', {name: '查看活动历史'});
+    expect((button as HTMLButtonElement).disabled).toBe(true);
+    await userEvent.click(button);
+    expect(getPosition).not.toHaveBeenCalled();
+  });
+
+  it('discards the old activity request when navigating to another user', async () => {
+    vi.mocked(getUserPortfolio).mockResolvedValue({positions: [testPosition], partial_errors: []});
+    getPosition.mockImplementation(() => new Promise(() => {}));
+    const view = setup();
+    await userEvent.click(await screen.findByRole('button', {name: '查看活动历史'}));
+    const signal = getPosition.mock.calls[0][3] as AbortSignal;
+    view.rerender(<UserProfileView identifier="another-user" />);
+    expect(signal.aborted).toBe(true);
+    expect(screen.queryByRole('heading', {name: 'Holding cycle activity'})).toBeNull();
+  });
+});
 
 describe('UserProfileView 客态头部', () => {
   it('displays the saved background at a fixed 3:1 ratio', async () => {

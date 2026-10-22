@@ -232,7 +232,7 @@ function PortfolioAccountView() {
         <p role="status" className="rounded-lg border border-up/30 bg-up/5 p-3 text-sm text-up">{opinionNotice}</p>
       ) : null}
 
-      {cycle?.bearer === session.jwt ? <PortfolioCycleTrades key={`${session.jwt}:${JSON.stringify(cycle.scope)}`} bearer={session.jwt} userIdentifier={identifier} scope={cycle.scope} onClose={() => setCycle(undefined)} /> : null}
+      {cycle?.bearer === session.jwt ? <PortfolioCycleTrades key={`${identifier}:${session.jwt}:${JSON.stringify(cycle.scope)}`} refreshKey={snapshot} bearer={session.jwt} userIdentifier={identifier} scope={cycle.scope} onClose={() => setCycle(undefined)} /> : null}
 
       <section className="overflow-hidden rounded-lg border border-border bg-surface">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">

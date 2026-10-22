@@ -8,6 +8,23 @@ function respond(data: unknown) {
   vi.stubGlobal('fetch', fetch); return fetch;
 }
 afterEach(() => vi.unstubAllGlobals());
+it('reads activity pages with opaque cursors and preserves unknown values and precision', async () => {
+  const fetch = respond({status: 'open', position, trades: [], activities_status: 'complete', next_activity_cursor: 'next+/=', activities: [{
+    record_id: 'external:1', side: 'transfer_in', chain: 'base', token: '0xabc', created_at: '2026-10-20T03:01:30Z', cycle_key: position.cycle_key, occurred_at: {seconds: 1792465290, nanos: 123456789},
+    time_basis: 'transfer_time', token_amount: '500', amount_raw: '500000000000000000000', asset_decimals: null,
+    execution_price_usd: '0.99869977400000000000', trade_value_usd: '',
+  }]});
+  const result = await getUserPortfolioPosition('user', {chain: 'base', asset: '0xabc', cycle_key: position.cycle_key}, undefined, undefined, {cursor: 'cursor+/=', limit: 1});
+  const url = new URL(fetch.mock.calls[0][0]);
+  expect(url.searchParams.get('activity_cursor')).toBe('cursor+/=');
+  expect(url.searchParams.get('activity_limit')).toBe('1');
+  expect(result.next_activity_cursor).toBe('next+/=');
+  expect(result.activities?.[0]).toMatchObject({amount_raw: '500000000000000000000', execution_price_usd: '0.99869977400000000000', asset_decimals: undefined, trade_value_usd: undefined});
+});
+it('rejects activity records belonging to another cycle', async () => {
+  respond({status: 'open', position, trades: [], activities_status: 'complete', activities: [{record_id: 'a', side: 'buy', cycle_key: 'wrong'}]});
+  await expect(getUserPortfolioPosition('user', {chain: 'base', asset: '0xabc', cycle_key: position.cycle_key})).rejects.toMatchObject({traceID: 'unified-test'});
+});
 it('targets a platform identifier and preserves new-cycle identity and pending shares', async () => {
   const fetch = respond({positions: [position], quantity_completeness: 'partial', balance: {d1: {amount_usd: '', curve: [{at: '2026-09-12T00:00:00Z', balance_usd: '100.1'}]}}});
   const data = await getUserPortfolio('user/one', 'jwt', true);

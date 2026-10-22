@@ -1,4 +1,5 @@
 import {call} from './envelope';
+import {normalizeActivities, type PortfolioActivities} from './portfolio-activities';
 import {normalizePortfolio, normalizePortfolioClosedPage, normalizePortfolioPosition, normalizePortfolioTradePage, PortfolioDataError, type PortfolioCycleScope, type PortfolioPosition, type ProtoTimestamp} from './portfolio';
 
 function path(identifier: string) {
@@ -25,10 +26,15 @@ export function getUserPortfolioTrades(identifier: string, cursor = '0', bearer?
   if (!/^\d+$/.test(cursor)) throw new Error('Invalid trade cursor.');
   return read(`${path(identifier)}/trades?${new URLSearchParams({before_id: cursor, limit: '50'})}`, normalizePortfolioTradePage, bearer, signal);
 }
-export type UserPortfolioPosition = {status: 'open' | 'closed'; position: PortfolioPosition; trades: ReturnType<typeof normalizePortfolioTradePage>['trades']; closed_at?: ProtoTimestamp; history_epoch?: string; completeness?: string};
-export function getUserPortfolioPosition(identifier: string, scope: PortfolioCycleScope, bearer?: string, signal?: AbortSignal) {
+export type UserPortfolioPosition = PortfolioActivities & {status: 'open' | 'closed'; position: PortfolioPosition; trades: ReturnType<typeof normalizePortfolioTradePage>['trades']; closed_at?: ProtoTimestamp; history_epoch?: string; completeness?: string};
+export function getUserPortfolioPosition(identifier: string, scope: PortfolioCycleScope, bearer?: string, signal?: AbortSignal, activity?: {cursor?: string; limit?: number}) {
   if (!scope.chain.trim() || !scope.asset.trim() || !scope.cycle_key?.trim()) throw new Error('A complete chain, asset and cycle_key are required.');
   const query = new URLSearchParams({chain: scope.chain, asset: scope.asset, cycle_key: scope.cycle_key});
+  if (activity?.cursor) query.set('activity_cursor', activity.cursor);
+  if (activity?.limit !== undefined) {
+    if (!Number.isInteger(activity.limit) || activity.limit < 0 || activity.limit > 200) throw new Error('Invalid activity limit.');
+    query.set('activity_limit', String(activity.limit));
+  }
   return read(`${path(identifier)}/position?${query}`, (value): UserPortfolioPosition => {
     const row = value as Partial<UserPortfolioPosition> | null;
     if (!row || (row.status !== 'open' && row.status !== 'closed') || !Array.isArray(row.trades)) throw new Error('Invalid cycle detail.');
@@ -38,6 +44,7 @@ export function getUserPortfolioPosition(identifier: string, scope: PortfolioCyc
     const trades = normalizePortfolioTradePage({trades: row.trades}).trades;
     if (trades.length > 2000 || new Set(trades.map((trade) => trade.trade_id)).size !== trades.length || trades.some((trade) => trade.chain !== scope.chain || !sameAddress(trade.token, scope.asset) || trade.cycle_key !== scope.cycle_key)) throw new Error('Invalid or mismatched cycle trades.');
     if (row.status === 'closed') {position.market_value_usd = undefined; position.price_usd = undefined; position.unrealized_pnl_usd = undefined;}
-    return {status: row.status, position, trades, closed_at: row.closed_at, history_epoch: row.history_epoch, completeness: row.completeness};
+    return {status: row.status, position, trades, closed_at: row.closed_at, history_epoch: row.history_epoch, completeness: row.completeness,
+      ...normalizeActivities(value as Record<string, unknown>, scope)};
   }, bearer, signal);
 }

@@ -31,6 +31,7 @@ import {
 } from '@/api/portfolio';
 import type {
   PortfolioClosedPosition,
+  PortfolioCycleScope,
   PortfolioPosition,
   PortfolioReply,
   PortfolioTrade,
@@ -54,6 +55,7 @@ import {getUserPublicProfile} from '@/api/users';
 import type {UserPublicProfile} from '@/api/users';
 import {ErrorPanel} from '@/components/ErrorPanel';
 import {ProfileBackground} from '@/components/ProfileBackground';
+import {PortfolioCycleTrades} from '@/components/PortfolioCycles';
 import {PortfolioBalanceChart, PortfolioPnlChart} from '@/components/PortfolioPnlChart';
 import {Button} from '@/components/ui/button';
 import {Input} from '@/components/ui/input';
@@ -671,6 +673,7 @@ function ProfilePage({identifier}: {identifier: string}) {
 // ── 持仓 Tab（portfolio.md 第一部分：客态总览 + closed） ────────────────────
 
 function PositionsTab({identifier, jwt}: {identifier: string; jwt?: string}) {
+  const [cycle, setCycle] = useState<PortfolioCycleScope>();
   const [data, setData] = useState<PortfolioReply>();
   const [error, setError] = useState<unknown>();
   const [loading, setLoading] = useState(true);
@@ -720,6 +723,8 @@ function PositionsTab({identifier, jwt}: {identifier: string; jwt?: string}) {
           <PortfolioPnlChart pnl={data.pnl} balance={data.balance} loading={false} refreshing={loading} stale={!!error} observedAt={data.observed_at} onRefresh={() => setReload((key) => key + 1)} />
           <PortfolioBalanceChart balance={data.balance} loading={false} refreshing={loading} stale={!!error} observedAt={data.observed_at} onRefresh={() => setReload((key) => key + 1)} />
 
+          {cycle ? <PortfolioCycleTrades key={`${identifier}:${jwt ?? 'anonymous'}:${JSON.stringify(cycle)}`} userIdentifier={identifier} bearer={jwt} scope={cycle} refreshKey={data} onClose={() => setCycle(undefined)} /> : null}
+
           <div className="overflow-hidden rounded-xl border border-border bg-surface">
             <p className="border-b border-border px-4 py-3 text-sm font-semibold">当前持仓</p>
             {positions.length ? (
@@ -732,6 +737,7 @@ function PositionsTab({identifier, jwt}: {identifier: string; jwt?: string}) {
                       <th className="p-3 text-right">成本</th>
                       <th className="p-3 text-right">市值</th>
                       <th className="p-3 text-right">总盈亏</th>
+                      <th className="p-3">活动历史</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -752,6 +758,7 @@ function PositionsTab({identifier, jwt}: {identifier: string; jwt?: string}) {
                           {money(position.total_pnl_usd)}
                           <p className="text-[10px]">{ratioPercent(position.pnl_ratio)}</p>
                         </td>
+                        <td className="p-3"><CycleActivityButton position={position} onOpen={setCycle} /></td>
                       </tr>
                     ))}
                   </tbody>
@@ -762,14 +769,20 @@ function PositionsTab({identifier, jwt}: {identifier: string; jwt?: string}) {
             )}
           </div>
 
-          <ClosedPositions identifier={identifier} jwt={jwt} />
+          <ClosedPositions identifier={identifier} jwt={jwt} onOpenCycle={setCycle} />
         </>
       ) : null}
     </div>
   );
 }
 
-function ClosedPositions({identifier, jwt}: {identifier: string; jwt?: string}) {
+function CycleActivityButton({position, onOpen}: {position: PortfolioPosition | PortfolioClosedPosition; onOpen: (scope: PortfolioCycleScope) => void}) {
+  return <button type="button" disabled={!position.cycle_key} title={!position.cycle_key ? '该仓位暂无可用的周期标识' : undefined}
+    onClick={() => {if (position.cycle_key) onOpen({chain: position.asset.chain, asset: position.asset.token_address, cycle_key: position.cycle_key});}}
+    className="whitespace-nowrap text-accent underline disabled:cursor-not-allowed disabled:opacity-50">查看活动历史</button>;
+}
+
+function ClosedPositions({identifier, jwt, onOpenCycle}: {identifier: string; jwt?: string; onOpenCycle: (scope: PortfolioCycleScope) => void}) {
   const [items, setItems] = useState<PortfolioClosedPosition[]>([]);
   const [cursor, setCursor] = useState<string>();
   const [error, setError] = useState<unknown>();
@@ -848,6 +861,7 @@ function ClosedPositions({identifier, jwt}: {identifier: string; jwt?: string}) 
                 <th className="p-3 text-right">已实现盈亏</th>
                 <th className="p-3 text-right">收益率</th>
                 <th className="p-3 text-right">平仓时间</th>
+                <th className="p-3">活动历史</th>
               </tr>
             </thead>
             <tbody>
@@ -859,6 +873,7 @@ function ClosedPositions({identifier, jwt}: {identifier: string; jwt?: string}) 
                   <td className={`p-3 text-right font-mono font-semibold ${toneClass(item.realized_pnl_usd)}`}>{money(item.realized_pnl_usd)}</td>
                   <td className="p-3 text-right font-mono">{ratioPercent(item.pnl_ratio)}</td>
                   <td className="p-3 text-right font-mono">{timeProto(item.closed_at)}</td>
+                  <td className="p-3"><CycleActivityButton position={item} onOpen={onOpenCycle} /></td>
                 </tr>
               ))}
             </tbody>
