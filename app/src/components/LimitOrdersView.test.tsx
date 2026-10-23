@@ -3,6 +3,7 @@ import React from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+const sessionState = vi.hoisted(() => ({ jwt: "token", owner: "alice" }));
 vi.mock("@/config", () => ({
   LIMIT_ORDER_API_BASE: "http://localhost:8083",
   LIMIT_ORDER_SIGNER_ID: "signer",
@@ -29,7 +30,10 @@ vi.mock("@privy-io/react-auth", () => ({
 }));
 vi.mock("@/session/storage", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/session/storage")>()),
-  useSession: () => ({ jwt: "token", user: { identifier: "alice" } }),
+  useSession: () => ({
+    jwt: sessionState.jwt,
+    user: { identifier: sessionState.owner },
+  }),
 }));
 vi.mock("@/api/trade", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/api/trade")>()),
@@ -62,6 +66,8 @@ import {
   savePendingLimitOrder,
 } from "@/session/storage";
 beforeEach(() => {
+  sessionState.jwt = "token";
+  sessionState.owner = "alice";
   const values = new Map<string, string>();
   vi.stubGlobal("localStorage", {
     getItem: (k: string) => values.get(k) ?? null,
@@ -465,4 +471,39 @@ it("shows posted signed fee facts separately from estimates and platform gas", a
   expect(facts.textContent).toContain("兑换成本（可为负）：-9378");
   expect(facts.textContent).toContain("源链原生币原子单位）：5000");
   expect(facts.textContent).toContain("结算记录自报，非全部费用");
+});
+
+it("clears the previous account draft and signer consent when the session changes", async () => {
+  const user = userEvent.setup();
+  const view = render(<LimitOrdersView />);
+  await user.type(screen.getByLabelText("标的地址"), "previous-account-token");
+  await user.selectOptions(screen.getByLabelText("支付钱包"), "wallet");
+  await user.click(screen.getByLabelText("我理解后台签名权限及撤销范围"));
+  expect(
+    (screen.getByLabelText("我理解后台签名权限及撤销范围") as HTMLInputElement).checked,
+  ).toBe(true);
+  sessionState.jwt = "alice-refreshed-token";
+  view.rerender(<LimitOrdersView />);
+  expect(
+    (screen.getByLabelText("标的地址") as HTMLInputElement).value,
+  ).toBe("previous-account-token");
+  expect(
+    (screen.getByLabelText("支付钱包") as HTMLSelectElement).value,
+  ).toBe("wallet");
+  expect(
+    (screen.getByLabelText("我理解后台签名权限及撤销范围") as HTMLInputElement).checked,
+  ).toBe(true);
+  sessionState.jwt = "bob-token";
+  sessionState.owner = "bob";
+  view.rerender(<LimitOrdersView />);
+  expect(
+    (screen.getByLabelText("标的地址") as HTMLInputElement).value,
+  ).toBe("");
+  expect(
+    (screen.getByLabelText("支付钱包") as HTMLSelectElement).value,
+  ).toBe("");
+  expect(
+    (screen.getByLabelText("我理解后台签名权限及撤销范围") as HTMLInputElement).checked,
+  ).toBe(false);
+  expect(api.createOrder).not.toHaveBeenCalled();
 });

@@ -138,6 +138,10 @@ function OrderWorkspace() {
     }
   }
   useEffect(() => {
+    setDraft(initial);
+    setConsent(false);
+  }, [session?.user?.identifier]);
+  useEffect(() => {
     setOrders([]);
     setNotice("");
     setRisk(undefined);
