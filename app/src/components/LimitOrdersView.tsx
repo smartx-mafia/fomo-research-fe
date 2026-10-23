@@ -917,6 +917,18 @@ function OrderWorkspace() {
             原因：{selected.reason || "—"} · 关联交易：
             {selected.swap_id || "尚无"}
           </p>
+          {selected.execution?.execution?.failure_cause && (
+            <section aria-label="执行失败原因" className="space-y-1">
+              <p>
+                FastSwap 执行失败原因：{selected.execution.execution.failure_cause}
+                ；处置码：{selected.execution.execution.recovery_action || "未提供"}
+              </p>
+              <p>
+                失败原因不代表退款已完成，退款进度以原交易结算为准。
+                挂单不会按此处置码自动重下；失败后需手动重新创建。
+              </p>
+            </section>
+          )}
           <p>
             固定输入：{selected.configuration.intent.amount_in_raw} 原子单位
             {selected.configuration.quantity_percent &&

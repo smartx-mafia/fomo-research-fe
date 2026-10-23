@@ -344,6 +344,29 @@ it("keeps percentage preview distinct from a fixed atomic amount", async () => {
   expect(api.createOrder).not.toHaveBeenCalled();
 });
 
+it.each([3, 5])("shows original slippage cause without treating it as refund completion (state %s)", async (state) => {
+  const order = recoveryOrder("1", state);
+  order.reason = state === 5 ? "refunded" : "";
+  order.execution = {
+    revision: "1", actual_slippage_bps: 100, expected_out_raw: "100", min_out_raw: "99", quoted_fees: [],
+    execution: { failure_cause: "slippage", recovery_action: "adjust_slippage" },
+    settlement: state === 5 ? { amount_refunded_raw: "990000", refund_fee_delta_raw: "10000" } : {},
+  };
+  vi.mocked(api.listOrders).mockResolvedValue({ orders: [order], next_cursor: "" });
+  vi.mocked(api.getOrder).mockResolvedValue(order);
+  const user = userEvent.setup();
+  render(<LimitOrdersView />);
+  await user.click(await screen.findByRole("button", { name: /回落买入.*\$/ }));
+  const failure = await screen.findByRole("region", { name: "执行失败原因" });
+  expect(failure.textContent).toContain("slippage");
+  expect(failure.textContent).toContain("adjust_slippage");
+  expect(failure.textContent).toContain("失败原因不代表退款已完成");
+  expect(failure.textContent).toContain("不会按此处置码自动重下");
+  expect(api.createOrder).not.toHaveBeenCalled();
+  if (state === 3) expect(screen.getByText(/实际退款数量/).textContent).toContain("未确认");
+  else expect(screen.getByText(/实际退款数量/).textContent).toContain("990000");
+});
+
 it("separates resolved quantity, quoted fees and settlement actuals without losing precision", async () => {
   const order = recoveryOrder("1");
   order.configuration.quantity_percent = "25";
