@@ -61,6 +61,9 @@ export type LimitOrder = {
       amount_raw: string;
       decimals?: number;
       symbol?: string;
+      payer?: number;
+      kind?: number;
+      amount_usd?: string;
     }[];
     settlement?: {
       amount_in_actual_raw?: string;

@@ -25,6 +25,7 @@ import {
   type RiskAssessment,
 } from "@/api/token-risk";
 import { getTokenInfo, formatUnits } from "@/api/trade";
+import { formatBaseUnitsExact } from "@/lib/exact-decimal";
 import {
   orderInput,
   ORDER_CHAINS,
@@ -667,10 +668,11 @@ function OrderWorkspace() {
           ) : (
             <div className="space-y-2 rounded border border-border p-3">
               <p>
-                确认：固定输入{" "}
-                {review.input.intent.amount_in_raw ||
-                  `${review.input.quantity_percent}%（服务端换算）`}{" "}
-                原子单位；目标{" "}
+                确认：
+                {review.input.quantity_percent
+                  ? `创建时余额的 ${review.input.quantity_percent}%（服务端换算为固定数量，创建后查看结果）`
+                  : `固定输入 ${review.input.intent.amount_in_raw} 原子单位`}
+                ；目标{" "}
                 {review.input.target_usd
                   ? `$${review.input.target_usd}`
                   : `${review.input.target_percent}%`}
@@ -889,6 +891,21 @@ function OrderWorkspace() {
             {selected.swap_id || "尚无"}
           </p>
           <p>
+            固定输入：{selected.configuration.intent.amount_in_raw} 原子单位
+            {selected.configuration.quantity_percent &&
+              `（创建时余额的 ${selected.configuration.quantity_percent}% 换算结果）`}
+          </p>
+          <p className="break-all">
+            输入资产：{selected.configuration.intent.origin_chain} /{" "}
+            {selected.configuration.intent.origin_asset}
+            ；输出资产：{selected.configuration.intent.destination_chain} /{" "}
+            {selected.configuration.intent.destination_asset}
+          </p>
+          <p>
+            USD 目标价：${selected.configuration.target_usd}；整单费用上限：$
+            {selected.configuration.fee_cap_usd}
+          </p>
+          <p>
             基准价：{selected.configuration.base_usd || "—"} · 基准时间：
             {selected.configuration.base_at || "—"}
           </p>
@@ -898,15 +915,64 @@ function OrderWorkspace() {
           </p>
           <p>
             实际输入 / 输出（原子单位）：
-            {selected.execution?.settlement?.amount_in_actual_raw ??
+            {selected.execution?.settlement?.amount_in_actual_raw ||
               "未确认"} /{" "}
-            {selected.execution?.settlement?.amount_out_actual_raw ?? "未确认"}
+            {selected.execution?.settlement?.amount_out_actual_raw || "未确认"}
           </p>
           <p>
             退款费用差额（原子单位）：
-            {selected.execution?.settlement?.refund_fee_delta_raw ?? "未确认"}
+            {selected.execution?.settlement?.refund_fee_delta_raw || "未确认"}
             ；其他实际费用当前接口未提供，不以报价冒充。
           </p>
+          <p>
+            实际退款数量（原子单位）：
+            {selected.execution?.settlement?.amount_refunded_raw || "未确认"}
+          </p>
+          {selected.execution && (
+            <section aria-label="执行报价信息" className="space-y-2">
+              <p>
+                执行版本：{selected.execution.revision}；该版滑点容忍：
+                {selected.execution.actual_slippage_bps} bps（非实际成交滑点）
+              </p>
+              <p>
+                报价预计输出 / 最低输出（原子单位）：
+                {selected.execution.expected_out_raw || "未提供"} /{" "}
+                {selected.execution.min_out_raw || "未提供"}
+              </p>
+              <h3>报价费用估计（非实际扣费）</h3>
+              {selected.execution.quoted_fees?.length ? (
+                <ul className="space-y-1">
+                  {selected.execution.quoted_fees.map((fee, i) => (
+                    <li
+                      key={`${fee.chain}:${fee.asset}:${fee.kind}:${fee.payer}:${i}`}
+                      className="break-all"
+                    >
+                      {[
+                        "未知费用",
+                        "平台费",
+                        "结算方费用",
+                        "Gas",
+                        "账户租金",
+                        "小费",
+                      ][fee.kind ?? 0] || "未知费用"}
+                      ：{formatBaseUnitsExact(fee.amount_raw, fee.decimals)}{" "}
+                      {fee.symbol || fee.asset}；
+                      {fee.payer === 1
+                        ? "用户承担"
+                        : fee.payer === 2
+                          ? "平台承担"
+                          : "付款方未知"}
+                      ；美元估值{" "}
+                      {fee.amount_usd ? `$${fee.amount_usd}` : "未知"}；
+                      {fee.chain} / {fee.asset}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p>尚无报价费用信息。</p>
+              )}
+            </section>
+          )}
           <details>
             <summary>报价费用与执行事实</summary>
             <pre className="overflow-auto text-xs">

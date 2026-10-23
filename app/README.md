@@ -59,3 +59,5 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 尚待完成：实际页面和进程联调，以及实际费用能力核实。当前接口只提供报价费用及退款差额，页面不会把报价标为实付。
 
 验证：`npm test -- src/lib/limit-order-input.test.ts src/api/limit-orders.test.ts src/components/LimitOrdersView.test.tsx`，`npx next typegen`，`npx tsc --noEmit`。完整静态导出需要原站点的 Privy app 配置；没有配置时，既有 onboarding 页面会在 prerender 调用 Privy hook 时失败。
+
+挂单详情直接展示服务端换算后的固定原子数量、输入/输出资产、USD 目标与整单费用上限；比例预览不标成原子单位。执行版本的滑点字段表示容忍值，不是实际成交滑点。报价费用单独列出付款方、资产精度与美元估值；未知精度保留原子单位，未知估值不写零。实际成交/退款数取 settlement，空值显示未确认，真实字符串 `0` 保留。其他实际费用尚未由挂单接口提供，仍是待补齐的验收项。

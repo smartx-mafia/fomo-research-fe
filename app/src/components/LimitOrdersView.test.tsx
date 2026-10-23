@@ -317,3 +317,114 @@ it("returns to editing after a definitive capacity rejection instead of retainin
   expect(screen.getByRole("button", { name: "检查并预览" })).toBeTruthy();
   expect(api.createOrder).toHaveBeenCalledTimes(1);
 });
+
+it("keeps percentage preview distinct from a fixed atomic amount", async () => {
+  savePendingLimitOrder("alice", "http://localhost:8083", {
+    key: "percentage-preview",
+    input: {
+      ...recoveryInput,
+      intent: { ...recoveryInput.intent, amount_in_raw: "" },
+      quantity_percent: "25",
+    },
+  });
+  render(<LimitOrdersView />);
+  const preview = await screen.findByText(/确认：创建时余额的 25%/);
+  expect(preview.textContent).toContain("服务端换算为固定数量");
+  expect(preview.textContent).not.toContain("原子单位");
+  expect(api.createOrder).not.toHaveBeenCalled();
+});
+
+it("separates resolved quantity, quoted fees and settlement actuals without losing precision", async () => {
+  const order = recoveryOrder("1");
+  order.configuration.quantity_percent = "25";
+  order.execution = {
+    revision: "3",
+    actual_slippage_bps: 0,
+    expected_out_raw: "2000",
+    min_out_raw: "1990",
+    quoted_fees: [
+      {
+        chain: "solana",
+        asset: "cash",
+        symbol: "USDC",
+        amount_raw: "9007199254740993",
+        decimals: 6,
+        payer: 1,
+        kind: 1,
+        amount_usd: "0.010000",
+      },
+      {
+        chain: "solana",
+        asset: "native",
+        symbol: "SOL",
+        amount_raw: "0",
+        decimals: 9,
+        payer: 2,
+        kind: 3,
+      },
+      { chain: "solana", asset: "unknown", amount_raw: "123" },
+    ],
+    settlement: {
+      amount_in_actual_raw: "0",
+      amount_out_actual_raw: "0",
+      amount_refunded_raw: "1000000",
+      refund_fee_delta_raw: "0",
+    },
+  };
+  vi.mocked(api.listOrders).mockResolvedValue({
+    orders: [order],
+    next_cursor: "",
+  });
+  vi.mocked(api.getOrder).mockResolvedValue(order);
+  const user = userEvent.setup();
+  render(<LimitOrdersView />);
+  await user.click(
+    await screen.findByRole("button", { name: /回落买入.*等待触发/ }),
+  );
+  await screen.findByText(
+    /固定输入：1000000 原子单位（创建时余额的 25% 换算结果）/,
+  );
+  const quoted = screen.getByRole("region", { name: "执行报价信息" });
+  expect(quoted.textContent).toContain("9007199254.740993 USDC");
+  expect(quoted.textContent).toContain("用户承担");
+  expect(quoted.textContent).toContain("平台承担");
+  expect(quoted.textContent).toContain("付款方未知");
+  expect(quoted.textContent).toContain("123 base units");
+  expect(quoted.textContent).toContain("美元估值 未知");
+  expect(quoted.textContent).toContain("报价费用估计（非实际扣费）");
+  expect(quoted.textContent).toContain("0 bps（非实际成交滑点）");
+  await screen.findByText(/实际输入 \/ 输出（原子单位）：0 \/ 0/);
+  await screen.findByText(/实际退款数量（原子单位）：1000000/);
+});
+
+it("shows unreported settlement values as unknown instead of blank or zero", async () => {
+  const order = recoveryOrder("1", 3);
+  order.execution = {
+    revision: "1",
+    actual_slippage_bps: 100,
+    expected_out_raw: "",
+    min_out_raw: "",
+    quoted_fees: [],
+    settlement: {
+      amount_in_actual_raw: "",
+      amount_out_actual_raw: "",
+      amount_refunded_raw: "",
+      refund_fee_delta_raw: "",
+    },
+  };
+  vi.mocked(api.listOrders).mockResolvedValue({
+    orders: [order],
+    next_cursor: "",
+  });
+  vi.mocked(api.getOrder).mockResolvedValue(order);
+  const user = userEvent.setup();
+  render(<LimitOrdersView />);
+  await user.click(
+    await screen.findByRole("button", { name: /回落买入.*待确认/ }),
+  );
+  await screen.findByText(/实际输入 \/ 输出（原子单位）：未确认 \/ 未确认/);
+  await screen.findByText(/实际退款数量（原子单位）：未确认/);
+  await screen.findByText(
+    /报价预计输出 \/ 最低输出（原子单位）：未提供 \/ 未提供/,
+  );
+});
