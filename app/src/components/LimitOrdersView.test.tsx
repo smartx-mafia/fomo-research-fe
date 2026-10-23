@@ -428,3 +428,41 @@ it("shows unreported settlement values as unknown instead of blank or zero", asy
     /报价预计输出 \/ 最低输出（原子单位）：未提供 \/ 未提供/,
   );
 });
+
+it("shows posted signed fee facts separately from estimates and platform gas", async () => {
+  const order = recoveryOrder("1", 4);
+  order.execution = {
+    revision: "1",
+    actual_slippage_bps: 50,
+    expected_out_raw: "100",
+    min_out_raw: "99",
+    quoted_fees: [],
+    settled_fees: {
+      chain: "solana",
+      chain_id: "792703809",
+      asset: "cash",
+      execution_raw: "0",
+      app_raw: "9007199254740993",
+      swap_raw: "-9378",
+      platform_gas_raw: "5000",
+      app_usd_reported: "0.01000000",
+    },
+  };
+  vi.mocked(api.listOrders).mockResolvedValue({
+    orders: [order],
+    next_cursor: "",
+  });
+  vi.mocked(api.getOrder).mockResolvedValue(order);
+  const user = userEvent.setup();
+  render(<LimitOrdersView />);
+  await user.click(
+    await screen.findByRole("button", { name: /回落买入.*成功/ }),
+  );
+  const facts = screen.getByRole("region", { name: "已入账费用" });
+  expect(facts.textContent).toContain("执行费用：0");
+  expect(facts.textContent).toContain("结算方平台费：未知");
+  expect(facts.textContent).toContain("应用平台费：9007199254740993");
+  expect(facts.textContent).toContain("兑换成本（可为负）：-9378");
+  expect(facts.textContent).toContain("源链原生币原子单位）：5000");
+  expect(facts.textContent).toContain("结算记录自报，非全部费用");
+});

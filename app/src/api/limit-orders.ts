@@ -65,6 +65,17 @@ export type LimitOrder = {
       kind?: number;
       amount_usd?: string;
     }[];
+    settled_fees?: {
+      chain: string;
+      chain_id: string;
+      asset: string;
+      execution_raw?: string;
+      platform_raw?: string;
+      app_raw?: string;
+      swap_raw?: string;
+      platform_gas_raw?: string;
+      app_usd_reported?: string;
+    };
     settlement?: {
       amount_in_actual_raw?: string;
       amount_out_actual_raw?: string;

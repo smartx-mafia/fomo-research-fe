@@ -922,12 +922,51 @@ function OrderWorkspace() {
           <p>
             退款费用差额（原子单位）：
             {selected.execution?.settlement?.refund_fee_delta_raw || "未确认"}
-            ；其他实际费用当前接口未提供，不以报价冒充。
+            ；未入账或未记录的费用仍为未知。
           </p>
           <p>
             实际退款数量（原子单位）：
             {selected.execution?.settlement?.amount_refunded_raw || "未确认"}
           </p>
+          <section aria-label="已入账费用" className="space-y-2">
+            <h3>已入账费用（原子单位）</h3>
+            {selected.execution?.settled_fees ? (
+              <>
+                <p className="break-all">
+                  费用资产：{selected.execution.settled_fees.chain}（链 ID{" "}
+                  {selected.execution.settled_fees.chain_id}） /{" "}
+                  {selected.execution.settled_fees.asset}
+                </p>
+                <p>
+                  执行费用：
+                  {selected.execution.settled_fees.execution_raw || "未知"}
+                  ；结算方平台费：
+                  {selected.execution.settled_fees.platform_raw || "未知"}
+                </p>
+                <p>
+                  应用平台费：
+                  {selected.execution.settled_fees.app_raw || "未知"}
+                  ；兑换成本（可为负）：
+                  {selected.execution.settled_fees.swap_raw || "未知"}
+                </p>
+                <p>
+                  应用平台费美元值（结算记录自报，非全部费用）：
+                  {selected.execution.settled_fees.app_usd_reported
+                    ? `$${selected.execution.settled_fees.app_usd_reported}`
+                    : "未知"}
+                </p>
+                <p>
+                  平台承担的源链 Gas（源链原生币原子单位）：
+                  {selected.execution.settled_fees.platform_gas_raw || "未知"}
+                  ，不计入用户费用合计。
+                </p>
+              </>
+            ) : (
+              <p>
+                尚无已确认的费用记录；不表示费用为零。失败交易的网络成本可能尚无记录。
+              </p>
+            )}
+          </section>
           {selected.execution && (
             <section aria-label="执行报价信息" className="space-y-2">
               <p>
