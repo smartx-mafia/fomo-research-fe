@@ -3,6 +3,7 @@ import React from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+const signerActions = vi.hoisted(() => ({ addSigners: vi.fn(), removeSigners: vi.fn() }));
 const sessionState = vi.hoisted(() => ({ jwt: "token", owner: "alice" }));
 vi.mock("@/config", () => ({
   LIMIT_ORDER_API_BASE: "http://localhost:8083",
@@ -26,7 +27,7 @@ vi.mock("@privy-io/react-auth", () => ({
       ],
     },
   }),
-  useSigners: () => ({ addSigners: vi.fn(), removeSigners: vi.fn() }),
+  useSigners: () => signerActions,
 }));
 vi.mock("@/session/storage", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/session/storage")>()),
@@ -76,6 +77,9 @@ beforeEach(() => {
     removeItem: (k: string) => values.delete(k),
   });
   vi.clearAllMocks();
+  signerActions.addSigners.mockReset();
+  signerActions.removeSigners.mockReset();
+  vi.mocked(api.orderAuthorization).mockResolvedValue({ authorized: true, wallet_id: "wallet", reason: "", signer_id: "signer", checked_at: "now" });
   vi.mocked(api.orderBalance).mockImplementation(async (_bearer, wallet_id, chain, asset) => ({
     wallet_id, chain, asset, balance_raw: "100000000000000000000", observed_at: new Date().toISOString(),
   }));
@@ -560,5 +564,52 @@ it.each(["exact", "exceeds", "zero", "fraction", "unavailable"])("checks the sin
     if (mode === "unavailable") expect(screen.queryByText(/当前链上余额：/)).toBeNull();
     if (mode === "zero") expect(screen.getByText(/当前链上余额：0（/)).toBeTruthy();
   }
+  expect(api.createOrder).not.toHaveBeenCalled();
+});
+
+
+it.each([true, false])("uses backend authorization after SDK grant instead of assuming success: %s", async (authorized) => {
+  signerActions.addSigners.mockResolvedValue({ user: { linkedAccounts: [{ type: "wallet", id: "wallet", address: "wallet-address" }] } });
+  vi.mocked(api.orderAuthorization).mockResolvedValue({ authorized, wallet_id: "wallet", reason: "", signer_id: "signer", checked_at: "server-time" });
+  const user = userEvent.setup();
+  render(<LimitOrdersView />);
+  await user.selectOptions(screen.getByLabelText("支付钱包"), "wallet");
+  const grant = screen.getByRole("button", { name: "授权后台 signer" }) as HTMLButtonElement;
+  const revoke = screen.getByRole("button", { name: "撤销全部后台 signer" }) as HTMLButtonElement;
+  expect(grant.disabled).toBe(true);
+  expect(revoke.disabled).toBe(true);
+  await user.click(screen.getByLabelText("我理解后台签名权限及撤销范围"));
+  await user.click(grant);
+  await screen.findByText(authorized ? /服务端已确认授权/ : /未授权或授权失效/);
+  expect(signerActions.addSigners).toHaveBeenCalledWith({ address: "wallet-address", signers: [{ signerId: "signer" }] });
+  expect(api.orderAuthorization).toHaveBeenCalledWith("token", "wallet", "solana:mainnet");
+  if (!authorized) {
+    await user.type(screen.getByLabelText("标的地址"), "So11111111111111111111111111111111111111112");
+    await user.selectOptions(screen.getByLabelText("接收钱包"), "wallet");
+    await user.type(screen.getByLabelText("数量 / 比例"), "1");
+    await user.type(screen.getByLabelText("目标价 / 涨跌百分比"), "2");
+    await user.type(screen.getByLabelText(/有效期/), "2030-01-01T00:00:00Z");
+    await user.click(screen.getByRole("button", { name: "检查并预览" }));
+    await screen.findByText("请先授权后台 signer，再创建挂单。");
+    expect(screen.queryByRole("button", { name: "确认提交 / 重试同一请求" })).toBeNull();
+  }
+  expect(api.createOrder).not.toHaveBeenCalled();
+});
+
+it("clears confirmed authorization only after SDK revocation succeeds", async () => {
+  const user = userEvent.setup();
+  render(<LimitOrdersView />);
+  await user.selectOptions(screen.getByLabelText("支付钱包"), "wallet");
+  await user.click(screen.getByRole("button", { name: "检查服务端授权" }));
+  await screen.findByText(/服务端已确认授权/);
+  await user.click(screen.getByLabelText("我理解后台签名权限及撤销范围"));
+  signerActions.removeSigners.mockRejectedValueOnce(new Error("revocation unavailable"));
+  await user.click(screen.getByRole("button", { name: "撤销全部后台 signer" }));
+  await screen.findByRole("alert");
+  expect(screen.getByText(/服务端已确认授权/)).toBeTruthy();
+  signerActions.removeSigners.mockResolvedValueOnce(undefined);
+  await user.click(screen.getByRole("button", { name: "撤销全部后台 signer" }));
+  await waitFor(() => expect(screen.queryByText(/服务端已确认授权/)).toBeNull());
+  expect(signerActions.removeSigners).toHaveBeenCalledWith({ address: "wallet-address" });
   expect(api.createOrder).not.toHaveBeenCalled();
 });
