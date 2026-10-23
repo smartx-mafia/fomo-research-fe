@@ -324,7 +324,7 @@ function OrderWorkspace() {
         }
         if (
           e instanceof ApiError &&
-          [100800, 430800, 430801, 430802, 420802].includes(e.code)
+          [100800, 430800, 430801, 430802, 420802, 420803].includes(e.code)
         ) {
           savePendingLimitOrder(owner, LIMIT_ORDER_API_BASE);
           if (current.current === bearer) {

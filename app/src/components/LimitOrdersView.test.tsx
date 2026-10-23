@@ -291,3 +291,29 @@ it("requires explicit risk confirmation and retries the same creation identity",
     vi.mocked(api.createOrder).mock.calls[0],
   );
 });
+
+it("returns to editing after a definitive capacity rejection instead of retaining an uncertain create", async () => {
+  savePendingLimitOrder("alice", "http://localhost:8083", {
+    key: "capacity",
+    input: recoveryInput,
+  });
+  vi.mocked(api.createOrder).mockRejectedValueOnce(
+    new ApiError(
+      "business",
+      420803,
+      "capacity exceeded",
+      "LIMITORDER_MARKET_CAPACITY",
+    ),
+  );
+  const user = userEvent.setup();
+  render(<LimitOrdersView />);
+  await user.click(
+    await screen.findByRole("button", { name: "确认提交 / 重试同一请求" }),
+  );
+  await screen.findByText(/LIMITORDER_MARKET_CAPACITY/);
+  expect(
+    readPendingLimitOrder("alice", "http://localhost:8083"),
+  ).toBeUndefined();
+  expect(screen.getByRole("button", { name: "检查并预览" })).toBeTruthy();
+  expect(api.createOrder).toHaveBeenCalledTimes(1);
+});
