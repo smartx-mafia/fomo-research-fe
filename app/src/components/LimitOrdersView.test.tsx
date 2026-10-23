@@ -49,6 +49,7 @@ vi.mock("@/api/limit-orders", async (importOriginal) => ({
     signer_id: "signer",
     checked_at: "now",
   }),
+  orderBalance: vi.fn(),
   createOrder: vi.fn(),
   modifyOrder: vi.fn(),
 }));
@@ -75,6 +76,9 @@ beforeEach(() => {
     removeItem: (k: string) => values.delete(k),
   });
   vi.clearAllMocks();
+  vi.mocked(api.orderBalance).mockImplementation(async (_bearer, wallet_id, chain, asset) => ({
+    wallet_id, chain, asset, balance_raw: "100000000000000000000", observed_at: new Date().toISOString(),
+  }));
   vi.mocked(api.listOrders).mockResolvedValue({ orders: [], next_cursor: "" });
 });
 afterEach(() => {
@@ -505,5 +509,33 @@ it("clears the previous account draft and signer consent when the session change
   expect(
     (screen.getByLabelText("我理解后台签名权限及撤销范围") as HTMLInputElement).checked,
   ).toBe(false);
+  expect(api.createOrder).not.toHaveBeenCalled();
+});
+
+it.each(["exact", "exceeds", "zero", "fraction", "unavailable"])("checks the single order against raw balance: %s", async (mode) => {
+  vi.mocked(api.orderBalance).mockImplementation(async (_bearer, wallet_id, chain, asset) => {
+    if (mode === "unavailable") throw new Error("balance RPC unavailable");
+    return { wallet_id, chain, asset, balance_raw: mode === "exact" ? "1000000" : mode === "exceeds" ? "999999" : mode === "fraction" ? "1" : "0", observed_at: new Date().toISOString() };
+  });
+  const user = userEvent.setup();
+  render(<LimitOrdersView />);
+  await user.type(screen.getByLabelText("标的地址"), "So11111111111111111111111111111111111111112");
+  await user.selectOptions(screen.getByLabelText("支付钱包"), "wallet");
+  await user.selectOptions(screen.getByLabelText("接收钱包"), "wallet");
+  if (mode === "fraction") await user.selectOptions(screen.getByLabelText("数量方式"), "percent");
+  await user.type(screen.getByLabelText("数量 / 比例"), mode === "fraction" ? "0.1" : "1");
+  await user.type(screen.getByLabelText("目标价 / 涨跌百分比"), "2");
+  await user.type(screen.getByLabelText(/有效期/), "2030-01-01T00:00:00Z");
+  await user.click(screen.getByRole("button", { name: "检查并预览" }));
+  if (mode === "exact") {
+    await screen.findByRole("button", { name: "确认提交 / 重试同一请求" });
+    expect(screen.getByText(/当前链上余额：1（/)).toBeTruthy();
+  } else {
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain(mode === "unavailable" ? "balance RPC unavailable" : (mode === "exceeds" || mode === "zero") ? "超过当前链上余额" : "数量为零");
+    expect(screen.queryByRole("button", { name: "确认提交 / 重试同一请求" })).toBeNull();
+    if (mode === "unavailable") expect(screen.queryByText(/当前链上余额：/)).toBeNull();
+    if (mode === "zero") expect(screen.getByText(/当前链上余额：0（/)).toBeTruthy();
+  }
   expect(api.createOrder).not.toHaveBeenCalled();
 });

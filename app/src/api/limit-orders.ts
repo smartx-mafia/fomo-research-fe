@@ -97,6 +97,29 @@ export type OrderAuthorization = {
   checked_at: string;
   reason: string;
 };
+export type OrderBalance = {
+  wallet_id: string;
+  chain: string;
+  asset: string;
+  balance_raw: string;
+  observed_at: string;
+};
+
+export async function orderBalance(bearer: string, wallet_id: string, chain: string, asset: string) {
+  const { data } = await call<OrderBalance>(
+    endpoint(`/balance?${new URLSearchParams({ wallet_id, chain, asset })}`),
+    { bearer },
+  );
+  const sameAsset = chain.startsWith("eip155:")
+    ? data?.asset?.toLowerCase() === asset.toLowerCase()
+    : data?.asset === asset;
+  if (!data || data.wallet_id !== wallet_id || data.chain !== chain || !sameAsset ||
+      typeof data.balance_raw !== "string" || !/^\d{1,78}$/.test(data.balance_raw) ||
+      !Number.isFinite(Date.parse(data.observed_at))) {
+    throw new Error("余额数据不可用，请重新检查。");
+  }
+  return data;
+}
 function endpoint(path = "") {
   if (!LIMIT_ORDER_API_BASE)
     throw new Error(

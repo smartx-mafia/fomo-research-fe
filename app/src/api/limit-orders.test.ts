@@ -4,6 +4,7 @@ vi.mock("@/config", () => ({
   BUSINESS_API_BASE: "http://localhost:8080",
 }));
 import {
+  orderBalance,
   createOrder,
   modifyOrder,
   mergeOrderEvents,
@@ -50,6 +51,19 @@ describe("order transport", () => {
       creation_key: "same-key",
       input,
     });
+  });
+  it.each(["zero", "numeric", "missing", "other-wallet", "other-asset"])("validates balance evidence: %s", async (mode) => {
+    const data: Record<string, unknown> = {
+      wallet_id: "wallet", chain: "solana:mainnet", asset: "mint", balance_raw: "0", observed_at: new Date().toISOString(),
+    };
+    if (mode === "numeric") data.balance_raw = 0;
+    if (mode === "missing") delete data.balance_raw;
+    if (mode === "other-wallet") data.wallet_id = "other";
+    if (mode === "other-asset") data.asset = "other";
+    vi.mocked(fetch).mockResolvedValue(new Response(JSON.stringify({ code: 200, data }), { status: 200 }));
+    const result = orderBalance("jwt", "wallet", "solana:mainnet", "mint");
+    if (mode === "zero") await expect(result).resolves.toMatchObject({ balance_raw: "0" });
+    else await expect(result).rejects.toThrow("余额数据不可用");
   });
   it("modifies with exact server version", async () => {
     await modifyOrder("jwt", snapshot, input);

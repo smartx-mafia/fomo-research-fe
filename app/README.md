@@ -48,6 +48,8 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 
 路径 `/limit-orders`。沿用本站登录、Privy provider、精确金额转换和业务信封；正式 React Native 前端没有改动。
 
+检查并预览时通过挂单服务 `/v1/limit-orders/balance` 读取所选支付钱包和资产的链上余额，并显示采样时间。单张数量超额、真实零余额、比例换算不足一个原子单位时不能进入确认；读取失败显示未知，不替换为零。数量计算使用 BigInt，等待中的其他订单不扣减此余额。此提示不是执行时的资金承诺，后台创建及触发时仍重新校验。
+
 配置 `NEXT_PUBLIC_LIMIT_ORDER_API_BASE` 为独立挂单服务 HTTP 根地址，`NEXT_PUBLIC_LIMIT_ORDER_SIGNER_ID` 为该服务配置的 Privy additional signer 公共 ID。不要把 authorization key、app secret 或服务 JWT 放进 NEXT_PUBLIC 变量。挂单服务 CORS 必须允许当前测试站点；HTTPS 页面需要 HTTPS API。服务未部署时不要把业务网关当作默认挂单地址。
 
 页面使用现有 Solana USDC 现金资产；支持 Solana、Base、Ethereum、BSC 的四种触发场景。数量字符串复用精确转换，比例交给服务端一次性换算，留空滑点为 AUTO。授权成功仍由服务端查询确认；撤销按钮明确移除所选钱包全部 additional signers（当前安装 SDK 的语义），不冒充单 signer 撤销。

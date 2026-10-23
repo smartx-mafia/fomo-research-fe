@@ -25,7 +25,7 @@ import {
   type RiskAssessment,
 } from "@/api/token-risk";
 import { getTokenInfo, formatUnits } from "@/api/trade";
-import { formatBaseUnitsExact } from "@/lib/exact-decimal";
+import { formatBaseUnitsExact, parseExactDecimal } from "@/lib/exact-decimal";
 import {
   orderInput,
   ORDER_CHAINS,
@@ -98,6 +98,7 @@ function OrderWorkspace() {
   const [sent, setSent] = useState(false);
   const [auth, setAuth] = useState<api.OrderAuthorization>();
   const [consent, setConsent] = useState(false);
+  const [balance, setBalance] = useState<(api.OrderBalance & { decimals: number })>();
   const jwt = session?.jwt;
   const current = useRef(jwt);
   current.current = jwt;
@@ -123,6 +124,7 @@ function OrderWorkspace() {
     setReview(undefined);
     setRisk(undefined);
     setAuth(undefined);
+    if (["scenario", "chain", "token", "sourceWallet"].includes(key)) setBalance(undefined);
   }
   async function run(action: (bearer: string) => Promise<void>) {
     if (!jwt || busy) return;
@@ -140,6 +142,7 @@ function OrderWorkspace() {
   useEffect(() => {
     setDraft(initial);
     setConsent(false);
+    setBalance(undefined);
   }, [session?.user?.identifier]);
   useEffect(() => {
     setOrders([]);
@@ -233,6 +236,7 @@ function OrderWorkspace() {
   }
   async function prepare() {
     await run(async (bearer) => {
+      setBalance(undefined);
       const info = await getTokenInfo(draft.chain, draft.token.trim());
       const destination = wallets.find(
         (w) =>
@@ -254,6 +258,18 @@ function OrderWorkspace() {
         },
         info.decimals,
       );
+      const observed = await api.orderBalance(
+        bearer, input.intent.source_wallet_id, input.intent.origin_chain, input.intent.origin_asset,
+      );
+      if (current.current !== bearer) return;
+      setBalance({ ...observed, decimals: buy ? 6 : info.decimals });
+      const raw = BigInt(observed.balance_raw);
+      const percent = input.quantity_percent ? parseExactDecimal(input.quantity_percent) : undefined;
+      const amount = percent
+        ? raw * percent.coefficient / (BigInt(100) * BigInt(10) ** BigInt(percent.scale))
+        : BigInt(input.intent.amount_in_raw);
+      if (amount <= BigInt(0)) throw new Error("余额或比例换算后的数量为零，请调整数量。");
+      if (amount > raw) throw new Error("本单数量超过当前链上余额，请调整数量。");
       const authorization = await api.orderAuthorization(
         bearer,
         input.intent.source_wallet_id,
@@ -385,6 +401,7 @@ function OrderWorkspace() {
         sourceWallet: c.intent.source_wallet_id,
         destinationWallet: c.intent.destination_wallet_id,
       });
+      setBalance(undefined);
       setEditing(recreate ? undefined : fresh);
       setNotice(
         recreate
@@ -523,6 +540,12 @@ function OrderWorkspace() {
                 onChange={(e) => change("amount", e.target.value)}
               />
             </label>
+            <p className="sm:col-span-2 text-sm text-muted">
+              {balance
+                ? `当前链上余额：${formatUnits(balance.balance_raw, balance.decimals)}（${balance.observed_at}）`
+                : "检查并预览时读取当前链上余额；读取失败不会按零处理。"}
+              {" "}等待挂单不冻结余额，触发时后台仍会重新检查。
+            </p>
             <label>
               目标方式
               <select

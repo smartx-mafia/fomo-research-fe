@@ -6,7 +6,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { beforeAll, describe, expect, it } from "vitest";
 import {
   cancelOrder, createOrder, getOrder, listOrders, modifyOrder,
-  orderAuthorization, orderEvents, type OrderInput,
+  orderAuthorization, orderBalance, orderEvents, type OrderInput,
 } from "./limit-orders";
 import { LIMIT_ORDER_API_BASE } from "@/config";
 
@@ -25,6 +25,9 @@ describe.skipIf(!jwtFile)("real local order HTTP contract", () => {
     await expect(listOrders("invalid-local-jwt", 1)).rejects.toThrow();
     expect(await orderAuthorization(bearer, "src", "solana:mainnet"))
       .toMatchObject({ wallet_id: "src", authorized: true });
+    expect(await orderBalance(bearer, "src", "solana:mainnet", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"))
+      .toMatchObject({ wallet_id: "src", balance_raw: "100000000" });
+    await expect(orderBalance("invalid-local-jwt", "src", "solana:mainnet", "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")).rejects.toThrow();
   });
 
   it.each([1, 2, 3, 4] as const)("creates, modifies and cancels scenario %i with the real adapter", async (scenario) => {
