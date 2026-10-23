@@ -60,4 +60,14 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 
 验证：`npm test -- src/lib/limit-order-input.test.ts src/api/limit-orders.test.ts src/components/LimitOrdersView.test.tsx`，`npx next typegen`，`npx tsc --noEmit`。完整静态导出需要原站点的 Privy app 配置；没有配置时，既有 onboarding 页面会在 prerender 调用 Privy hook 时失败。
 
+本机真实 HTTP 契约回归（从 `app/` 运行）：
+
+```sh
+NEXT_PUBLIC_LIMIT_ORDER_API_BASE=http://127.0.0.1:19500 \
+LIMITORDER_LOCAL_JWT_FILE=/tmp/limitorder-process-local/execution.jwt \
+npm test -- src/api/limit-orders.local.test.ts
+```
+
+该测试默认跳过，显式提供 JWT 文件才运行，并限制目标为 `http://127.0.0.1:19500`。要求后端本机 TokenData/Business fixture 已启动，`local-owner`/`src` 合成钱包已配置，TokenData 持续提供 1 USD，JWT 未过期。它使用真实前端 API 适配器和 HTTP 服务，验证四场景创建、幂等、修改、版本冲突、撤单、列表与事件；目标价保持不触发，测试结束撤销订单。创建/修改请求按现有 2 RPS 节奏发送。它不模拟 API 回包，但不覆盖浏览器渲染、真实 Privy 登录、授权或链上成交，不能替代这些验收。
+
 挂单详情直接展示服务端换算后的固定原子数量、输入/输出资产、USD 目标与整单费用上限；比例预览不标成原子单位。执行版本的滑点字段表示容忍值，不是实际成交滑点。报价费用单独列出付款方、资产精度与美元估值；未知精度保留原子单位，未知估值不写零。实际成交/退款数取 settlement，空值显示未确认，真实字符串 `0` 保留。已入账费用取 settled_fees，四条用户侧费用使用明示链/资产的原子单位，负兑换成本原样保留；平台承担的源链 Gas 单列。缺少已入账记录时保持未知提示，仍不能证明失败交易的全部网络成本。
