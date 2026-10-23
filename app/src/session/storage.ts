@@ -161,3 +161,20 @@ export function writeLastEmail(email: string): void {
     /* 忽略：这只是便利功能 */
   }
 }
+
+/** Immutable pending request, scoped by account and endpoint; contains no token. */
+export type PendingLimitOrder = {
+  key: string; input: import('@/api/limit-orders').OrderInput;
+  edit?: {order_id: string; version: string};
+};
+function orderRecoveryKey(owner: string, endpoint: string) {
+  return `${PREFIX}limit-order.${encodeURIComponent(endpoint)}.${encodeURIComponent(owner)}`;
+}
+export function readPendingLimitOrder(owner: string, endpoint: string): PendingLimitOrder | undefined {
+  const value = parse<PendingLimitOrder>(orderRecoveryKey(owner, endpoint));
+  return value && typeof value.key === 'string' && value.input?.intent ? value : undefined;
+}
+export function savePendingLimitOrder(owner: string, endpoint: string, value?: PendingLimitOrder): void {
+  const key = orderRecoveryKey(owner, endpoint);
+  if (value) localStorage.setItem(key, JSON.stringify(value)); else localStorage.removeItem(key);
+}

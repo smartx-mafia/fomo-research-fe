@@ -43,6 +43,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
               <Link href="/portfolio" className="hover:text-foreground">
                 Portfolio
               </Link>
+              <Link href="/limit-orders" className="hover:text-foreground">
+                Limit orders
+              </Link>
               <Link href="/deposit" className="hover:text-foreground">
                 Deposit
               </Link>

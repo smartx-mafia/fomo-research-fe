@@ -54,3 +54,8 @@ export function sameBusinessEnvironment(left: string, right: string): boolean {
 export function missingConfig(): string[] {
   return [!PRIVY_APP_ID && 'NEXT_PUBLIC_PRIVY_APP_ID'].filter(Boolean) as string[];
 }
+
+/** Explicit opt-in endpoint: never silently send order requests to a default environment. */
+export const LIMIT_ORDER_API_BASE = (process.env.NEXT_PUBLIC_LIMIT_ORDER_API_BASE || '').replace(/\/+$/, '');
+/** Public additional signer ID; no authorization keys or app secrets belong in browser configuration. */
+export const LIMIT_ORDER_SIGNER_ID = process.env.NEXT_PUBLIC_LIMIT_ORDER_SIGNER_ID || '';
