@@ -54,6 +54,8 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 
 创建提交前把同一幂等键与输入保存在账号/服务地址隔离的本地恢复记录中；响应丢失、刷新后用相同请求恢复。记录没有 JWT/密钥。收到确定创建结果后清除；明确的准入拒绝可返回修改。查询和事件恢复以服务端状态为准，取消请求不等于已取消。
 
-尚待完成：风险确认交互、修改响应丢失/版本冲突的完整恢复操作、失败后重新创建快捷入口、实际页面和进程联调，以及实际费用能力核实。当前接口只提供报价费用及退款差额，页面不会把报价标为实付。
+风险确认使用 TokenData 的当前评估和后端返回的精确 flow；用户明确确认后仍以同一请求重试。修改响应不明时查询原订单，只有原版本失效才结束旧请求，不声称修改已成功。已确认失败的订单可复制固定条件为新草稿，需填写新有效期并再次确认。
+
+尚待完成：实际页面和进程联调，以及实际费用能力核实。当前接口只提供报价费用及退款差额，页面不会把报价标为实付。
 
 验证：`npm test -- src/lib/limit-order-input.test.ts src/api/limit-orders.test.ts src/components/LimitOrdersView.test.tsx`，`npx next typegen`，`npx tsc --noEmit`。完整静态导出需要原站点的 Privy app 配置；没有配置时，既有 onboarding 页面会在 prerender 调用 Privy hook 时失败。

@@ -16,6 +16,14 @@ import {
 } from "@/session/storage";
 import { ApiError } from "@/api/envelope";
 import * as api from "@/api/limit-orders";
+import {
+  riskScope,
+  getOrderRisk,
+  canConfirmRisk,
+  confirmOrderRisk,
+  type RiskScope,
+  type RiskAssessment,
+} from "@/api/token-risk";
 import { getTokenInfo, formatUnits } from "@/api/trade";
 import {
   orderInput,
@@ -81,6 +89,11 @@ function OrderWorkspace() {
   const [review, setReview] = useState<PendingLimitOrder>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [risk, setRisk] = useState<{
+    scope: RiskScope;
+    assessment: RiskAssessment;
+  }>();
   const [sent, setSent] = useState(false);
   const [auth, setAuth] = useState<api.OrderAuthorization>();
   const [consent, setConsent] = useState(false);
@@ -107,6 +120,7 @@ function OrderWorkspace() {
   function change<K extends keyof OrderDraft>(key: K, value: OrderDraft[K]) {
     setDraft((d) => ({ ...d, [key]: value }));
     setReview(undefined);
+    setRisk(undefined);
     setAuth(undefined);
   }
   async function run(action: (bearer: string) => Promise<void>) {
@@ -124,6 +138,8 @@ function OrderWorkspace() {
   }
   useEffect(() => {
     setOrders([]);
+    setNotice("");
+    setRisk(undefined);
     setSelected(undefined);
     setEvents([]);
     setEditing(undefined);
@@ -252,6 +268,34 @@ function OrderWorkspace() {
       setSent(false);
     });
   }
+  async function reconcileModification(
+    bearer: string,
+    pending: PendingLimitOrder,
+  ) {
+    if (!pending.edit) return;
+    const fresh = await api.getOrder(bearer, pending.edit.order_id);
+    if (current.current !== bearer) return;
+    setSelected(fresh);
+    if (
+      fresh.state === 1 &&
+      BigInt(fresh.version) <= BigInt(pending.edit.version)
+    ) {
+      setNotice(
+        "原版本仍在等待中，修改是否完成尚未确认。可重试同一修改请求，不能据此另建订单。",
+      );
+      return;
+    }
+    const owner = session?.user?.identifier;
+    if (!owner) return;
+    savePendingLimitOrder(owner, LIMIT_ORDER_API_BASE);
+    setReview(undefined);
+    setRisk(undefined);
+    setEditing(undefined);
+    setSent(false);
+    setNotice(
+      "原版本已失效，已读取原订单的最新事实。请核对详情；这不代表本次修改一定成功，系统没有另建订单。",
+    );
+  }
   async function submit() {
     if (!review) return;
     await run(async (bearer) => {
@@ -267,11 +311,25 @@ function OrderWorkspace() {
       } catch (e) {
         if (
           e instanceof ApiError &&
+          e.reason === "TOKEN_RISK_CONFIRMATION_REQUIRED"
+        ) {
+          const scope = riskScope(e, review.input);
+          const assessment = await getOrderRisk(bearer, scope);
+          if (current.current === bearer) setRisk({ scope, assessment });
+          return;
+        }
+        if (e instanceof ApiError && e.code === 420800 && review.edit) {
+          await reconcileModification(bearer, review);
+          return;
+        }
+        if (
+          e instanceof ApiError &&
           [100800, 430800, 430801, 430802, 420802].includes(e.code)
         ) {
           savePendingLimitOrder(owner, LIMIT_ORDER_API_BASE);
           if (current.current === bearer) {
             setReview(undefined);
+            setRisk(undefined);
             setSent(false);
           }
         }
@@ -285,14 +343,20 @@ function OrderWorkspace() {
         ...old.filter((o) => o.order_id !== order.order_id),
       ]);
       setReview(undefined);
+      setRisk(undefined);
       setEditing(undefined);
     });
   }
-  async function edit(order: api.LimitOrder) {
+  async function edit(order: api.LimitOrder, recreate = false) {
     if (review) return;
     await run(async (bearer) => {
       const fresh = await api.getOrder(bearer, order.order_id);
-      if (fresh.state !== 1) throw new Error("只有等待中的挂单可以修改。");
+      if (fresh.state !== (recreate ? 5 : 1))
+        throw new Error(
+          recreate
+            ? "原订单尚未确认失败，不能据此重新创建。"
+            : "只有等待中的挂单可以修改。",
+        );
       const c = fresh.configuration;
       const info = await getTokenInfo(c.chain, c.token);
       if (current.current !== bearer) return;
@@ -312,12 +376,18 @@ function OrderWorkspace() {
             ? String((c.intent.slippage_bps ?? 0) / 100)
             : "",
         feeCap: c.fee_cap_usd,
-        expiry: c.expires_at,
+        expiry: recreate ? "" : c.expires_at,
         sourceWallet: c.intent.source_wallet_id,
         destinationWallet: c.intent.destination_wallet_id,
       });
-      setEditing(fresh);
+      setEditing(recreate ? undefined : fresh);
+      setNotice(
+        recreate
+          ? "已复制失败订单的固定条件。请设置新的有效期并检查授权，确认后才会创建新订单。"
+          : "修改仅对原订单当前版本生效；提交前会再次检查授权与风险。",
+      );
       setReview(undefined);
+      setRisk(undefined);
       setSelected(fresh);
     });
   }
@@ -339,6 +409,11 @@ function OrderWorkspace() {
       <div className="rounded border border-amber-500/50 p-3 text-sm">
         等待中不冻结资金；到价不保证成交价格。失败也可能产生网络费用。比例在服务端创建时换算为固定数量，之后不随余额变化。现有接口未提供可配置防夹选项。
       </div>
+      {notice && (
+        <p role="status" className="rounded border border-border p-3">
+          {notice}
+        </p>
+      )}
       {error && (
         <p role="alert" className="break-all text-red-400">
           {error}
@@ -608,6 +683,92 @@ function OrderWorkspace() {
               >
                 {busy ? "处理中…" : "确认提交 / 重试同一请求"}
               </button>
+              {sent && review.edit && (
+                <button
+                  className={button}
+                  disabled={busy}
+                  onClick={() =>
+                    void run((bearer) => reconcileModification(bearer, review))
+                  }
+                >
+                  核对原订单修改结果
+                </button>
+              )}
+              {risk && (
+                <div
+                  role="region"
+                  aria-label="本次订单风险确认"
+                  className="space-y-2 rounded border border-amber-500 p-3"
+                >
+                  <h3>当前风险等级 R{risk.assessment.grade}</h3>
+                  <button
+                    className={button}
+                    disabled={busy}
+                    onClick={() => {
+                      const owner = session?.user?.identifier;
+                      if (!owner) return;
+                      try {
+                        savePendingLimitOrder(owner, LIMIT_ORDER_API_BASE);
+                        setReview(undefined);
+                        setRisk(undefined);
+                        setSent(false);
+                        setNotice(
+                          "未确认本次风险。该请求已被准入拒绝，可修改条件后重新预览。",
+                        );
+                      } catch (e) {
+                        setError(message(e));
+                      }
+                    }}
+                  >
+                    不确认，返回修改
+                  </button>
+                  <p>
+                    仅确认本次挂单流程的当前风险版本；未来风险变化仍会在执行时重新检查。
+                  </p>
+                  {(risk.assessment.items ?? []).map((item, i) => (
+                    <p key={`${item.code}:${i}`}>
+                      {item.title || item.code} {item.detail}
+                    </p>
+                  ))}
+                  <button
+                    className={button}
+                    disabled={busy || !canConfirmRisk(risk.assessment)}
+                    onClick={() =>
+                      void run(async (bearer) => {
+                        await confirmOrderRisk(
+                          bearer,
+                          risk.scope,
+                          risk.assessment,
+                        );
+                        if (current.current === bearer) {
+                          setRisk(undefined);
+                          setNotice(
+                            "风险确认已记录。请重试同一挂单请求，仍需以服务端返回结果为准。",
+                          );
+                        }
+                      })
+                    }
+                  >
+                    已阅读风险，确认本次流程
+                  </button>
+                  <button
+                    className={button}
+                    disabled={busy}
+                    onClick={() =>
+                      void run(async (bearer) => {
+                        const assessment = await getOrderRisk(
+                          bearer,
+                          risk.scope,
+                        );
+                        if (current.current === bearer)
+                          setRisk({ ...risk, assessment });
+                      })
+                    }
+                  >
+                    刷新风险证据
+                  </button>
+                </div>
+              )}
               {!sent && (
                 <button className={button} onClick={() => setReview(undefined)}>
                   返回修改
@@ -669,6 +830,15 @@ function OrderWorkspace() {
                     onClick={() => void edit(o)}
                   >
                     修改
+                  </button>
+                )}
+                {o.state === 5 && (
+                  <button
+                    className={button}
+                    disabled={busy || !!review}
+                    onClick={() => void edit(o, true)}
+                  >
+                    以此重新创建
                   </button>
                 )}
                 {o.state <= 3 && (

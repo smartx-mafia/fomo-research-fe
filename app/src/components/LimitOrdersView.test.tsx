@@ -40,18 +40,27 @@ vi.mock("@/api/limit-orders", async (importOriginal) => ({
   listOrders: vi.fn().mockResolvedValue({ orders: [], next_cursor: "" }),
   getOrder: vi.fn(),
   orderEvents: vi.fn().mockResolvedValue([]),
-  orderAuthorization: vi
-    .fn()
-    .mockResolvedValue({
-      authorized: true,
-      signer_id: "signer",
-      checked_at: "now",
-    }),
+  orderAuthorization: vi.fn().mockResolvedValue({
+    authorized: true,
+    signer_id: "signer",
+    checked_at: "now",
+  }),
   createOrder: vi.fn(),
+  modifyOrder: vi.fn(),
 }));
+vi.mock("@/api/token-risk", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/api/token-risk")>()),
+  getOrderRisk: vi.fn(),
+  confirmOrderRisk: vi.fn(),
+}));
+import * as riskAPI from "@/api/token-risk";
 import { LimitOrdersView } from "./LimitOrdersView";
 import * as api from "@/api/limit-orders";
-import { readPendingLimitOrder } from "@/session/storage";
+import { ApiError } from "@/api/envelope";
+import {
+  readPendingLimitOrder,
+  savePendingLimitOrder,
+} from "@/session/storage";
 beforeEach(() => {
   const values = new Map<string, string>();
   vi.stubGlobal("localStorage", {
@@ -60,6 +69,7 @@ beforeEach(() => {
     removeItem: (k: string) => values.delete(k),
   });
   vi.clearAllMocks();
+  vi.mocked(api.listOrders).mockResolvedValue({ orders: [], next_cursor: "" });
 });
 afterEach(() => {
   cleanup();
@@ -119,5 +129,165 @@ it("replays the identical persisted creation after response loss and page reopen
     expect(
       readPendingLimitOrder("alice", "http://localhost:8083"),
     ).toBeUndefined(),
+  );
+});
+
+const recoveryInput: api.OrderInput = {
+  scenario: 1,
+  intent: {
+    origin_chain: "solana:mainnet",
+    destination_chain: "solana:mainnet",
+    origin_asset: "cash",
+    destination_asset: "token",
+    source_wallet_id: "wallet",
+    destination_wallet_id: "wallet",
+    amount_in_raw: "1000000",
+    side: 3,
+    fee_policy: 1,
+  },
+  target_usd: "2",
+  fee_cap_usd: "1",
+  expires_at: "2030-01-01T00:00:00Z",
+};
+function recoveryOrder(version: string, state = 1): api.LimitOrder {
+  return {
+    order_id: "original",
+    version,
+    event_version: version,
+    state,
+    reason: "",
+    cancel_requested: false,
+    needs_attention: false,
+    created_at: "",
+    updated_at: "",
+    configuration: {
+      ...recoveryInput,
+      chain: "solana",
+      token: "token",
+      target_usd: "2",
+      expires_at: "2030-01-01T00:00:00Z",
+    },
+  };
+}
+it("checks the original after a modification conflict without creating or applying a new version", async () => {
+  savePendingLimitOrder("alice", "http://localhost:8083", {
+    key: "pending-edit",
+    input: recoveryInput,
+    edit: { order_id: "original", version: "9007199254740992" },
+  });
+  vi.mocked(api.modifyOrder).mockRejectedValue(
+    new ApiError("business", 420800, "conflict", "LIMITORDER_VERSION_CONFLICT"),
+  );
+  vi.mocked(api.getOrder).mockResolvedValue(recoveryOrder("9007199254740993"));
+  const user = userEvent.setup();
+  render(<LimitOrdersView />);
+  await user.click(
+    await screen.findByRole("button", { name: "确认提交 / 重试同一请求" }),
+  );
+  await screen.findByText(/原版本已失效/);
+  expect(api.createOrder).not.toHaveBeenCalled();
+  expect(api.modifyOrder).toHaveBeenCalledTimes(1);
+  expect(vi.mocked(api.modifyOrder).mock.calls[0][1]).toEqual({
+    order_id: "original",
+    version: "9007199254740992",
+  });
+  expect(
+    readPendingLimitOrder("alice", "http://localhost:8083"),
+  ).toBeUndefined();
+});
+it("retains an uncertain modification when a read still sees the same waiting version", async () => {
+  savePendingLimitOrder("alice", "http://localhost:8083", {
+    key: "pending-edit",
+    input: recoveryInput,
+    edit: { order_id: "original", version: "7" },
+  });
+  vi.mocked(api.getOrder).mockResolvedValue(recoveryOrder("7"));
+  const user = userEvent.setup();
+  render(<LimitOrdersView />);
+  await user.click(
+    await screen.findByRole("button", { name: "核对原订单修改结果" }),
+  );
+  await screen.findByText(/修改是否完成尚未确认/);
+  expect(
+    readPendingLimitOrder("alice", "http://localhost:8083")?.edit?.version,
+  ).toBe("7");
+  expect(api.createOrder).not.toHaveBeenCalled();
+  expect(api.modifyOrder).not.toHaveBeenCalled();
+});
+it("copies a confirmed failed order into a draft without automatically creating", async () => {
+  const failed = recoveryOrder("1", 5);
+  vi.mocked(api.listOrders).mockResolvedValue({
+    orders: [failed],
+    next_cursor: "",
+  });
+  vi.mocked(api.getOrder).mockResolvedValue(failed);
+  const user = userEvent.setup();
+  render(<LimitOrdersView />);
+  await user.click(await screen.findByRole("button", { name: "以此重新创建" }));
+  await screen.findByText(/已复制失败订单的固定条件/);
+  expect((screen.getByLabelText("数量 / 比例") as HTMLInputElement).value).toBe(
+    "1",
+  );
+  expect((screen.getByLabelText(/有效期/) as HTMLInputElement).value).toBe("");
+  expect(api.createOrder).not.toHaveBeenCalled();
+  expect(api.modifyOrder).not.toHaveBeenCalled();
+});
+it("requires explicit risk confirmation and retries the same creation identity", async () => {
+  savePendingLimitOrder("alice", "http://localhost:8083", {
+    key: "same-risk-key",
+    input: recoveryInput,
+  });
+  const scope = {
+    chain: "solana",
+    address: "token",
+    flow_id: "fastswap:limit:original:1",
+  };
+  vi.mocked(api.createOrder)
+    .mockRejectedValueOnce(
+      new ApiError(
+        "business",
+        430403,
+        "confirmation required",
+        "TOKEN_RISK_CONFIRMATION_REQUIRED",
+        undefined,
+        undefined,
+        undefined,
+        scope,
+      ),
+    )
+    .mockResolvedValueOnce(recoveryOrder("1"));
+  vi.mocked(api.getOrder).mockResolvedValue(recoveryOrder("1"));
+  const assessment = {
+    mode: "enforce",
+    grade: 4,
+    buy_action: "confirm",
+    confirmation_version: "risk-version",
+    items: [{ code: "known_risk", title: "已知风险", detail: "测试风险说明" }],
+  };
+  vi.mocked(riskAPI.getOrderRisk).mockResolvedValue(assessment);
+  vi.mocked(riskAPI.confirmOrderRisk).mockResolvedValue(undefined);
+  const user = userEvent.setup();
+  render(<LimitOrdersView />);
+  await user.click(
+    await screen.findByRole("button", { name: "确认提交 / 重试同一请求" }),
+  );
+  await screen.findByText("已知风险 测试风险说明");
+  expect(riskAPI.confirmOrderRisk).not.toHaveBeenCalled();
+  await user.click(
+    screen.getByRole("button", { name: "已阅读风险，确认本次流程" }),
+  );
+  await screen.findByText(/风险确认已记录/);
+  expect(riskAPI.confirmOrderRisk).toHaveBeenCalledWith(
+    "token",
+    scope,
+    assessment,
+  );
+  expect(api.createOrder).toHaveBeenCalledTimes(1);
+  await user.click(
+    screen.getByRole("button", { name: "确认提交 / 重试同一请求" }),
+  );
+  await waitFor(() => expect(api.createOrder).toHaveBeenCalledTimes(2));
+  expect(vi.mocked(api.createOrder).mock.calls[1]).toEqual(
+    vi.mocked(api.createOrder).mock.calls[0],
   );
 });
