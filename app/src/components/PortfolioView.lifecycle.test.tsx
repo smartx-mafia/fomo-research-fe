@@ -13,6 +13,11 @@ vi.mock('@/components/PortfolioProfile', () => ({PortfolioProfile: () => null}))
 vi.mock('@/components/PortfolioCycles', () => ({ClosedPortfolioPositions: () => null, PortfolioCycleTrades: () => null}));
 vi.mock('@/components/OpinionComposer', () => ({OpinionComposer: () => <div>Opinion dialog</div>}));
 vi.mock('@/hooks/useLivePortfolio', () => ({useLivePortfolio: (data: unknown) => data}));
+vi.mock('@/api/portfolio-parts', async load => {
+  const actual = await load<typeof import('@/api/portfolio-parts')>();
+  const {fixtureReader} = await import('@/test/portfolio-parts-fixture');
+  return {...actual, getPortfolioPart: fixtureReader(control.fetch)};
+});
 import {PortfolioView} from './PortfolioView';
 
 function data(symbol: string): PortfolioReply {

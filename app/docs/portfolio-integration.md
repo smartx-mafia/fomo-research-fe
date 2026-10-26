@@ -1,30 +1,33 @@
-# Portfolio unified user API migration
+# Portfolio progressive user API integration
 
-2026-09-13: the Portfolio page uses `/v1/users/{user_identifier}/portfolio` with the signed-in platform identifier, never a wallet address or handle.
+2026-10-26: `PortfolioView` and `UserProfileView.PositionsTab` share `ProgressivePortfolio` and `useProgressivePortfolio`. Both use the target platform identifier, never a wallet address or handle.
 
-## Requests
+## Requests and lifecycle
 
-- Overview supplies positions, cash routes, PnL and all four balance curves. Manual overview refresh sends `force_refresh=true` for cash; automatic revalidation keeps the normal cache policy.
-- Closed history uses `/closed?limit=20&cursor=...`; cursors are opaque. Rows retain `cycle_key`, history epoch and completeness. Zero legacy entry IDs do not invalidate a cycle with a real key.
-- Cycle detail uses `/position?chain=...&asset=...&cycle_key=...`. It returns the selected position and all successful trades, without frontend pagination. Mismatched identity, duplicate trades and oversized results fail visibly.
-- Global trades use `/trades?before_id=...&limit=50`. Integer cursors remain strings without Number conversion. Execution prices and total fees are displayed from server values, never reconstructed from fees.
-- Portfolio balances and PnL share the overview request. The removed `/v1/portfolio/balance/curve` is no longer called. The chart draws only PnL; Total assets is displayed as a numeric field for the selected time, without a separate curve or metric switch. Unavailable current values do not erase PnL history.
+- Four optional-auth GET endpoints under `/v1/users/{identifier}/portfolio`: `history-curves`, `cash`, `positions`, `current`. All start independently with one UUID `read_id` and frozen `force_refresh` setting. Later requests carry the server snapshot ID. Responses from obsolete sessions, rounds or periods are discarded even when cancellation loses a race.
+- The selected period defaults to `1d`; changing it requests only history/current while the round is valid. Expired rounds and filter changes start a fresh round. Historical window context is reused only inside its matching period and snapshot.
+- Manual refresh forces the cash cache; focus after expiry and `smartx:portfolio-refresh` start ordinary new rounds. There is no background account polling. Any future timer must create a new read ID, not reread a frozen current snapshot.
+- Open positions explicitly request 20 rows. Cursor requests retain the original round, snapshot and filters, even after the 30-second read expiry. Page expiry is independent. Only one next-page request runs at once; cursor application and row identities are checked. Snapshot/cursor errors restart once, then show an actionable error rather than loop.
+- Missing pagination metadata or a response exceeding the requested page size fails visibly. The frontend does not silently fall back to the full overview endpoint.
+- Retry is explicit; parameter/auth/target errors are not automatically retried. Invalid bearer tokens show sign-in recovery and never trigger anonymous fallback. Errors retain code, action and trace ID.
 
-## Identity and quality
+## Display and financial semantics
 
-SWR keys include user identity and authentication context. Closed pagination and selected cycles reset when the account or history epoch changes. A missing user identifier is shown as an identity error rather than issuing an ambiguous request. Optional-auth endpoints still reject invalid JWTs; a rejected active session is cleared.
+- Profile, cash, history, positions and current amounts render independently. Old summary/history blocks may remain explicitly marked stale during a refresh; pagination always resets. No client-side sum of loaded holdings is used for account totals.
+- Current total assets, positions value, cash, PnL and ROI come from `current`. Cash may display first from `cash`; once current succeeds its cash field is authoritative, including an unknown value. Amounts stay decimal strings. Empty values are unknown, not zero.
+- Summary cards and the chart show the selected period, rather than fetching all four periods up front. The chart supports PnL and total assets and renders actual sample times. Historical and current data are combined only for matching read/snapshot/window/context/rules. Equal-time current points replace history only in the derived view; history is never mutated. Missing ROI is not reconstructed.
+- The legacy `useLivePortfolio` revaluation path is no longer used on these pages. It must not recompute account totals from a paginated or filtered list. Position sort order and membership remain server-owned.
+- Wallet cash-route details are not part of these four endpoints. Cash here is canonical Solana USDC.
 
-`shares_raw` includes pending settlement. The table displays pending shares and `sellable_shares` separately; neither grants execution authorization. Missing precision is distinct from zero decimals. Incomplete quantities cannot be presented as a confirmed empty account. Cash read errors leave cash and total assets unavailable while independent holdings remain visible.
+## Preserved consumers
 
-Market data refresh uses bounded concurrency every 30 seconds, not Portfolio polling. Only quotes newer than `price_as_of` revalue open positions, total holdings and assets. Exact decimal arithmetic preserves quantities/costs; PnL and Balance current values update while all historical curve points, cumulative buy/sell values and realized PnL stay unchanged. Failed quotes retain the last available valuation. Server-provided stablecoin fallback prices are preserved until a newer actual quote arrives.
+Closed history, cycle activity, trades, Opinion, profile and social APIs keep their existing flows. Deposit still uses authenticated `/v1/portfolio` for cash discovery/recovery. Square position details also retain their existing read helper. The legacy API functions and chart components remain available to other callers; these two overview pages do not call the old overview.
 
-## Existing execution consumers
+## Verification and deployment
 
-Deposit still uses the existing authenticated `/v1/portfolio` helper for its cash discovery and recovery workflow. The old `/v1/portfolio/holding` capability has no unified replacement and is retained. Transfers, trades, withdrawals and sweep keep their existing authentication and execution checks.
+Tests cover independent arrival, session isolation, period changes, opaque cursors, read/page expiry, bounded snapshot recovery, exact numeric parsing, missing values, immutable curve merging and cycle navigation. TypeScript validation is also required.
 
-## Verification
-
-Coverage includes unified paths and user identity, opaque/integer cursors, cycles with zero legacy IDs, response identity checks, settlement shares, balance windows, precision, missing values, account changes, cycle navigation, and live revaluation without historical mutation.
+Before deploying, verify the backend pagination extension with a real account containing more than 20 positions: pages must be 20/20/5 for 45 positions with stable snapshot identity, correct total count, usable cursor and page expiry. A 200 envelope alone does not establish support. Gateway read-ID affinity and actual deployed data quality still require environment acceptance.
 
 ## Profile images (2026-10-13)
 

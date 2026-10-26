@@ -10,6 +10,13 @@ vi.mock('@/components/PortfolioActivity', () => ({PortfolioActivity: () => null}
 vi.mock('@/components/PortfolioCycles', () => ({ClosedPortfolioPositions: () => null, PortfolioCycleTrades: () => null}));
 vi.mock('@/components/OpinionComposer', () => ({OpinionComposer: () => null}));
 vi.mock('@/hooks/useLivePortfolio', () => ({useLivePortfolio: (data: unknown) => data}));
+vi.mock('@/hooks/useProgressivePortfolio', async () => {
+  const {partFixture} = await import('@/test/portfolio-parts-fixture');
+  return {useProgressivePortfolio: () => ({
+    parts: Object.fromEntries((['history-curves', 'cash', 'positions', 'current'] as const).map(part => [part, {loading: false, error: state.error, data: state.data ? partFixture(state.data, part, {read_id: 'test', window: '1d', force_refresh: false}) : undefined}])),
+    window: '1d', filters: {sort: 'value_desc'}, selectWindow: vi.fn(), selectFilters: vi.fn(), retry: vi.fn(), refresh: vi.fn(), more: vi.fn(), moreLoading: false,
+  })};
+});
 import {PortfolioView} from './PortfolioView';
 
 describe('Portfolio deployed response presentation', () => {
@@ -17,7 +24,7 @@ describe('Portfolio deployed response presentation', () => {
     state.data = normalizePortfolio({positions: [], pnl: {d1: {amount_usd: '4', baseline_as_of: '2026-09-08T00:00:00Z', curve: [{at: '2026-09-09T00:00:00Z', pnl_usd: '0'}, {at: '2026-09-09T01:00:00Z', pnl_usd: '4'}]}}});
     const html = renderToStaticMarkup(<PortfolioView />);
     expect(html).toContain('PnL performance');
-    expect(html).toContain('data-testid="pnl-segment"');
+    expect(html).toContain('Portfolio historical samples');
     expect(html).toContain('2026-09-08 08:00:00 UTC');
   });
   beforeEach(() => {state.data = undefined; state.error = undefined;});

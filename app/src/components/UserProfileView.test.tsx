@@ -48,6 +48,11 @@ vi.mock('@/session/storage', () => ({
   clearSite: vi.fn(),
 }));
 
+vi.mock('@/api/portfolio-parts', async load => {
+  const actual = await load<typeof import('@/api/portfolio-parts')>();
+  const {fixtureReader} = await import('@/test/portfolio-parts-fixture');
+  return {...actual, getPortfolioPart: fixtureReader((await import('@/api/portfolio')).getUserPortfolio)};
+});
 import {UserProfileView} from './UserProfileView';
 import {getUserPortfolio, getUserClosedPositions, type PortfolioPosition} from '@/api/portfolio';
 
@@ -123,32 +128,24 @@ describe('UserProfileView 客态头部', () => {
     expect(background.getAttribute('src')).toBe('https://images/background.png');
     expect(background.parentElement?.className).toContain('aspect-[3/1]');
   });
-  it('loads the target user curves and retains them when refreshing fails', async () => {
-    vi.mocked(getUserPortfolio).mockResolvedValue({positions: [], partial_errors: [],
-      pnl: {d1: {amount_usd: '-12', curve: []}},
-      balance: {d1: {amount_usd: '1234.56', curve: [], simulated: false}},
-    });
+  it('loads target-user summary and retains an explicitly stale snapshot after refresh failure', async () => {
+    vi.mocked(getUserPortfolio).mockResolvedValue({positions: [], partial_errors: [], total_assets_usd: '1234.56', pnl: {d1: {amount_usd: '-12', curve: []}}});
     setup();
-    await waitFor(() => expect(screen.getByTestId('balance-total').textContent).toBe('$1,234.56'));
+    await waitFor(() => expect(screen.getAllByText('$1,234.56').length).toBeGreaterThan(0));
     expect(getUserPortfolio).toHaveBeenCalledWith('target-identifier', 'jwt');
-    expect(screen.getByTestId('pnl-total').textContent).toBe('$-12');
-    expect(within(screen.getByRole('region', {name: 'Portfolio PnL'})).getByRole('img')).toBeTruthy();
-    expect(within(screen.getByRole('region', {name: 'Portfolio assets'})).getByRole('img')).toBeTruthy();
+    expect(screen.getAllByText('$-12').length).toBeGreaterThan(0);
     vi.mocked(getUserPortfolio).mockRejectedValueOnce(new Error('offline'));
-    await userEvent.click(screen.getByRole('button', {name: 'Refresh assets'}));
-    await waitFor(() => expect(screen.getByText(/last available assets snapshot/)).toBeTruthy());
-    expect(screen.getByTestId('balance-total').textContent).toBe('$1,234.56');
-    expect(screen.getByTestId('pnl-total').textContent).toBe('$-12');
+    await userEvent.click(screen.getByRole('button', {name: /^Refresh$/}));
+    await waitFor(() => expect(screen.getAllByText(/previous snapshot/).length).toBeGreaterThan(0));
+    expect(screen.getAllByText('$1,234.56').length).toBeGreaterThan(0);
   });
-  it('clears the previous user curves while the next user is loading', async () => {
-    vi.mocked(getUserPortfolio).mockResolvedValueOnce({positions: [], partial_errors: [],
-      pnl: {d1: {amount_usd: '123', curve: []}},
-    });
+  it('clears the previous user summary while the next user is loading', async () => {
+    vi.mocked(getUserPortfolio).mockResolvedValueOnce({positions: [], partial_errors: [], pnl: {d1: {amount_usd: '123', curve: []}}});
     const view = setup();
-    await waitFor(() => expect(screen.getByTestId('pnl-total').textContent).toBe('$123'));
+    await waitFor(() => expect(screen.getAllByText('$123').length).toBeGreaterThan(0));
     vi.mocked(getUserPortfolio).mockReturnValueOnce(new Promise(() => {}));
     view.rerender(<UserProfileView identifier="another-user" />);
-    expect(screen.queryByTestId('pnl-total')).toBeNull();
+    expect(screen.queryByText('$123')).toBeNull();
     expect(getUserPortfolio).toHaveBeenLastCalledWith('another-user', 'jwt');
   });
   it('渲染展示名回退 remark → nickname → @username，并显示关注计数', async () => {

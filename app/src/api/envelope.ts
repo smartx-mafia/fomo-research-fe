@@ -50,6 +50,7 @@ export class ApiError extends Error {
   readonly rawBody?: string;
   /** 业务失败的结构化细节，例如审查 rule_id；不得直接当用户文案展示。 */
   readonly metadata?: Record<string, unknown>;
+  readonly action?: {type: string};
 
   constructor(
     kind: FailureKind,
@@ -60,6 +61,7 @@ export class ApiError extends Error {
     sentRequestID?: string,
     rawBody?: string,
     metadata?: Record<string, unknown>,
+    action?: {type: string},
   ) {
     super(msg);
     this.name = 'ApiError';
@@ -70,6 +72,7 @@ export class ApiError extends Error {
     this.sentRequestID = sentRequestID;
     this.rawBody = rawBody;
     this.metadata = metadata;
+    this.action = action;
   }
 }
 
@@ -201,6 +204,7 @@ export async function call<T>(path: string, opts: CallOptions = {}): Promise<Cal
       sentRequestID,
       undefined,
       env.metadata,
+      env.action,
     );
   }
   // code=200 但 data 缺席 = 回包形状与契约不符。也当失败抛，不要让

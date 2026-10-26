@@ -26,14 +26,12 @@ import {useEffect, useState} from 'react';
 import {ApiError} from '@/api/envelope';
 import {
   getUserClosedPositions,
-  getUserPortfolio,
   getUserPortfolioTrades,
 } from '@/api/portfolio';
 import type {
   PortfolioClosedPosition,
   PortfolioCycleScope,
   PortfolioPosition,
-  PortfolioReply,
   PortfolioTrade,
   ProtoTimestamp,
 } from '@/api/portfolio';
@@ -55,8 +53,7 @@ import {getUserPublicProfile} from '@/api/users';
 import type {UserPublicProfile} from '@/api/users';
 import {ErrorPanel} from '@/components/ErrorPanel';
 import {ProfileBackground} from '@/components/ProfileBackground';
-import {PortfolioCycleTrades} from '@/components/PortfolioCycles';
-import {PortfolioBalanceChart, PortfolioPnlChart} from '@/components/PortfolioPnlChart';
+import {ProgressivePortfolio} from '@/components/ProgressivePortfolio';
 import {Button} from '@/components/ui/button';
 import {Input} from '@/components/ui/input';
 import {
@@ -673,107 +670,8 @@ function ProfilePage({identifier}: {identifier: string}) {
 // ── 持仓 Tab（portfolio.md 第一部分：客态总览 + closed） ────────────────────
 
 function PositionsTab({identifier, jwt}: {identifier: string; jwt?: string}) {
-  const [cycle, setCycle] = useState<PortfolioCycleScope>();
-  const [data, setData] = useState<PortfolioReply>();
-  const [error, setError] = useState<unknown>();
-  const [loading, setLoading] = useState(true);
-  const [reload, setReload] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    setError(undefined);
-    setLoading(true);
-    // Optional 档：匿名可看；坏 JWT 回 400000 且不降级，无会话就绝不传 bearer
-    getUserPortfolio(identifier, jwt)
-      .then((reply) => {
-        if (!cancelled) setData(reply);
-      })
-      .catch((cause) => {
-        if (!cancelled) setError(cause);
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [identifier, jwt, reload]);
-
-  const positions = data?.positions ?? [];
-  const pnl7 = data?.pnl?.d7?.amount_usd;
-  const pnlAll = data?.pnl?.all?.amount_usd ?? data?.pnl?.all_usd;
-
-  return (
-    <div className="space-y-4">
-      {error ? <ErrorLine error={error} onRetry={() => setReload((key) => key + 1)} pending={loading} /> : null}
-      {loading && !data ? <p className="py-10 text-center text-sm text-muted">加载中…</p> : null}
-      {data ? (
-        <>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-            <Stat label="总资产" value={money(data.total_assets_usd)} />
-            <Stat label="持仓市值" value={money(data.total_value_usd)} />
-            <Stat label="现金" value={money(data.cash_balance_usd)} />
-            <Stat label="7D 盈亏" value={money(pnl7)} tone={toneClass(pnl7)} />
-            <Stat label="累计盈亏" value={money(pnlAll)} tone={toneClass(pnlAll)} />
-          </div>
-          {data.partial_errors.length > 0 ? (
-            <p className="text-xs text-muted">部分链数据不完整（{data.partial_errors.length} 项），数值可能偏低。</p>
-          ) : null}
-
-          <PortfolioPnlChart pnl={data.pnl} balance={data.balance} loading={false} refreshing={loading} stale={!!error} observedAt={data.observed_at} onRefresh={() => setReload((key) => key + 1)} />
-          <PortfolioBalanceChart balance={data.balance} loading={false} refreshing={loading} stale={!!error} observedAt={data.observed_at} onRefresh={() => setReload((key) => key + 1)} />
-
-          {cycle ? <PortfolioCycleTrades key={`${identifier}:${jwt ?? 'anonymous'}:${JSON.stringify(cycle)}`} userIdentifier={identifier} bearer={jwt} scope={cycle} refreshKey={data} onClose={() => setCycle(undefined)} /> : null}
-
-          <div className="overflow-hidden rounded-xl border border-border bg-surface">
-            <p className="border-b border-border px-4 py-3 text-sm font-semibold">当前持仓</p>
-            {positions.length ? (
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[860px] text-left text-xs">
-                  <thead className="text-muted">
-                    <tr>
-                      <th className="p-3">Token</th>
-                      <th className="p-3 text-right">持仓量</th>
-                      <th className="p-3 text-right">成本</th>
-                      <th className="p-3 text-right">市值</th>
-                      <th className="p-3 text-right">总盈亏</th>
-                      <th className="p-3">活动历史</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {positions.map((position, index) => (
-                      <tr key={`${position.asset.chain}:${position.asset.token_address}:${position.opened_entry_id}:${index}`} className="border-t border-border">
-                        <td className="p-3">
-                          <TokenCell symbol={position.symbol} logo={position.logo} chain={position.asset.chain} address={position.asset.token_address} />
-                        </td>
-                        <td
-                          className="p-3 text-right font-mono"
-                          title={position.decimals === undefined ? 'decimals 缺席：展示最小单位原值' : undefined}
-                        >
-                          {sharesText(position.shares_raw, position.decimals)}
-                        </td>
-                        <td className="p-3 text-right font-mono">{money(position.cost_basis_usd)}</td>
-                        <td className="p-3 text-right font-mono">{money(position.market_value_usd)}</td>
-                        <td className={`p-3 text-right font-mono font-semibold ${toneClass(position.total_pnl_usd)}`}>
-                          {money(position.total_pnl_usd)}
-                          <p className="text-[10px]">{ratioPercent(position.pnl_ratio)}</p>
-                        </td>
-                        <td className="p-3"><CycleActivityButton position={position} onOpen={setCycle} /></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            ) : (
-              <p className="p-8 text-center text-sm text-muted">暂无持仓。</p>
-            )}
-          </div>
-
-          <ClosedPositions identifier={identifier} jwt={jwt} onOpenCycle={setCycle} />
-        </>
-      ) : null}
-    </div>
-  );
+  return <ProgressivePortfolio key={`${identifier}:${jwt ?? 'anonymous'}`} identifier={identifier} bearer={jwt}
+    renderHistory={(open) => <ClosedPositions key={`${identifier}:${jwt ?? 'anonymous'}`} identifier={identifier} jwt={jwt} onOpenCycle={open} />} />;
 }
 
 function CycleActivityButton({position, onOpen}: {position: PortfolioPosition | PortfolioClosedPosition; onOpen: (scope: PortfolioCycleScope) => void}) {

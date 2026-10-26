@@ -10,6 +10,11 @@ vi.mock('@/session/storage', () => ({useSession: () => ({jwt: control.jwt, user:
 vi.mock('@/components/PortfolioActivity', () => ({PortfolioActivity: () => null, TradeRow: ({trade}: {trade: {trade_id: string}}) => <tr><td>{trade.trade_id}</td></tr>}));
 vi.mock('@/components/OpinionComposer', () => ({OpinionComposer: () => null}));
 vi.mock('@/hooks/useLivePortfolio', () => ({useLivePortfolio: (data: unknown) => data}));
+vi.mock('@/api/portfolio-parts', async load => {
+  const actual = await load<typeof import('@/api/portfolio-parts')>();
+  const {fixtureReader} = await import('@/test/portfolio-parts-fixture');
+  return {...actual, getPortfolioPart: fixtureReader(control.portfolio)};
+});
 import {PortfolioView} from './PortfolioView';
 const asset = {chain: 'solana', chain_id: '792703809', kind: 'spl', token_address: 'MintA'};
 const closed = (id: string) => ({asset, symbol: 'CLOSED', logo: 'https://images.test/closed.png', opened_entry_id: id, cycle_key: id, closed_entry_id: '99', status: 'closed' as const, decimals: 0, buy_value_usd: '10', sell_value_usd: '15', avg_buy_price_usd: '1', avg_sell_price_usd: '1.5', realized_pnl_usd: '5', pnl_ratio: '0.25'});
