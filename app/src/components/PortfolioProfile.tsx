@@ -8,6 +8,7 @@ import {mediaErrorMessage} from '@/lib/profile-image';
 import {updateSessionUser} from '@/session/storage';
 import {ProfileMediaEditor} from './ProfileMediaEditor';
 import {ProfileBackground} from './ProfileBackground';
+import {NotificationEntry} from './NotificationEntry';
 
 export function PortfolioProfile({bearer, initialUser}: {bearer: string; initialUser: UserInfo}) {
   const [user, setUser] = useState(initialUser);
@@ -34,7 +35,7 @@ export function PortfolioProfile({bearer, initialUser}: {bearer: string; initial
         <div className="relative -mt-10 flex size-24 items-center justify-center overflow-hidden rounded-full border-4 border-surface bg-surface-2 sm:size-28">
           {user.avatar_url && failedAvatar !== user.avatar_url ? <img src={user.avatar_url} alt={`${name} avatar`} className="size-full object-cover" onError={() => setFailedAvatar(user.avatar_url)} /> : <UserRound className="size-10 text-muted" />}
         </div>
-        <div className="pt-4"><ProfileMediaEditor key={`${bearer}:${user.identifier}`} bearer={bearer} user={user} onSaved={(next) => {generation.current++; setUser(next); setError(undefined);}} /></div>
+        <div className="flex items-center gap-2 pt-4"><NotificationEntry language={user.language} /><ProfileMediaEditor key={`${bearer}:${user.identifier}`} bearer={bearer} user={user} onSaved={(next) => {generation.current++; setUser(next); setError(undefined);}} /></div>
       </div>
       <h2 className="mt-3 text-xl font-semibold">{name}</h2>
       {user.username ? <p className="mt-1 text-sm text-muted">@{user.username}</p> : null}

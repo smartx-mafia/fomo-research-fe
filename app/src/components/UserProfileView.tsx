@@ -53,6 +53,7 @@ import {getUserPublicProfile} from '@/api/users';
 import type {UserPublicProfile} from '@/api/users';
 import {ErrorPanel} from '@/components/ErrorPanel';
 import {ProfileBackground} from '@/components/ProfileBackground';
+import {NotificationEntry} from '@/components/NotificationEntry';
 import {ProgressivePortfolio} from '@/components/ProgressivePortfolio';
 import {Button} from '@/components/ui/button';
 import {Input} from '@/components/ui/input';
@@ -548,9 +549,12 @@ function ProfilePage({identifier}: {identifier: string}) {
             </div>
             <div className="flex shrink-0 items-center gap-2">
               {isSelf ? (
-                <a href="/settings/profile" className="rounded-md border border-border px-3 py-1.5 text-sm text-foreground hover:text-accent">
-                  编辑资料
-                </a>
+                <>
+                  <NotificationEntry language={session?.user?.language} />
+                  <a href="/settings/profile" className="rounded-md border border-border px-3 py-1.5 text-sm text-foreground hover:text-accent">
+                    编辑资料
+                  </a>
+                </>
               ) : jwt ? (
                 <>
                   <Button type="button" variant={following ? 'secondary' : 'default'} disabled={followPending} onClick={() => void toggleFollow()}>
