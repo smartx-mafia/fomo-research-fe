@@ -31,6 +31,7 @@ export function ToggleRow({
         {desc && <div className="text-muted-foreground mt-0.5 text-xs">{desc}</div>}
       </div>
       <Switch.Root
+        aria-label={typeof label === 'string' ? label : undefined}
         checked={checked}
         disabled={disabled}
         onCheckedChange={onToggle}

@@ -144,10 +144,16 @@ export function recordKeyExport(bearer: string, chain: KeyChain, address: string
 // ── Notifications ──────────────────────────────────────────────────────────
 
 export type NotificationSettings = {
-  /** 系统推送总开关。 */
+  /** 新站内通知及系统推送的总开关。 */
   push?: boolean;
   /** “我关注的人”类通知。 */
   following?: boolean;
+  deposits_withdrawals?: boolean;
+  friend_trades?: boolean;
+  friend_opinions?: boolean;
+  new_followers?: boolean;
+  announcements?: boolean;
+  minimum_trade_usd?: string;
 };
 
 export function getNotificationSettings(bearer: string, signal?: AbortSignal) {
@@ -159,6 +165,32 @@ export const setPushEnabled = (bearer: string, enabled: boolean) =>
 
 export const setFollowingEnabled = (bearer: string, enabled: boolean) =>
   call<NotificationSettings>('/v1/settings/notifications/following', {method: 'POST', bearer, body: {enabled}});
+
+export type NotificationToggle = Exclude<keyof NotificationSettings, 'minimum_trade_usd'>;
+const notificationPaths: Record<NotificationToggle, string> = {
+  push: 'push', following: 'following', deposits_withdrawals: 'deposits-withdrawals',
+  friend_trades: 'friends/trades', friend_opinions: 'friends/opinions',
+  new_followers: 'new-followers', announcements: 'announcements',
+};
+export function setNotificationToggle(bearer: string, key: NotificationToggle, enabled: boolean) {
+  return call<NotificationSettings>(`/v1/settings/notifications/${notificationPaths[key]}`, {method: 'POST', bearer, body: {enabled}});
+}
+export function setMinimumTradeUSD(bearer: string, value: string) {
+  return call<NotificationSettings>('/v1/settings/notifications/minimum-trade-usd', {method: 'POST', bearer, body: {value}});
+}
+export type NotificationPerson = {
+  target: {type: 'user' | 'smart_money_user' | 'smart_money'; id: string};
+  display_name: string; username: string; avatar_url: string; remark: string;
+  trades: boolean; opinions: boolean; trades_effective: boolean; opinions_effective: boolean;
+};
+export type NotificationPeople = {people: NotificationPerson[]; total: number; page: number; page_size: number};
+export function getNotificationPeople(bearer: string, query: string, page: number) {
+  const params = new URLSearchParams({query, page: String(page), page_size: '20'});
+  return call<NotificationPeople>(`/v1/settings/notifications/people?${params}`, {bearer});
+}
+export function setPersonNotifications(bearer: string, target: NotificationPerson['target'], preference: {trades?: boolean; opinions?: boolean}) {
+  return call<{matched: number}>('/v1/settings/notifications/people', {method: 'POST', bearer, body: {scope: 'targets', targets: [target], ...preference}});
+}
 
 // ── Preferences ────────────────────────────────────────────────────────────
 
@@ -193,14 +225,13 @@ export function setXAutoFollow(bearer: string, enabled: boolean) {
 
 // ── 推送设备（settings.md §2；路由都在 /v1/settings/devices 下） ────────────
 //
-// 两个 token 别混：push_token 是设备的推送地址（移动端经 expo-notifications
-// 的 getExpoPushTokenAsync() 取到），JWT 只放 Authorization 头标身份。
-// Web 端拿不到 Expo token，所以这里只暴露「列表 / 开关 / 删除」的管理面；
-// 注册（registerPushDevice）供移动端 WebView 复用同一份客户端代码。
+// JWT 标识账号；设备标识由移动端 SDK 获取。Web 仅管理已有设备，不伪造注册标识。
+// 新设备使用 EngageLab，Expo 结构只用于兼容旧客户端。
 
 export type PushDevice = {
   /** 设备行 id：认出「哪台是本机」靠它（比 token_masked 可靠），调 2.3/2.4 也要它。 */
-  id: number;
+  id: number | string;
+  provider?: string;
   /** ios / android。 */
   platform?: string;
   device_name?: string;
@@ -223,24 +254,15 @@ export type DeviceListReply = {
   has_more?: boolean;
 };
 
-/**
- * POST /v1/settings/devices/register —— 注册 / 刷新设备（幂等）。
- * **push_token 必须是 getExpoPushTokenAsync() 的产物**，原生 APNs/FCM token
- * 会被拒（100125）。同一设备换账号注册时旧账号那行自动解绑，前端无需处理。
- */
-export function registerPushDevice(
-  bearer: string,
-  input: {
-    push_token: string;
-    platform: 'ios' | 'android';
-    device_name?: string;
-    manufacturer?: string;
-    model?: string;
-    os_version?: string;
-    app_version?: string;
-  },
-) {
-  return call<{id: number; created?: boolean}>('/v1/settings/devices/register', {
+export type PushDeviceRegistration = {
+  platform: 'ios' | 'android'; device_name?: string; manufacturer?: string;
+  model?: string; os_version?: string; app_version?: string;
+} & ({provider: 'engagelab'; registration_id: string; app_key: string; installation_id: string; application_id: string; push_token?: never}
+  | {provider?: 'expo'; push_token: string; registration_id?: never; app_key?: never; installation_id?: never; application_id?: never});
+
+/** Native SDK registration only; the browser has no mobile registration ID. */
+export function registerPushDevice(bearer: string, input: PushDeviceRegistration) {
+  return call<{id: number | string; created?: boolean}>('/v1/settings/devices/register', {
     method: 'POST',
     bearer,
     body: input,
@@ -263,12 +285,12 @@ export function listPushDevices(
 }
 
 /** POST /v1/settings/devices/enabled —— 回改后的整条记录，直接拿去刷新该行。 */
-export function setDeviceEnabled(bearer: string, id: number, enabled: boolean) {
+export function setDeviceEnabled(bearer: string, id: number | string, enabled: boolean) {
   return call<PushDevice>('/v1/settings/devices/enabled', {method: 'POST', bearer, body: {id, enabled}});
 }
 
 /** POST /v1/settings/devices/delete —— 登出流程里应当调它。删除后重新注册会拿到新 id。 */
-export function deletePushDevice(bearer: string, id: number) {
+export function deletePushDevice(bearer: string, id: number | string) {
   return call<{deleted?: boolean}>('/v1/settings/devices/delete', {method: 'POST', bearer, body: {id}});
 }
 

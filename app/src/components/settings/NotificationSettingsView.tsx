@@ -5,12 +5,8 @@ import {useCallback, useEffect, useState} from 'react';
 import {ApiError} from '@/api/envelope';
 import {
   deletePushDevice,
-  getNotificationSettings,
   listPushDevices,
   setDeviceEnabled,
-  setFollowingEnabled,
-  setPushEnabled,
-  type NotificationSettings,
   type PushDevice,
 } from '@/api/settings';
 import {ErrorPanel} from '@/components/ErrorPanel';
@@ -21,6 +17,7 @@ import {Badge} from '@/components/ui/badge';
 import {Button} from '@/components/ui/button';
 import {Card, CardContent, CardHeader, CardTitle} from '@/components/ui/card';
 import {useSession} from '@/session/storage';
+import {NotificationPreferences} from './NotificationPreferences';
 
 /**
  * last_active_at / created_at 可能是 Unix 秒数字、int64 被引号包成的字符串
@@ -38,20 +35,14 @@ function deviceLabel(d: PushDevice): string {
   return d.device_name || d.model || '(未命名设备)';
 }
 
-/**
- * Notifications 页（settings-integration.md §4）：两个开关，回包整页。
- * 开关只是状态 —— 通知中心是否真按它过滤取决于服务端接线，前端不因此
- * 本地拦截 WS 推送。读到不认识的字段忽略。
- *
- * 下方另附「推送设备」管理卡（settings.md §2）：注册只能由移动端 App 完成
- * （Web 端拿不到 Expo push token），Web 这里只做列表 / 开关 / 删除。
- */
 export function NotificationSettingsView() {
   const session = useSession();
+  return <NotificationSettingsContent key={session?.jwt ?? 'signed-out'} />;
+}
+
+function NotificationSettingsContent() {
+  const session = useSession();
   const jwt = session?.jwt ?? null;
-  const [settings, setSettings] = useState<NotificationSettings | null>(null);
-  const [err, setErr] = useState<ApiError | null>(null);
-  const [busy, setBusy] = useState(false);
 
   // ── 推送设备（settings.md §2）状态 ──────────────────────────────────────
   const [devices, setDevices] = useState<PushDevice[]>([]);
@@ -59,23 +50,8 @@ export function NotificationSettingsView() {
   const [nextCursor, setNextCursor] = useState<number | string | undefined>(undefined);
   const [devLoading, setDevLoading] = useState(false);
   /** 正在被开/关或删除的行 id —— 一次只动一台，其余行不受影响。 */
-  const [rowBusyId, setRowBusyId] = useState<number | null>(null);
+  const [rowBusyId, setRowBusyId] = useState<number | string | null>(null);
   const [devErr, setDevErr] = useState<ApiError | null>(null);
-
-  const load = useCallback(async () => {
-    if (!jwt) return;
-    try {
-      const res = await getNotificationSettings(jwt);
-      setSettings(res.data);
-      setErr(null);
-    } catch (e) {
-      setErr(e as ApiError);
-    }
-  }, [jwt]);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
 
   /**
    * 设备列表（settings.md §2.2）：limit 恒 100（上限即 100，超过直接报错不截断）；
@@ -107,21 +83,6 @@ export function NotificationSettingsView() {
   }, [loadDevices]);
 
   if (!jwt) return <LoginGate />;
-
-  const toggle = (key: 'push' | 'following', fn: (b: string, v: boolean) => Promise<{data: NotificationSettings}>) => {
-    if (!settings) return;
-    const prev = settings;
-    const next = {...settings, [key]: !settings[key]};
-    setSettings(next);
-    setBusy(true);
-    void fn(jwt, !!next[key])
-      .then((res) => setSettings(res.data))
-      .catch((e: unknown) => {
-        setSettings(prev);
-        setErr(e as ApiError);
-      })
-      .finally(() => setBusy(false));
-  };
 
   /**
    * 开/关一台设备（settings.md §2.3）：乐观改该行，回包就是改后的整条记录，
@@ -173,30 +134,10 @@ export function NotificationSettingsView() {
       <SettingsNav active="/settings/notifications" />
       <header className="space-y-1">
         <h1 className="text-xl font-semibold tracking-tight">Notifications</h1>
-        <p className="text-muted-foreground text-sm">改一个开关回整页（POST 回包直接覆盖本地状态）。</p>
+        <p className="text-muted-foreground text-sm">管理站内通知和系统推送。平台好友与聪明钱共用 Friends 设置。</p>
       </header>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">通知</CardTitle>
-        </CardHeader>
-        <CardContent className="divide-y divide-border">
-          <ToggleRow
-            label="Push notifications"
-            desc="系统推送总开关（默认开）。"
-            checked={!!settings?.push}
-            disabled={busy || !settings}
-            onToggle={() => toggle('push', setPushEnabled)}
-          />
-          <ToggleRow
-            label="People you follow"
-            desc="「我关注的人」类通知（默认开）。"
-            checked={!!settings?.following}
-            disabled={busy || !settings}
-            onToggle={() => toggle('following', setFollowingEnabled)}
-          />
-        </CardContent>
-      </Card>
+      <NotificationPreferences key={jwt} bearer={jwt} />
 
       <Card>
         <CardHeader>
@@ -205,7 +146,7 @@ export function NotificationSettingsView() {
         <CardContent className="space-y-2">
           {devices.length === 0 ? (
             <p className="text-muted-foreground text-sm">
-              暂无设备。设备注册由移动端 App 完成（Web 端拿不到 Expo push token，这里只做管理）。
+              暂无设备。请在移动端 App 开启通知并绑定设备；网页只管理已有设备，不接收系统推送。
             </p>
           ) : (
             <div className="divide-y divide-border">
@@ -263,7 +204,6 @@ export function NotificationSettingsView() {
       </Card>
 
       {devErr && <ErrorPanel err={devErr} />}
-      {err && <ErrorPanel err={err} />}
     </div>
   );
 }
