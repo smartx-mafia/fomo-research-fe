@@ -3,14 +3,17 @@
 import Image from 'next/image';
 import {ExternalLink, Heart, LoaderCircle} from 'lucide-react';
 import {useState} from 'react';
+import {TranslatedText} from './TranslatedText';
+import type {ContentLanguage} from '@/lib/content-translation';
 import type {SquareOpinionItem} from '@/api/social-content';
 import {opinionAge, opinionCycleReturn} from '@/lib/opinion-card-display';
 import {decimalSign, formatDecimalExact} from '@/lib/exact-decimal';
 import {TokenAvatar} from '@/components/TokenAvatar';
 import styles from './SquareOpinionCard.module.css';
 
-export function SquareOpinionCard({item, remark, followControl, likePending, onToggleLike, onOpenPosition, logoToToken = false, now}: {
+export function SquareOpinionCard({item, remark, followControl, likePending, onToggleLike, onOpenPosition, logoToToken = false, now, language = 'en'}: {
   item: SquareOpinionItem;
+  language?: ContentLanguage;
   remark?: string;
   followControl?: {phase: 'anonymous' | 'loading' | 'ready' | 'saving' | 'failed'; following?: boolean; onToggle: () => void};
   likePending: boolean;
@@ -66,7 +69,9 @@ export function SquareOpinionCard({item, remark, followControl, likePending, onT
           </div>
         </header>
 
-        {onOpenPosition ? <button type="button" className={`${styles.body} ${styles.bodyButton}`} aria-label={`查看 ${symbol || 'Token'} 持仓与观点`} onClick={() => onOpenPosition(item)}>{version.body}</button> : <p className={styles.body}>{version.body}</p>}
+        <TranslatedText identity={JSON.stringify([content.opinion.opinionID, version.versionID])} original={version.body}
+          translation={version.translation} language={language} className={`${styles.body} ${onOpenPosition ? styles.bodyButton : ''}`}
+          openLabel={`查看 ${symbol || 'Token'} 持仓与观点`} onOpen={onOpenPosition ? () => onOpenPosition(item) : undefined} />
 
         <div className={`${styles.position} ${onOpenPosition ? styles.positionInteractive : ''}`} aria-label={onOpenPosition ? `查看 ${symbol || 'Token'} 持仓` : 'Position summary'} role={onOpenPosition ? 'button' : undefined} tabIndex={onOpenPosition ? 0 : undefined}
           onClick={onOpenPosition ? (event) => {if (!(event.target as HTMLElement).closest('a,button')) onOpenPosition(item);} : undefined}

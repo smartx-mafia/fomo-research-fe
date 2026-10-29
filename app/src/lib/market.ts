@@ -9,6 +9,7 @@ import {normalizeDiscovery, normalizeDiscoveryCoverage, normalizeDiscoveryResear
  */
 
 import { num } from "./format";
+import type {ContentLanguage} from "./content-translation";
 import {normalizeTokenOverview, type TokenOverview} from './token-overview';
 import {normalizeChartBars} from './chart-data';
 import {normalizeTokenInfo} from '@/api/token-metadata';
@@ -77,7 +78,7 @@ interface Envelope {
 async function marketFetch<T>(
   path: string,
   query: Record<string, string | number | undefined> = {},
-  opts: { revalidate?: number; timeoutMs?: number; signal?: AbortSignal; cache?: RequestCache } = {}
+  opts: { revalidate?: number; timeoutMs?: number; signal?: AbortSignal; cache?: RequestCache; language?: ContentLanguage } = {}
 ): Promise<T> {
   const qs = new URLSearchParams();
   for (const [k, v] of Object.entries(query)) {
@@ -88,6 +89,7 @@ async function marketFetch<T>(
 
   // 超时避免浏览器请求长期挂起；失败由页面或 WS 数据源接管展示。
   const res = await fetch(url, {
+    headers: opts.language ? {"Accept-Language": opts.language} : undefined,
     cache: opts.cache,
     next: { revalidate: opts.revalidate ?? 5 },
     signal: opts.signal
@@ -311,10 +313,10 @@ export async function fetchTokenMarket(
 }
 
 /** Optional public snapshot: no fallback to /market, /holders, bars or trading endpoints. */
-export async function fetchTokenOverview(chain: string, address: string, signal?: AbortSignal): Promise<TokenOverview> {
+export async function fetchTokenOverview(chain: string, address: string, signal?: AbortSignal, language: ContentLanguage = 'en'): Promise<TokenOverview> {
   const data = await marketFetch<unknown>(
     `/v1/tokens/${encodeURIComponent(chain)}/${encodeURIComponent(address)}/overview`,
-    {}, {revalidate: 0, timeoutMs: 8_000, signal, cache: 'no-store'},
+    {}, {revalidate: 0, timeoutMs: 8_000, signal, cache: 'no-store', language},
   );
   return normalizeTokenOverview(data, chain, address);
 }

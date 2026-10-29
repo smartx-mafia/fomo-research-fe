@@ -95,6 +95,8 @@ export function assertNoMixedContent(url: URL, pageProtocol?: string): void {
 }
 
 type CallOptions = {
+  /** Explicit language for content-bearing responses; do not rely on browser defaults. */
+  language?: string;
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
   body?: unknown;
   /** Browser-generated multipart boundary; never JSON-encode this body. */
@@ -131,6 +133,7 @@ export async function call<T>(path: string, opts: CallOptions = {}): Promise<Cal
   // 每次请求新生成，不复用（契约硬规则，复用比不传更糟）。
   const sentRequestID = newTraceID();
   const headers: Record<string, string> = {'x-request-id': sentRequestID};
+  if (opts.language) headers['Accept-Language'] = opts.language;
   if (opts.body !== undefined && opts.formData) throw new Error('Choose JSON or multipart, not both');
   if (opts.body !== undefined) headers['content-type'] = 'application/json';
   if (opts.idempotencyKey) headers['Idempotency-Key'] = opts.idempotencyKey;
@@ -147,6 +150,8 @@ export async function call<T>(path: string, opts: CallOptions = {}): Promise<Cal
       signal: opts.signal,
     });
   } catch (e) {
+    // Intentional cancellation is not a network failure or a retry candidate.
+    opts.signal?.throwIfAborted();
     throw new ApiError(
       'network',
       0,

@@ -1,4 +1,5 @@
 import type {TokenOverview} from './token-overview';
+import type {ContentLanguage} from './content-translation';
 
 type Entry = {
   owners: number;
@@ -8,9 +9,9 @@ type Entry = {
 };
 
 /** Only in-flight work is shared here. Response caching belongs to SWR. */
-export function createOverviewRequests(fetcher: (chain: string, address: string, signal: AbortSignal) => Promise<TokenOverview>) {
+export function createOverviewRequests(fetcher: (chain: string, address: string, signal: AbortSignal, language: ContentLanguage) => Promise<TokenOverview>) {
   const entries = new Map<string, Entry>();
-  const keyOf = (chain: string, address: string) => JSON.stringify([chain, address]);
+  const keyOf = (chain: string, address: string, language: ContentLanguage) => JSON.stringify([chain, address, language]);
   const entryFor = (key: string) => {
     let entry = entries.get(key);
     if (!entry) {
@@ -20,8 +21,8 @@ export function createOverviewRequests(fetcher: (chain: string, address: string,
     return entry;
   };
   return {
-    retain(chain: string, address: string) {
-      const key = keyOf(chain, address);
+    retain(chain: string, address: string, language: ContentLanguage = 'en') {
+      const key = keyOf(chain, address, language);
       const entry = entryFor(key);
       clearTimeout(entry.cleanup);
       entry.owners++;
@@ -40,8 +41,8 @@ export function createOverviewRequests(fetcher: (chain: string, address: string,
         }, 0);
       };
     },
-    run(chain: string, address: string): Promise<TokenOverview> {
-      const entry = entryFor(keyOf(chain, address));
+    run(chain: string, address: string, language: ContentLanguage = 'en'): Promise<TokenOverview> {
+      const entry = entryFor(keyOf(chain, address, language));
       if (entry.promise) return entry.promise;
       const controller = new AbortController();
       entry.controller = controller;
@@ -52,7 +53,7 @@ export function createOverviewRequests(fetcher: (chain: string, address: string,
       });
       const work = Promise.resolve().then(() => {
         controller.signal.throwIfAborted();
-        return fetcher(chain, address, controller.signal);
+        return fetcher(chain, address, controller.signal, language);
       }).then((data) => {
         // Some transports can settle despite cancellation; never accept their late data.
         controller.signal.throwIfAborted();

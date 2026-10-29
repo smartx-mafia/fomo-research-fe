@@ -6,6 +6,13 @@ import {assertNoMixedContent, call} from './envelope';
 describe('business API browser-direct transport', () => {
   afterEach(() => vi.unstubAllGlobals());
 
+  it('preserves intentional cancellation instead of turning it into a network error', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(controller.signal.reason));
+    await expect(call('/v1/leaderboard-new', {signal: controller.signal})).rejects.toMatchObject({name: 'AbortError'});
+  });
+
   it('expands a contract path to the real backend origin', async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       code: 200,

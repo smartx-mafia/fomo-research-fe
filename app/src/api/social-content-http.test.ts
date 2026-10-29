@@ -48,3 +48,15 @@ describe('Social standard Position wire contract', () => {
     expect(JSON.parse((fetcher.mock.calls as unknown as [string, RequestInit][])[0][1].body as string).base_version_id).toBe('9007199254740994');
   });
 });
+
+
+it('reads attached translations with explicit language without changing original or int64 IDs', async () => {
+  const data = feed();
+  Object.assign(data.items[0].opinion.opinion.latest_version, {translation: {status:'ready',target_locale:'zh-Hans',translated_text:'译文 👩‍💻'}});
+  const fetcher = serve(data);
+  const item = (await listSquareFeedPage(SQUARE_LANES.NEWEST, {language:'zh-Hans'})).items[0];
+  if (!item || item.type !== 1) throw new Error('expected opinion');
+  expect(item.content.opinion.latestVersion).toMatchObject({versionID:'9007199254740994',body:'Position',translation:{status:'ready',targetLocale:'zh-Hans',translatedText:'译文 👩‍💻'}});
+  expect((fetcher.mock.calls[0][1]?.headers as Record<string,string>)['Accept-Language']).toBe('zh-Hans');
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});

@@ -1,6 +1,9 @@
 'use client';
 
 import {useState} from 'react';
+import {TranslatedText} from './TranslatedText';
+import {useContentLanguage} from '@/hooks/useContentLanguage';
+import type {ContentLanguage} from '@/lib/content-translation';
 import {AlertTriangle, Check, CircleAlert, Copy, ExternalLink, Globe, MessageCircle, RefreshCw} from 'lucide-react';
 import {useTokenOverview} from '@/hooks/useTokenOverview';
 import {DASH, chainLabel, fmtInt, fmtPct, fmtUsd, shortAddr} from '@/lib/format';
@@ -96,11 +99,12 @@ function BooleanStatusRow({label, value}: {label: string; value: boolean | null 
 
 /** Pure data presentation, also rendered with the real React serializer in regression tests. */
 export function TokenOverviewContent({
-  chain, address, data, now, loading = false, error, refreshing = false, onRetry,
+  chain, address, data, now, loading = false, error, refreshing = false, onRetry, language = 'en',
 }: {
   chain: string;
   address: string;
   data?: TokenOverview;
+  language?: ContentLanguage;
   now: number;
   loading?: boolean;
   error?: unknown;
@@ -117,7 +121,7 @@ export function TokenOverviewContent({
   const website = profile?.website ?? null;
   const twitter = profile?.twitter ?? null;
   const telegram = profile?.telegram ?? null;
-  const description = profile?.description ?? null;
+  const description = data?.profile.description ?? null;
   const activity = activityState === 'unavailable' ? undefined : data?.activity;
   const intelligence = intelligenceState === 'unavailable' ? undefined : data?.holder_intelligence;
   const risk = riskState === 'unavailable' ? undefined : data?.risk;
@@ -160,7 +164,7 @@ export function TokenOverviewContent({
           {telegram ? <a href={telegram} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer" className={linkClass} aria-label="Open token Telegram"><MessageCircle size={14} aria-hidden="true" />Telegram<ExternalLink size={11} aria-hidden="true" /></a> : null}
           {website === null && twitter === null && telegram === null ? <span className="py-2 text-xs text-muted">{loading ? 'Checking cached links…' : 'No cached website, X or Telegram link available.'}</span> : null}
         </div>
-        {description !== null ? <div className="mt-4 rounded-lg border border-border bg-surface-2/50 p-4"><h3 className="text-xs font-medium text-foreground">About</h3><p className="mt-2 whitespace-pre-wrap break-words text-xs leading-relaxed text-muted">{description}</p></div> : null}
+        {description !== null ? <div className="mt-4 rounded-lg border border-border bg-surface-2/50 p-4"><h3 className="text-xs font-medium text-foreground">About</h3><TranslatedText identity={JSON.stringify([chain, address])} original={description} translation={data?.profile.translation} language={language} className="mt-2 whitespace-pre-wrap break-words text-xs leading-relaxed text-muted" /></div> : null}
       </section>
 
       <section aria-labelledby="overview-activity" className="border-t border-border pt-5">
@@ -230,6 +234,7 @@ export function TokenOverviewContent({
 }
 
 export default function TokenOverviewTab({chain, address}: {chain: string; address: string}) {
-  const {data, error, isValidating, mutate, now} = useTokenOverview(chain, address);
-  return <TokenOverviewContent chain={chain} address={address} data={data} now={now} loading={!data && !error} error={error} refreshing={isValidating} onRetry={() => {void mutate();}} />;
+  const language = useContentLanguage();
+  const {data, error, isValidating, mutate, now} = useTokenOverview(chain, address, language);
+  return <TokenOverviewContent language={language} chain={chain} address={address} data={data} now={now} loading={!data && !error} error={error} refreshing={isValidating} onRetry={() => {void mutate();}} />;
 }

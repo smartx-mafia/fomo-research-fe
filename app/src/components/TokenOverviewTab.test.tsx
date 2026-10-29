@@ -121,7 +121,7 @@ describe('Overview presentation', () => {
     expect(html).not.toMatch(/safe|verified|passed risk/i);
   });
 
-  it('labels old snapshots and hides profile, risk, holder and contract values once expired', () => {
+  it('expires dynamic profile/risk/holder/contract fields without hiding fixed descriptions', () => {
     const older = renderToStaticMarkup(<TokenOverviewContent chain="solana" address="TokenA" data={data} now={now + 60_001} />);
     expect(older).toContain('Older snapshot');
     const risky = {...data, risk: {...data.risk, tokenIsScam: true, level: 'SCAM' as const}};
@@ -130,7 +130,7 @@ describe('Overview presentation', () => {
     expect(expired).not.toContain('21.50%');
     expect(expired).not.toContain('19.49%');
     expect(expired).not.toContain('MintAuthority');
-    expect(expired).not.toContain('Plain text only');
+    expect(expired).toContain('Plain text only');
     expect(expired).not.toContain('Scam warning');
     expect(expired).toContain('Risk status unavailable');
     expect(expired).toContain('No validated contract status is available');

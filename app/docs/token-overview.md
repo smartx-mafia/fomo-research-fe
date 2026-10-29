@@ -9,7 +9,7 @@ The new section uses only `GET /v1/tokens/{chain}/{address}/overview` on the con
 | UI | Field / meaning |
 |---|---|
 | Website, X / Twitter, Telegram | `profile.website`, `profile.twitter`, `profile.telegram`; HTTP(S)-only external links, hidden when unavailable |
-| About | `profile.description`; bounded untrusted text rendered as text, never source HTML |
+| About | `profile.description` plus optional `profile.description_translation`; ready translation shown by default with a local original/translation toggle, always rendered as text |
 | Volume · 5m | `activity.volume_5m_usd`; total buy + sell USD volume, source-pair scope |
 | Buyers / Sellers · 1h | `activity.buyers_1h`, `activity.sellers_1h`; distinct addresses, not trade counts |
 | Holder intelligence | `holder_intelligence.dev_held_percent`, Sniper/Insider/Bundler/Suspicious counts and held percentages; Suspicious is Codex's deduplicated value, not a client-side sum |
@@ -19,13 +19,13 @@ The new section uses only `GET /v1/tokens/{chain}/{address}/overview` on the con
 | Trading route | Explicit `display_only` label only; not a quote, execution route, or default Jupiter assertion |
 | Contract | Current route token address, with copy action |
 
-Unknown/invalid numbers remain null and render as `—`; reported zero renders as `0` or `$0`, and explicit false remains false. Source, version, quality and original observation time gate displayed data. Profile, activity, holder intelligence, risk and contract status older than 60 seconds are marked “Older snapshot”; all cached groups expire at 300 seconds, including during refresh failures. Missing v1 groups from an older backend normalize to unavailable instead of throwing.
+Unknown/invalid numbers remain null and render as `—`; reported zero renders as `0` or `$0`, and explicit false remains false. Source, version, quality and original observation time gate displayed data. Profile, activity, holder intelligence, risk and contract status older than 60 seconds are marked “Older snapshot”; dynamic cached groups expire at 300 seconds, including during refresh failures. Fixed descriptions and their translations are independent of this observation-time gate. Missing v1 groups from an older backend normalize to unavailable instead of throwing.
 
 Risk display is not a safety certification. `NO_FLAG_REPORTED` and explicit `false` with no reasons produce no “safe” badge, and null means unknown rather than false. Known Codex potential-risk identifiers receive bounded user-facing text; unknown identifiers use a generic fallback. Authority absence is described only when the corresponding validity field is true. A false or missing validity field never becomes a “no authority” claim.
 
 No ATH/ATL, honeypot, tax, source-verification, community-verification, unsupported window selectors or placeholder facts are introduced. Those fields are not available in this version's existing data contract.
 
-There is no fallback to holders, bars, market warmup, token lookup or trading endpoints inside Overview. The expanded fields arrive in the same `/overview` response and add no frontend request, Codex request, waterfall or changed SWR key. The existing page's market snapshot, live stream, chart and trading controls remain unchanged. Selecting the pre-existing Holders/Trades sections retains their existing behavior.
+There is no fallback to holders, bars, market warmup, token lookup or trading endpoints inside Overview. The expanded fields arrive in the same `/overview` response and add no frontend request, Codex request, waterfall. Translation-aware Overview keys now also include the target language. The existing page's market snapshot, live stream, chart and trading controls remain unchanged. Selecting the pre-existing Holders/Trades sections retains their existing behavior.
 
 ## Token Risk V2 compatibility and board-stream boundary
 
@@ -112,3 +112,19 @@ Source publication was authorized separately after local verification. The curre
 - Production static export passed for all 20 generated pages, including the `/token` shell. Exported `out/_redirects` matches the tracked file; route/config files are unchanged. This is build verification, not a claim that Cloudflare hosting was manually deployed or tested.
 - The first isolated build without public Privy configuration failed in the upstream `OnboardingView` hook. Rebuilding with the existing local `NEXT_PUBLIC_PRIVY_APP_ID` and optional public client ID passed. No environment file or secret was copied or committed; hosting still needs its normal public Privy build configuration.
 - Standalone TypeScript validation and whitespace checks passed. Independent integration review found no remaining Critical/Important/Minor issues. The documented SWR test-environment timer warning remains non-blocking.
+
+
+## 原文随包翻译接入（2026-10-29）
+
+Web 使用原读取接口附带的译文，不额外调用翻译批量接口、不触发模型。Overview 读取 `profile.description_translation`；广场和代币观点列表在现有 `OpinionVersion` 归一化时读取 `translation`。`body` / `description` 始终保留原文，编辑器继续使用原文。
+
+- 页头“翻译语言”提供 en / zh-Hans / zh-Hant / ja / ko / es。未手选时使用当前账户可识别语言，否则 en；手选仅作用于当前页面运行会话，不修改账户、不写 localStorage，刷新页面恢复默认。
+- 行情与 Social 请求都显式发送 `Accept-Language`。Overview 的 SWR key 和在途共享 key 同时包含语言。广场切语言取消旧读取、重置各频道的分页结果并拒绝迟到响应；代币观点列表按币种、会话和语言隔离。
+- `ready` 且 `target_locale` 匹配当前语言、译文有效时默认展示译文。“查看原文”/“查看译文”仅更改本地状态，不请求网络。其他状态、null 或坏的可选翻译对象都显示原文，不展示无效切换按钮。
+- 同一原文/版本/语言的刷新保留用户选择；内容身份、版本或目标语言改变后恢复默认译文。广场切换按钮与正文导航按钮为并列元素，避免嵌套和误开持仓。
+- 描述上限为 UTF-8 4096 字节，译文 16384 字节。保留首尾空白、换行、Tab、CR、Unicode 格式字符和组合 emoji；拒绝 NUL、空文本与不完整 surrogate，不截断译文。仍对独立地址、外链和风险原因使用各自边界。
+- `TranslatedText` 只渲染 React 文本节点，不执行 HTML、Markdown 或从译文自动创建链接。固定描述不因动态 profile quality 过期或缺少时间戳而隐藏。
+
+验证：完整 Vitest 1237 项通过、1 项原有跳过；TypeScript 检查通过。新增覆盖本地双向切换、刷新保留选择、身份/语言重置、文本转义、完整长译文、固定描述独立展示、地区码、请求头、int64 原样保留及不同语言的请求隔离/迟到响应。
+
+本地浏览器已连接真实测试后端并验证语言选择和原文回退。实际 SOL 样本返回 `unavailable/generation_disabled`，因此无切换按钮是预期；带真实已保存 `ready` 译文的服务器闭环尚未完成，不能将组件模拟回包测试当作该项通过。未修改服务器配置或历史翻译任务。

@@ -1,6 +1,7 @@
 'use client';
 
 import {useEffect, useState, useSyncExternalStore} from 'react';
+import type {ContentLanguage} from '@/lib/content-translation';
 import useSWR from 'swr';
 import {fetchTokenOverview, MarketApiError} from '@/lib/market';
 import {createOverviewRequests} from '@/lib/overview-requests';
@@ -21,18 +22,18 @@ function mayRetry(error: unknown) {
   return !(error instanceof MarketApiError) || [420000, 500301, 500097].includes(error.code);
 }
 
-export function useTokenOverview(chain: string, address: string) {
+export function useTokenOverview(chain: string, address: string, language: ContentLanguage = 'en') {
   const visible = useSyncExternalStore(subscribeVisibility, isVisible, isServerVisible);
   const identity = overviewIdentity(chain, address);
   const [now, setNow] = useState(0);
   useEffect(() => {
     if (!visible) return;
-    return requests.retain(identity.chain, identity.address);
-  }, [identity.chain, identity.address, visible]);
+    return requests.retain(identity.chain, identity.address, language);
+  }, [identity.chain, identity.address, language, visible]);
 
   const result = useSWR(
-    visible ? ['token-overview', identity.chain, identity.address] : null,
-    ([, requestedChain, requestedAddress]) => requests.run(requestedChain, requestedAddress),
+    visible ? ['token-overview', identity.chain, identity.address, language] : null,
+    ([, requestedChain, requestedAddress, requestedLanguage]) => requests.run(requestedChain, requestedAddress, requestedLanguage),
     {
       keepPreviousData: false,
       dedupingInterval: 2_000,

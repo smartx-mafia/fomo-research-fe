@@ -10,6 +10,7 @@
  * `undefined` for UI code.
  */
 import {call} from './envelope';
+import {normalizeContentTranslation, type ContentTranslation, type ContentLanguage} from '@/lib/content-translation';
 import {normalizeHolder, type TokenHolder} from './token-holder-list';
 import {normalizePortfolioPosition, positionTargetID, type PortfolioPosition} from './portfolio';
 import {normalizeTokenInfo, tokenKey, type TokenInfo} from './token-metadata';
@@ -67,6 +68,7 @@ export type OpinionAttachmentInput = {
 };
 
 export type OpinionVersion = {
+  translation?: ContentTranslation;
   versionID: string;
   versionNo: number;
   body: string;
@@ -217,6 +219,7 @@ export type UpdateOpinionInput = {
 };
 
 export type SquareFeedOptions = {
+  language?: ContentLanguage;
   /** Optional for NEWEST/FOR_YOU; required by the backend for FRIENDS. */
   bearer?: string;
   cursor?: SquarePageCursor;
@@ -235,6 +238,8 @@ export type SquareFeedUpdatesOptions = {
 };
 
 export type OpinionReadOptions = {
+  language?: ContentLanguage;
+  signal?: AbortSignal;
   /** Optional reads include viewerLike when a valid bearer is supplied. */
   bearer?: string;
 };
@@ -318,6 +323,7 @@ function normalizeVersion(value: unknown, field = 'version'): OpinionVersion {
 
   return {
     versionID,
+    translation: normalizeContentTranslation(row.translation),
     versionNo,
     body,
     items: (rawItems ?? [])
@@ -623,7 +629,7 @@ export async function listSquareFeedPage(
   if (options.limit !== undefined) query.set('limit', String(options.limit));
   for (const filter of options.filters ?? []) query.append('filters', filter);
   const response = await socialCall(`/v1/social/square/feed?${query.toString()}`, {
-    bearer: options.bearer,
+    bearer: options.bearer, language: options.language,
     signal: options.signal,
   });
   return normalizeFeedData(response.data);
@@ -658,7 +664,7 @@ export async function getOpinion(
 
 /** Detail/share consumers use exactly the same card contract as Square. */
 export async function getOpinionCard(opinionID: string, options: OpinionReadOptions = {}): Promise<OpinionFeedContent> {
-  const response = await socialCall(opinionPath(opinionID), {bearer: options.bearer});
+  const response = await socialCall(opinionPath(opinionID), {bearer: options.bearer, language: options.language, signal: options.signal});
   return normalizeOpinionCard(response.data);
 }
 
@@ -680,7 +686,7 @@ export async function getOpinionHistory(
 export async function listTokenOpinions(
   chain: string,
   address: string,
-  options: {bearer?: string; cursor?: string; limit?: number; signal?: AbortSignal} = {},
+  options: {bearer?: string; cursor?: string; limit?: number; signal?: AbortSignal; language?: ContentLanguage} = {},
 ): Promise<TokenOpinionPage> {
   const query = new URLSearchParams();
   if (options.cursor) query.set('cursor', options.cursor);
@@ -688,7 +694,7 @@ export async function listTokenOpinions(
   const suffix = query.size > 0 ? `?${query.toString()}` : '';
   const response = await socialCall(
     `/v1/tokens/${encodeURIComponent(chain)}/${encodeURIComponent(address)}/opinions${suffix}`,
-    {bearer: options.bearer, signal: options.signal},
+    {bearer: options.bearer, signal: options.signal, language: options.language},
   );
   return normalizeTokenOpinionData(response.data);
 }

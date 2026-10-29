@@ -3,6 +3,9 @@
 import { Heart, LoaderCircle, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import useSWR from "swr";
+import {TranslatedText} from "./TranslatedText";
+import {useContentLanguage} from "@/hooks/useContentLanguage";
+import type {ContentLanguage} from "@/lib/content-translation";
 
 import { ApiError } from "@/api/envelope";
 import {
@@ -21,7 +24,7 @@ function opinionAuthor(content: OpinionFeedContent): string {
   return shortAddr(content.opinion.authorIdentifier, 6, 4);
 }
 
-function OpinionCard({ content, busy, onToggleLike }: { content: OpinionFeedContent; busy: boolean; onToggleLike: () => void }) {
+function OpinionCard({ content, busy, onToggleLike, language }: { content: OpinionFeedContent; busy: boolean; onToggleLike: () => void; language: ContentLanguage }) {
   const version = content.opinion.latestVersion;
   const author = opinionAuthor(content);
   const publishedAt = version.publishedAt.seconds;
@@ -34,7 +37,7 @@ function OpinionCard({ content, busy, onToggleLike }: { content: OpinionFeedCont
             <span className="truncate text-sm font-medium text-foreground" title={content.opinion.authorIdentifier}>{author}</span>
             <time className="shrink-0 text-xs text-muted" dateTime={publishedAt > 0 ? new Date(publishedAt * 1000).toISOString() : undefined}>{publishedAt > 0 ? fmtAge(publishedAt * 1000) : DASH}</time>
           </div>
-          <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-foreground">{version.body}</p>
+          <TranslatedText identity={JSON.stringify([content.opinion.opinionID, version.versionID])} language={language} original={version.body} translation={version.translation} className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-foreground" />
           <div className="mt-3 flex items-center justify-between gap-3">
             <button type="button" onClick={onToggleLike} disabled={busy} aria-label={`${version.viewerLike ? "Unlike" : "Like"} opinion by ${author}`} aria-pressed={version.viewerLike} className={`inline-flex items-center gap-1.5 text-xs ${version.viewerLike ? "text-down" : "text-muted hover:text-foreground"}`}>
               {busy ? <LoaderCircle size={14} className="animate-spin" aria-hidden="true" /> : <Heart size={14} fill={version.viewerLike ? "currentColor" : "none"} aria-hidden="true" />}
@@ -53,15 +56,21 @@ function errorMessage(error: unknown): string {
   return "Could not load opinions right now.";
 }
 
-export default function TokenOpinionsTab({ chain, address }: { chain: string; address: string }) {
+export default function TokenOpinionsTab({chain, address}: {chain: string; address: string}) {
+  const language = useContentLanguage();
+  const session = useSession();
+  return <TokenOpinionsForLanguage key={JSON.stringify([chain, address, session?.jwt, language])} chain={chain} address={address} language={language} />;
+}
+
+function TokenOpinionsForLanguage({chain, address, language}: {chain: string; address: string; language: ContentLanguage}) {
   const session = useSession();
   const [cursor, setCursor] = useState<string>();
   const [items, setItems] = useState<OpinionFeedContent[]>([]);
   const [likeBusy, setLikeBusy] = useState<string>();
   const [actionError, setActionError] = useState<string>();
   const { data, error, isLoading, mutate } = useSWR<TokenOpinionPage>(
-    ["token-opinions", chain, address, session?.jwt ?? "", cursor ?? ""],
-    () => listTokenOpinions(chain, address, { bearer: session?.jwt, cursor, limit: LIMIT }),
+    ["token-opinions", chain, address, session?.jwt ?? "", language, cursor ?? ""],
+    () => listTokenOpinions(chain, address, { bearer: session?.jwt, cursor, limit: LIMIT, language }),
     { shouldRetryOnError: false, revalidateOnFocus: false },
   );
 
@@ -112,7 +121,7 @@ export default function TokenOpinionsTab({ chain, address }: { chain: string; ad
   return (
     <section aria-label="Token opinions">
       {actionError ? <p role="status" className="border-b border-border px-4 py-2 text-xs text-muted">{actionError}</p> : null}
-      {items.map((item) => <OpinionCard key={item.opinion.opinionID} content={item} busy={likeBusy === item.opinion.latestVersion.versionID} onToggleLike={() => void toggleLike(item)} />)}
+      {items.map((item) => <OpinionCard language={language} key={item.opinion.opinionID} content={item} busy={likeBusy === item.opinion.latestVersion.versionID} onToggleLike={() => void toggleLike(item)} />)}
       {data?.nextCursor ? <div className="flex justify-center border-t border-border px-4 py-3"><button type="button" onClick={() => setCursor(data.nextCursor)} disabled={isLoading} className="rounded-md border border-border px-3 py-1.5 text-xs text-foreground disabled:opacity-50">{isLoading ? "Loading…" : "Load more"}</button></div> : null}
     </section>
   );

@@ -91,13 +91,13 @@ describe('Overview contract and freshness', () => {
   });
 
   it('bounds descriptions and risk reasons without interpreting source text as markup', () => {
-    expect(overviewDescription('  <b>About</b>\nSecond line  ')).toBe('<b>About</b>\nSecond line');
-    expect(overviewDescription('First line\r\n\tSecond line')).toBe('First line\n\tSecond line');
-    expect(overviewDescription('First line\rSecond line')).toBeNull();
+    expect(overviewDescription('  <b>About</b>\nSecond line  ')).toBe('  <b>About</b>\nSecond line  ');
+    expect(overviewDescription('First line\r\n\tSecond line')).toBe('First line\r\n\tSecond line');
+    expect(overviewDescription('First line\rSecond line')).toBe('First line\rSecond line');
     expect(overviewDescription(`safe\u0000unsafe`)).toBeNull();
-    expect(overviewDescription(`left\u202Eright`)).toBeNull();
-    expect(overviewDescription(`left\u2066right`)).toBeNull();
-    expect(overviewDescription('x'.repeat(2_001))).toHaveLength(2_000);
+    expect(overviewDescription(`left\u202Eright`)).toBe(`left\u202Eright`);
+    expect(overviewDescription(`left\u2066right`)).toBe(`left\u2066right`);
+    expect(overviewDescription('x'.repeat(2_001))).toHaveLength(2_001);
     expect(overviewDescription('x'.repeat(8_193))).toBeNull();
     const reasons = Array.from({length: 40}, (_, index) => `UnknownReason${index}`);
     const raw = {...fixture(), risk: {...fixture().risk, potential_scam_reasons: ['MinimumLiquidity', 'MinimumLiquidity', null, `bad\u0000reason`, `bad\u202Ereason`, `bad\u2066reason`, `\uFEFFTrimmedReason`, ...reasons]}};
@@ -114,7 +114,7 @@ describe('Overview contract and freshness', () => {
   it('accepts safe Telegram links and rejects malformed profile and authority text', () => {
     const raw = {
       ...fixture(),
-      profile: {...fixture().profile, telegram: 'javascript:alert(1)', description: `bad\u0007text`},
+      profile: {...fixture().profile, telegram: 'javascript:alert(1)', description: `bad\u0000text`},
       contract_status: {...fixture().contract_status, freeze_authority: `bad\u2066address`, mint_authority: `bad\u202Eaddress`},
     };
     const data = normalizeTokenOverview(raw, 'solana', 'TokenA');

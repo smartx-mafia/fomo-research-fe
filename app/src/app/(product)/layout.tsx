@@ -4,6 +4,7 @@ import { PrivyProviders } from "@/components/PrivyProviders";
 import { FavoritesProvider } from "@/components/FavoritesProvider";
 import { InviteGateListener } from "@/components/InviteGateListener";
 import { Toaster } from "@/components/ui/sonner";
+import { ContentLanguageSelect } from "@/components/ContentLanguageSelect";
 
 /**
  * 产品站的 layout：页头 / 导航 / 主体 / 页脚，以及产品侧的 Provider 组合。
@@ -53,6 +54,7 @@ export default function ProductLayout({ children }: { children: ReactNode }) {
               Login
             </Link>
           </nav>
+          <ContentLanguageSelect />
           <div className="ml-auto hidden text-xs text-muted lg:block">
             Powered by <span className="text-foreground/70">SmartX</span> · live WS feed
           </div>

@@ -1,4 +1,5 @@
 import {normalizeTokenRisk, type TokenRisk} from './token-risk';
+import {plainContent, normalizeContentTranslation, type ContentTranslation} from './content-translation';
 
 /** Consumer contract for the cache-only /overview endpoint. Never coerce unknown into 0. */
 export type OverviewQuality = {
@@ -17,6 +18,7 @@ export type TokenOverview = {
     twitter: string | null;
     telegram: string | null;
     description: string | null;
+    translation?: ContentTranslation;
     quality: OverviewQuality;
   };
   activity: {volume_5m_usd: number | null; buyers_1h: number | null; sellers_1h: number | null; quality: OverviewQuality};
@@ -78,17 +80,9 @@ function boundedIdentifier(value: unknown, maxLength = 256): string | null {
   return trimmed && [...trimmed].length <= maxLength ? trimmed : null;
 }
 
-/** Codex descriptions are untrusted text. Keep useful line breaks, reject controls and cap rendered input. */
+/** Fixed originals share the backend 4 KiB text boundary, independent of dynamic quality. */
 export function overviewDescription(value: unknown): string | null {
-  // Cap raw UTF-16 input before replacements and code-point iteration.
-  if (typeof value !== 'string' || value.length > 8_192) return null;
-  const normalized = value.replace(/\r\n/g, '\n');
-  // Only tab and LF are accepted controls. A lone CR is malformed rather than silently rewritten.
-  if (normalized.includes('\r') || /[\p{Cc}\p{Cf}]/u.test(normalized.replace(/[\n\t]/g, ''))) return null;
-  const trimmed = normalized.trim();
-  if (!trimmed) return null;
-  const characters = [...trimmed];
-  return characters.length > 2_000 ? characters.slice(0, 2_000).join('') : trimmed;
+  return plainContent(value, 4096);
 }
 
 function quality(value: unknown, source: string): OverviewQuality {
@@ -144,6 +138,7 @@ export function normalizeTokenOverview(raw: unknown, chain: string, address: str
       twitter: overviewLink(profile.twitter),
       telegram: overviewLink(profile.telegram),
       description: overviewDescription(profile.description),
+      translation: normalizeContentTranslation(profile.description_translation),
       quality: quality(profile.quality, 'codex.filterTokens'),
     },
     activity: {

@@ -12,6 +12,7 @@ import {
 import {Fragment, useCallback, useEffect, useRef, useState} from 'react';
 
 import {SquareOpinionCard} from './SquareOpinionCard';
+import {useContentLanguage} from '@/hooks/useContentLanguage';
 import {SquareTradeCard} from './SquareTradeCard';
 
 import {ApiError} from '@/api/envelope';
@@ -266,6 +267,10 @@ function InlineNotice({notice, onDismiss}: {notice: Notice; onDismiss: () => voi
 }
 
 export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
+  const language = useContentLanguage();
+  const languageRef = useRef(language);
+  const previousLanguageRef = useRef(language);
+  languageRef.current = language;
   const session = useSession();
   const [openedPosition, setOpenedPosition] = useState<{target: SquarePositionTarget; sessionKey: string}>();
   useEffect(() => {setOpenedPosition(undefined);}, [session?.jwt]);
@@ -315,6 +320,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      Object.values(requestAbortRef.current).forEach(controller => controller?.abort());
     };
   }, []);
 
@@ -351,6 +357,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
 
   const loadFirstPage = useCallback(async (lane: SquareLaneSlug, refresh: boolean, overrideFilters?: FilterSelection) => {
     const bearer = sessionJWTRef.current;
+    const requestedLanguage = languageRef.current;
     if (lane === 'friends' && !bearer) return;
     const selectedFilters = overrideFilters ?? filtersByLaneRef.current[lane];
     const filters = apiFilters(selectedFilters);
@@ -383,11 +390,12 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
     try {
       const data = await listSquareFeedPage(LANE_META[lane].apiLane, {
         bearer,
+        language: requestedLanguage,
         limit: 20,
         filters,
         signal: controller.signal,
       });
-      if (!mountedRef.current || requestGenerationRef.current[lane] !== generation || sessionJWTRef.current !== bearer) return;
+      if (!mountedRef.current || requestGenerationRef.current[lane] !== generation || sessionJWTRef.current !== bearer || languageRef.current !== requestedLanguage) return;
       if (likeMutationEpochRef.current !== likeEpoch) {
         replaceLane(lane, (state) => ({...state, loadingInitial: false, refreshing: false}));
         if (activeLikeMutationsRef.current > 0) {
@@ -418,7 +426,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
       }
     } catch (error) {
       if (controller.signal.aborted) return;
-      if (!mountedRef.current || requestGenerationRef.current[lane] !== generation || sessionJWTRef.current !== bearer) return;
+      if (!mountedRef.current || requestGenerationRef.current[lane] !== generation || sessionJWTRef.current !== bearer || languageRef.current !== requestedLanguage) return;
       const normalized = requestError(error);
       if (error instanceof ApiError && error.code === 400000) clearSite();
       replaceLane(lane, (state) => ({
@@ -428,7 +436,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
         error: normalized,
       }));
     } finally {
-      if (requestGenerationRef.current[lane] === generation && sessionJWTRef.current === bearer) {
+      if (requestGenerationRef.current[lane] === generation && sessionJWTRef.current === bearer && languageRef.current === requestedLanguage) {
         requestInFlightRef.current[lane] = false;
         if (requestAbortRef.current[lane] === controller) delete requestAbortRef.current[lane];
       }
@@ -438,6 +446,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
   const loadMore = useCallback(async (lane: SquareLaneSlug) => {
     const state = laneStates[lane];
     const bearer = sessionJWTRef.current;
+    const requestedLanguage = languageRef.current;
     if (!state.nextCursor || requestInFlightRef.current[lane] || (lane === 'friends' && !bearer)) return;
 
     requestInFlightRef.current[lane] = true;
@@ -451,12 +460,13 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
     try {
       const data = await listSquareFeedPage(LANE_META[lane].apiLane, {
         bearer,
+        language: requestedLanguage,
         cursor: state.nextCursor,
         limit: 20,
         filters,
         signal: controller.signal,
       });
-      if (!mountedRef.current || requestGenerationRef.current[lane] !== generation || sessionJWTRef.current !== bearer) return;
+      if (!mountedRef.current || requestGenerationRef.current[lane] !== generation || sessionJWTRef.current !== bearer || languageRef.current !== requestedLanguage) return;
       if (likeMutationEpochRef.current !== likeEpoch) {
         replaceLane(lane, (current) => ({...current, loadingMore: false}));
         if (activeLikeMutationsRef.current > 0) {
@@ -482,7 +492,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
       void ensureRemarks(data.items);
     } catch (error) {
       if (controller.signal.aborted) return;
-      if (!mountedRef.current || requestGenerationRef.current[lane] !== generation || sessionJWTRef.current !== bearer) return;
+      if (!mountedRef.current || requestGenerationRef.current[lane] !== generation || sessionJWTRef.current !== bearer || languageRef.current !== requestedLanguage) return;
       if (error instanceof ApiError && error.code === 100103) {
         requestInFlightRef.current[lane] = false;
         replaceLane(lane, (current) => ({...current, loadingMore: false, nextCursor: undefined}));
@@ -496,12 +506,26 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
         loadMoreError: requestError(error),
       }));
     } finally {
-      if (requestGenerationRef.current[lane] === generation && sessionJWTRef.current === bearer) {
+      if (requestGenerationRef.current[lane] === generation && sessionJWTRef.current === bearer && languageRef.current === requestedLanguage) {
         requestInFlightRef.current[lane] = false;
         if (requestAbortRef.current[lane] === controller) delete requestAbortRef.current[lane];
       }
     }
   }, [ensureRemarks, laneStates, loadFirstPage, replaceLane]);
+
+  useEffect(() => {
+    if (previousLanguageRef.current === language) return;
+    previousLanguageRef.current = language;
+    for (const lane of LANE_ORDER) {
+      requestAbortRef.current[lane]?.abort();
+      delete requestAbortRef.current[lane];
+      requestGenerationRef.current[lane]++;
+      requestInFlightRef.current[lane] = false;
+    }
+    staleReadsAfterLikeRef.current = {};
+    setLaneStates(initialLaneStates());
+    setUnreads(undefined);
+  }, [language]);
 
   useEffect(() => {
     const state = laneStates[activeLane];
@@ -936,7 +960,7 @@ export function SquareFeed({initialLane}: {initialLane: SquareLaneSlug}) {
           ) : null}
           {state.items.map((item) => (
             <Fragment key={`${item.type}:${item.sourceID}`}>
-              {item.type === 1 ? <SquareOpinionCard
+              {item.type === 1 ? <SquareOpinionCard language={language}
                 now={displayNow} item={item}
                 onOpenPosition={openPosition}
                 remark={item.actor.identifier === session?.user?.identifier ? undefined : authorRelations.entries[item.actor.identifier]?.remark}
