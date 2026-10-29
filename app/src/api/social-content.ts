@@ -12,7 +12,7 @@
 import {call} from './envelope';
 import {normalizeContentTranslation, type ContentTranslation, type ContentLanguage} from '@/lib/content-translation';
 import {normalizeHolder, type TokenHolder} from './token-holder-list';
-import {normalizePortfolioPosition, positionTargetID, type PortfolioPosition} from './portfolio';
+import {normalizePortfolioPosition, type PortfolioPosition} from './portfolio';
 import {normalizeTokenInfo, tokenKey, type TokenInfo} from './token-metadata';
 
 function socialCall(path: string, options: Parameters<typeof call>[1] = {}) {
@@ -406,12 +406,27 @@ function normalizePositionToken(card: UnknownRecord, position: PortfolioPosition
     ...Object.fromEntries(['logo', 'creator', 'twitter', 'website', 'launchpad', 'launchpad_name', 'launchpad_logo'].map((key) => [key, nonEmptyString(token[key])]))};
 }
 
+/** Reading an existing opinion must not use the stricter publish-readiness gate. */
+function matchesOpinionPosition(target: string, position: PortfolioPosition): boolean {
+  const {chain_id, kind, token_address} = position.asset;
+  if (kind.includes(':') || token_address.includes(':')) return false;
+  const asset = `${chain_id}:${kind}:${token_address}`;
+  if (target.startsWith('v2:')) {
+    if (!position.cycle_key) return false;
+    const bytes = new TextEncoder().encode(position.cycle_key);
+    const encoded = btoa(Array.from(bytes, (byte) => String.fromCharCode(byte)).join(''))
+      .replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    return target === `v2:${asset}:${encoded}`;
+  }
+  return target === `${asset}:${position.opened_entry_id}`;
+}
+
 function normalizeOpinionCard(value: unknown): OpinionFeedContent {
   const card = record(value);
   if (!card) throw new SocialContentShapeError('opinion card is missing');
   const opinion = normalizeOpinion(card.opinion);
   const position = normalizePortfolioPosition(card.position, true);
-  if (positionTargetID(position) !== opinion.targetID) throw new SocialContentShapeError('opinion position identity mismatch');
+  if (!matchesOpinionPosition(opinion.targetID, position)) throw new SocialContentShapeError('opinion position identity mismatch');
   const token = normalizePositionToken(card, position);
   return {kind: 'opinion', opinion, position, ...(token ? {token} : {})};
 }
@@ -494,10 +509,25 @@ function normalizeFeedData(value: unknown): SquareFeedData {
   const asOf = asOfRaw && asOfRaw.seconds > 0 ? asOfRaw : undefined;
   const refreshAnchor = nonEmptyString(row.refresh_anchor) as SquareRefreshAnchor | undefined;
 
+  const items: SquareFeedItem[] = [];
+  let firstError: unknown;
+  for (const raw of row.items ?? []) {
+    try {
+      const item = normalizeFeedItem(raw);
+      if (item) items.push(item);
+    } catch (error) {
+      firstError ??= error;
+      console.warn('Square skipped an invalid card', {
+        sourceID: nonEmptyString(record(raw)?.source_id),
+        reason: error instanceof Error ? error.message : 'Invalid card',
+      });
+    }
+  }
+  // A completely invalid response is an error, never a genuine empty feed.
+  if (firstError && items.length === 0) throw firstError;
+
   return {
-    items: (row.items ?? [])
-      .map(normalizeFeedItem)
-      .filter((item): item is SquareFeedItem => item !== undefined),
+    items,
     ...(nextCursor ? {nextCursor} : {}),
     ...(batchID ? {batchID} : {}),
     ...(asOf ? {asOf} : {}),
