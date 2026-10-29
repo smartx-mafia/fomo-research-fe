@@ -4,6 +4,7 @@ import { PrivyProviders } from "@/components/PrivyProviders";
 import { FavoritesProvider } from "@/components/FavoritesProvider";
 import { InviteGateListener } from "@/components/InviteGateListener";
 import { Toaster } from "@/components/ui/sonner";
+import { LeaderboardNavLink } from "@/components/LeaderboardNavLink";
 import { ContentLanguageSelect } from "@/components/ContentLanguageSelect";
 
 /**
@@ -32,9 +33,7 @@ export default function ProductLayout({ children }: { children: ReactNode }) {
             <Link href="/square?mode=token&lane=newest" className="hover:text-foreground">
               Square
             </Link>
-            <Link href="/leaderboard" className="hover:text-foreground">
-              Leaderboard
-            </Link>
+            <LeaderboardNavLink />
             <Link href="/people" className="hover:text-foreground">
               People
             </Link>
