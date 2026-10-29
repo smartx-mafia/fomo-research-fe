@@ -27,6 +27,15 @@ export const CROSSMINT_CLIENT_API_KEY = process.env.NEXT_PUBLIC_CROSSMINT_CLIENT
 export const ENABLE_GOOGLE = process.env.NEXT_PUBLIC_ENABLE_GOOGLE === 'true';
 export const ENABLE_APPLE = process.env.NEXT_PUBLIC_ENABLE_APPLE === 'true';
 
+/**
+ * `/dev/harness` 的**页面总开关**。非 `'true'` 一律当作关闭，页面渲染 not-found。
+ *
+ * 默认关的理由：harness 是内部调试工具，会连真实 Privy、真实后端并签真实交易，
+ * 任何一次误部署都不该让它在产品域名上可达。开关必须显式写成字符串 `'true'`，
+ * 「存在即开启」那种写法会让一个空串或 `false` 也把它打开。
+ */
+export const ENABLE_HARNESS = process.env.NEXT_PUBLIC_ENABLE_HARNESS === 'true';
+
 /** 浏览器直接访问的 business API 根地址。公开配置，不得包含服务端凭据。 */
 export const BUSINESS_API_BASE = (
   process.env.NEXT_PUBLIC_BUSINESS_API_BASE ||

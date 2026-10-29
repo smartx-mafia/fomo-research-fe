@@ -3,10 +3,13 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "NODE_USE_ENV_PROXY=1 next dev",
     "build": "next build",
     "start": "next start",
-    "test": "vitest run"
+    "test": "vitest run",
+    "harness:probe": "tsx scripts/harness/probe.ts",
+    "harness:universe": "tsx scripts/harness/universe.ts",
+    "harness:privy-sign": "tsx scripts/harness/privy-sign.ts"
   },
   "dependencies": {
     "@crossmint/client-sdk-react-ui": "4.5.1",
@@ -43,6 +46,7 @@
     "@types/react-dom": "^19",
     "jsdom": "^29.1.1",
     "tailwindcss": "^4",
+    "tsx": "^4.20.3",
     "typescript": "^5",
     "vitest": "^3.2.7",
     "ws": "^8.21.3"

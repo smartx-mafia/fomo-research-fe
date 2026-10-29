@@ -34,6 +34,15 @@ describe('Calibur signing envelope', () => {
     expect(() => digestFromBase64(toBase64(new Uint8Array(31)), 'Batch digest')).toThrow(/31/);
   });
 
+  it('rejects invalid authorization chain, nonce, and delegation target before signing', () => {
+    const digest = toBase64(new Uint8Array(32).fill(1));
+    const envelope = (authorization: Record<string, unknown>) =>
+      new TextEncoder().encode(JSON.stringify({batch_digest: digest, authorization}));
+    expect(() => parseCaliburSignData(envelope({digest, chain_id: 0, address: CALIBUR, nonce: 1}))).toThrow(/invalid/);
+    expect(() => parseCaliburSignData(envelope({digest, chain_id: 56, address: CALIBUR, nonce: -1}))).toThrow(/invalid/);
+    expect(() => parseCaliburSignData(envelope({digest, chain_id: 56, address: '0x0000000000000000000000000000000000000000', nonce: 1}))).toThrow(/invalid/);
+  });
+
   it('cross-checks the authorization digest against chain, address, and nonce', () => {
     const expected = hashAuthorization({chainId: 56, address: CALIBUR, nonce: 7});
     const authorization = {digest: toBase64(hexBytes(expected)), chain_id: 56, address: CALIBUR, nonce: 7};

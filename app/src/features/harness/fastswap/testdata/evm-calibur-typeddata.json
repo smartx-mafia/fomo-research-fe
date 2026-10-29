@@ -1,0 +1,101 @@
+{
+  "domain": {
+    "chainId": 56,
+    "name": "Calibur",
+    "salt": "0x000000000000000000000000000000009b1d0af20d8c6d0a44e162d11f9b8f00",
+    "verifyingContract": "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+    "version": "1.0.0"
+  },
+  "message": {
+    "batchedCall": {
+      "calls": [
+        {
+          "data": "0x095ea7b3",
+          "to": "0x3EFBfFf95576e1d23cF6Ead0AcD2E73F4d6A7777",
+          "value": "0"
+        },
+        {
+          "data": "0xf9e4bab4deadbeef",
+          "to": "0xCcC88a9d1B4ED6b0EABA998850414b24f1c315bE",
+          "value": "1000000000000000"
+        }
+      ],
+      "revertOnFailure": true
+    },
+    "deadline": "1789574400",
+    "executor": "0xcA11bde05977b3631167028862bE2a173976CA11",
+    "keyHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "nonce": "123456789012345678901234567890"
+  },
+  "primaryType": "SignedBatchedCall",
+  "types": {
+    "BatchedCall": [
+      {
+        "name": "calls",
+        "type": "Call[]"
+      },
+      {
+        "name": "revertOnFailure",
+        "type": "bool"
+      }
+    ],
+    "Call": [
+      {
+        "name": "to",
+        "type": "address"
+      },
+      {
+        "name": "value",
+        "type": "uint256"
+      },
+      {
+        "name": "data",
+        "type": "bytes"
+      }
+    ],
+    "EIP712Domain": [
+      {
+        "name": "name",
+        "type": "string"
+      },
+      {
+        "name": "version",
+        "type": "string"
+      },
+      {
+        "name": "chainId",
+        "type": "uint256"
+      },
+      {
+        "name": "verifyingContract",
+        "type": "address"
+      },
+      {
+        "name": "salt",
+        "type": "bytes32"
+      }
+    ],
+    "SignedBatchedCall": [
+      {
+        "name": "batchedCall",
+        "type": "BatchedCall"
+      },
+      {
+        "name": "nonce",
+        "type": "uint256"
+      },
+      {
+        "name": "keyHash",
+        "type": "bytes32"
+      },
+      {
+        "name": "executor",
+        "type": "address"
+      },
+      {
+        "name": "deadline",
+        "type": "uint256"
+      }
+    ]
+  }
+}

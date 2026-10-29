@@ -3,11 +3,12 @@
 import {useCallback, useEffect, useState} from 'react';
 
 import {ApiError} from '@/api/envelope';
-import {getPreferences, setTheme, THEMES} from '@/api/settings';
+import {getPreferences, setTheme, setXAutoFollow, THEMES, type Preferences} from '@/api/settings';
 import {setLanguage, LANGUAGES, LANGUAGE_LABELS, type Language} from '@/api/user';
 import {ErrorPanel} from '@/components/ErrorPanel';
 import {LoginGate} from '@/components/settings/LoginGate';
 import {SettingsNav} from '@/components/settings/SettingsNav';
+import {ToggleRow} from '@/components/settings/ToggleRow';
 import {Button} from '@/components/ui/button';
 import {Card, CardContent, CardHeader, CardTitle} from '@/components/ui/card';
 import {cn} from '@/lib/utils';
@@ -17,13 +18,13 @@ const THEME_LABELS: Record<string, string> = {system: '跟随系统', light: '�
 
 /**
  * Preferences 页（settings-integration.md §6）：language 沿用
- * POST /v1/user/language（设置域不复制该端点）；theme 走本域的
- * POST /v1/settings/preferences/theme。
+ * POST /v1/user/language（设置域不复制该端点）；theme 与 x_auto_follow
+ * （settings.md §1.4）走本域的 POST /v1/settings/preferences/*。
  */
 export function PreferencesSettingsView() {
   const session = useSession();
   const jwt = session?.jwt ?? null;
-  const [prefs, setPrefs] = useState<{language?: string; theme?: string} | null>(null);
+  const [prefs, setPrefs] = useState<Preferences | null>(null);
   const [err, setErr] = useState<ApiError | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -67,12 +68,30 @@ export function PreferencesSettingsView() {
   const changeTheme = (theme: (typeof THEMES)[number]) => {
     setBusy(true);
     setErr(null);
-    setPrefs((p) => ({language: p?.language, theme})); // 乐观更新
+    setPrefs((p) => ({...p, theme})); // 乐观更新（展开保留其它偏好字段，如 x_auto_follow）
     void setTheme(jwt, theme)
       .then((res) => {
-        setPrefs((p) => ({language: p?.language, theme: res.data.theme ?? theme}));
+        setPrefs((p) => ({...p, theme: res.data.theme ?? theme}));
         applyThemeClass(res.data.theme ?? theme);
       })
+      .catch((e: unknown) => {
+        setErr(e as ApiError);
+        void load();
+      })
+      .finally(() => setBusy(false));
+  };
+
+  /**
+   * x_auto_follow（settings.md §1.4，2026-09-10 起默认 true）：X 好友自动关注
+   * 的「被反向带入」开关。服务端另有系统级总开关，两者都开才会反向带入；
+   * 本人绑定 X 后首次导入的正向自动关注不受它影响。乐观更新，失败重拉整页。
+   */
+  const changeXAutoFollow = (enabled: boolean) => {
+    setBusy(true);
+    setErr(null);
+    setPrefs((p) => ({...p, x_auto_follow: enabled})); // 乐观更新
+    void setXAutoFollow(jwt, enabled)
+      .then((res) => setPrefs((p) => ({...p, x_auto_follow: res.data.x_auto_follow ?? enabled})))
       .catch((e: unknown) => {
         setErr(e as ApiError);
         void load();
@@ -129,6 +148,21 @@ export function PreferencesSettingsView() {
             ))}
           </div>
           <p className="text-muted-foreground text-[11px]">system / light / dark；服务端归一后回包，以回包为准刷新 UI。</p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">X 好友</CardTitle>
+        </CardHeader>
+        <CardContent className="divide-y divide-border">
+          <ToggleRow
+            label="X 好友自动关注（被反向带入）"
+            desc="关闭后，X 好友之后加入 SmartX 时不会再自动关注你；你绑定 X 后首次导入的正向自动关注不受影响。"
+            checked={prefs?.x_auto_follow ?? true}
+            disabled={busy || !prefs}
+            onToggle={() => changeXAutoFollow(!(prefs?.x_auto_follow ?? true))}
+          />
         </CardContent>
       </Card>
 

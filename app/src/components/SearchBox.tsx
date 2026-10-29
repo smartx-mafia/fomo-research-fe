@@ -12,6 +12,7 @@ import {
 import { clearSite, useSession } from "@/session/storage";
 import type { SearchAccountEntry, SearchData, SearchScope, SearchSmartMoney } from "@/lib/types";
 import { chainLabel, fmtPrice, fmtCompact, fmtPct, shortAddr } from "@/lib/format";
+import {TokenAvatar} from '@/components/TokenAvatar';
 
 /**
  * 顶栏搜索（GET /v1/search）：产品仍展示 Token / People 两个范围，后端分别使用
@@ -469,7 +470,10 @@ function TokenResults({
           onClick={() => onGo(result.chain, result.address)}
           className="flex w-full items-center justify-between gap-3 border-b border-border/50 px-3 py-2 text-left last:border-0 hover:bg-surface-2"
         >
-          <div className="flex min-w-0 flex-col leading-tight">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <TokenAvatar chain={result.chain} address={result.address} size={28} fallbackLogo={result.market?.logo}
+              fallbackSymbol={result.symbol} fallbackName={result.name} />
+            <div className="flex min-w-0 flex-col leading-tight">
             <span className="text-sm font-medium text-foreground">
               {result.symbol ?? result.address.slice(0, 8)}
               <span className="ml-1.5 text-[10px] font-normal text-muted">
@@ -477,6 +481,7 @@ function TokenResults({
               </span>
             </span>
             <span className="truncate text-xs text-muted">{result.name ?? result.address}</span>
+            </div>
           </div>
           <div className="shrink-0 text-right">
             {result.market ? (

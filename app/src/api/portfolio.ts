@@ -13,8 +13,18 @@ export type PortfolioAsset = {
 export type PortfolioPosition = {
   asset: PortfolioAsset;
   symbol?: string;
+  logo?: string;
   decimals?: number;
   shares_raw: string;
+  pending_shares?: string;
+  sellable_shares?: string;
+  cycle_key?: string;
+  input_revision?: string;
+  applied_revision?: string;
+  valuation_status?: string;
+  history_epoch?: string;
+  quantity_status?: string;
+  verified_block?: string;
   price_usd?: string;
   price_as_of?: ProtoTimestamp;
   opened_entry_id: string;
@@ -71,6 +81,11 @@ export type PortfolioCashBalance = {
 };
 
 export type PortfolioReply = {
+  balance?: PortfolioBalance;
+  history_epoch?: string;
+  pnl_rules_version?: string;
+  completeness?: string;
+  quantity_completeness?: string;
   total_value_usd?: string;
   cash_balance_usd?: string;
   total_assets_usd?: string;
@@ -99,9 +114,127 @@ export type PortfolioTrade = {
   fee_currency?: string;
   tx_chain?: string;
   cycle_opened_entry_id: string;
+  cycle_key?: string;
+  logo?: string;
+  symbol?: string;
+  name?: string;
+  token_amount?: string;
+  trade_value_usd?: string;
+  execution_price_usd?: string;
+  fee_total_usd?: string;
+  asset_decimals?: number;
 };
 
 export type PortfolioTradePage = {trades: PortfolioTrade[]; next_cursor?: string};
+
+export type PortfolioBalanceCurve = {points: {at: string; balance_usd: string}[]; now_usd?: string; as_of?: string; simulated: boolean};
+export type PortfolioBalanceWindow = {amount_usd?: string; baseline_as_of?: string; curve: {at: string; balance_usd: string}[]; simulated: boolean};
+export type PortfolioBalance = {d1?: PortfolioBalanceWindow; d7?: PortfolioBalanceWindow; d30?: PortfolioBalanceWindow; all?: PortfolioBalanceWindow; all_usd?: string};
+function balanceSummary(value: unknown): PortfolioBalance | undefined {
+  const row = object(value);
+  if (!row) return undefined;
+  const window = (value: unknown): PortfolioBalanceWindow | undefined => {
+    const item = object(value);
+    if (!item) return undefined;
+    if (item.curve != null && !Array.isArray(item.curve)) throw new Error('Invalid balance curve.');
+    const curve = ((item.curve ?? []) as unknown[]).map((value) => {
+      const point = object(value);
+      const amount = optionalDecimal(point?.balance_usd, 'balance.curve.balance_usd');
+      if (amount === undefined) throw new Error('Missing balance sample.');
+      return {at: rfc3339(point?.at, 'balance.curve.at', true)!, balance_usd: amount};
+    });
+    return {curve, amount_usd: optionalDecimal(item.amount_usd, 'balance.amount_usd'), baseline_as_of: rfc3339(item.baseline_as_of, 'balance.baseline_as_of'), simulated: item.simulated === true};
+  };
+  return {d1: window(row.d1), d7: window(row.d7), d30: window(row.d30), all: window(row.all), all_usd: optionalDecimal(row.all_usd, 'balance.all_usd')};
+}
+export type PortfolioCycleScope = {chain: string; asset: string; opened_entry_id?: string; cycle_key?: string};
+export type PortfolioClosedPosition = {
+  cycle_key?: string;
+  history_epoch?: string;
+  valuation_status?: string;
+  ending_amount_raw?: string;
+  ending_cost_basis_usd?: string;
+  asset: PortfolioAsset;
+  opened_entry_id: string;
+  closed_entry_id: string;
+  opened_at?: ProtoTimestamp;
+  closed_at?: ProtoTimestamp;
+  status: 'closed';
+  symbol?: string;
+  logo?: string;
+  decimals?: number;
+  buy_amount_raw?: string;
+  sell_amount_raw?: string;
+  buy_value_usd?: string;
+  sell_value_usd?: string;
+  realized_pnl_usd?: string;
+  pnl_ratio?: string;
+  avg_buy_price_usd?: string;
+  avg_sell_price_usd?: string;
+};
+export type PortfolioClosedPage = {items: PortfolioClosedPosition[]; next_cursor?: string; history_epoch?: string; completeness?: string};
+
+export function normalizePortfolioClosedPage(value: unknown): PortfolioClosedPage {
+  const row = object(value);
+  if (!row || (row.items !== undefined && !Array.isArray(row.items))) throw new Error('Portfolio closed positions must be an array.');
+  const items = (row.items as unknown[] | undefined ?? []).map((value): PortfolioClosedPosition => {
+    const item = object(value), asset = object(item?.asset);
+    if (!item || !asset || item.status !== 'closed') throw new Error('Portfolio returned an invalid closed position.');
+    const opened = nonnegativeIntegerString(item.opened_entry_id, 'opened_entry_id');
+    const closed = nonnegativeIntegerString(item.closed_entry_id, 'closed_entry_id');
+    const chainID = nonnegativeIntegerString(asset.chain_id, 'asset.chain_id');
+    if ((!optionalString(item.cycle_key) && (opened === '0' || closed === '0')) || chainID === '0') throw new Error('Portfolio returned an invalid closed cycle identity.');
+    return {
+      cycle_key: optionalString(item.cycle_key), history_epoch: optionalString(item.history_epoch), valuation_status: optionalString(item.valuation_status),
+      ending_amount_raw: optionalUnsignedAmount(item.ending_amount_raw, 'ending_amount_raw'), ending_cost_basis_usd: optionalDecimal(item.ending_cost_basis_usd, 'ending_cost_basis_usd'),
+      asset: {chain: requiredString(asset.chain, 'asset.chain'), chain_id: chainID, kind: requiredString(asset.kind, 'asset.kind'), token_address: requiredString(asset.token_address, 'asset.token_address')},
+      opened_entry_id: opened, closed_entry_id: closed, opened_at: timestamp(item.opened_at), closed_at: timestamp(item.closed_at), status: 'closed',
+      symbol: optionalString(item.symbol),
+      logo: optionalString(item.logo),
+      decimals: typeof item.decimals === 'number' && Number.isInteger(item.decimals) && item.decimals >= 0 && item.decimals <= 255 ? item.decimals : undefined,
+      buy_amount_raw: optionalUnsignedAmount(item.buy_amount_raw, 'buy_amount_raw'), sell_amount_raw: optionalUnsignedAmount(item.sell_amount_raw, 'sell_amount_raw'),
+      buy_value_usd: optionalDecimal(item.buy_value_usd, 'buy_value_usd'), sell_value_usd: optionalDecimal(item.sell_value_usd, 'sell_value_usd'),
+      realized_pnl_usd: optionalDecimal(item.realized_pnl_usd, 'realized_pnl_usd'), pnl_ratio: optionalDecimal(item.pnl_ratio, 'pnl_ratio'),
+      avg_buy_price_usd: optionalDecimal(item.avg_buy_price_usd, 'avg_buy_price_usd'), avg_sell_price_usd: optionalDecimal(item.avg_sell_price_usd, 'avg_sell_price_usd'),
+    };
+  });
+  if (row.next_cursor != null && typeof row.next_cursor !== 'string') throw new Error('Invalid closed history cursor.');
+  return {items, next_cursor: optionalString(row.next_cursor), history_epoch: optionalString(row.history_epoch), completeness: optionalString(row.completeness)};
+}
+
+export async function getClosedPortfolioPositions(bearer: string, cursor = '', signal?: AbortSignal): Promise<PortfolioClosedPage> {
+  const query = new URLSearchParams({status: 'closed', limit: '20'});
+  if (cursor) query.set('cursor', cursor);
+  const response = await call<unknown>(`/v1/portfolio/history?${query}`, {
+    bearer, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
+    preserveInt64Fields: ['chain_id', 'opened_entry_id', 'closed_entry_id'],
+  });
+  try {return normalizePortfolioClosedPage(response.data);} catch (error) {
+    throw new PortfolioDataError(error instanceof Error ? error.message : 'Invalid closed positions.', response.traceID);
+  }
+}
+
+/** Complete scope is mandatory: partial parameters must never fall through to global trades. */
+export async function getPortfolioCycleTrades(bearer: string, scope: PortfolioCycleScope, beforeID = '0', signal?: AbortSignal): Promise<PortfolioTradePage> {
+  const chain = requiredString(scope.chain, 'scope.chain'), asset = requiredString(scope.asset, 'scope.asset');
+  const opened = nonnegativeIntegerString(scope.opened_entry_id, 'scope.opened_entry_id');
+  const cursor = nonnegativeIntegerString(beforeID, 'before_id');
+  if (!chain.trim() || !asset.trim() || opened === '0') throw new Error('A complete positive cycle identity is required.');
+  const query = new URLSearchParams({chain, asset, opened_entry_id: opened, limit: '50'});
+  if (cursor !== '0') query.set('before_id', cursor);
+  const response = await call<unknown>(`/v1/portfolio/position/trades?${query}`, {
+    bearer, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
+    preserveInt64Fields: ['next_cursor', 'cycle_opened_entry_id'],
+  });
+  try {
+    const page = normalizePortfolioTradePage(response.data);
+    if (page.trades.some((trade) => trade.chain !== chain || trade.cycle_opened_entry_id !== opened ||
+      (chain === 'solana' ? trade.token !== asset : trade.token.toLowerCase() !== asset.toLowerCase()))) throw new Error('Portfolio returned trades from another cycle.');
+    return page;
+  } catch (error) {
+    throw new PortfolioDataError(error instanceof Error ? error.message : 'Invalid cycle trades.', response.traceID);
+  }
+}
 
 function object(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : undefined;
@@ -127,6 +260,11 @@ function nonnegativeIntegerString(value: unknown, field: string): string {
 function optionalUnsignedAmount(value: unknown, field: string): string | undefined {
   const output = optionalString(value);
   if (output !== undefined && !/^\d+$/.test(output)) throw new Error(`Portfolio returned an invalid ${field}.`);
+  return output;
+}
+function optionalSignedAmount(value: unknown, field: string): string | undefined {
+  const output = optionalString(value);
+  if (output !== undefined && !/^-?\d+$/.test(output)) throw new Error(`Portfolio returned an invalid ${field}.`);
   return output;
 }
 
@@ -172,7 +310,7 @@ export function normalizePortfolioPosition(value: unknown, allowClosed = false):
   const entry = nonnegativeIntegerString(row.opened_entry_id ?? 0, 'opened_entry_id');
   const status = row.cycle_status === 'ready' || row.cycle_status === 'pending' || row.cycle_status === 'unavailable'
     ? row.cycle_status : 'unavailable';
-  const ready = status === 'ready' && entry !== '0';
+  const ready = status === 'ready' && (entry !== '0' || !!optionalString(row.cycle_key));
   const decimalFields = ['price_usd', 'cost_basis_usd', 'buy_value_usd', 'sell_value_usd',
     'realized_pnl_usd', 'market_value_usd', 'unrealized_pnl_usd', 'total_pnl_usd',
     'pnl_ratio', 'avg_buy_price_usd', 'avg_sell_price_usd'] as const;
@@ -189,8 +327,13 @@ export function normalizePortfolioPosition(value: unknown, allowClosed = false):
   return {
     asset: {chain, chain_id: chainID, kind, token_address: tokenAddress},
     symbol: optionalString(row.symbol),
+    logo: optionalString(row.logo),
     decimals: typeof row.decimals === 'number' && Number.isInteger(row.decimals) && row.decimals >= 0 && row.decimals <= 255 ? row.decimals : undefined,
     shares_raw: shares,
+    pending_shares: optionalSignedAmount(row.pending_shares, 'pending_shares'), sellable_shares: optionalUnsignedAmount(row.sellable_shares, 'sellable_shares'),
+    cycle_key: optionalString(row.cycle_key), input_revision: optionalString(row.input_revision), applied_revision: optionalString(row.applied_revision),
+    valuation_status: optionalString(row.valuation_status), history_epoch: optionalString(row.history_epoch),
+    quantity_status: optionalString(row.quantity_status), verified_block: optionalString(row.verified_block),
     opened_entry_id: entry,
     opened_at: timestamp(row.opened_at),
     cycle_status: ready ? 'ready' : status === 'ready' ? 'unavailable' : status,
@@ -278,6 +421,9 @@ export function normalizePortfolio(value: unknown): PortfolioReply {
   }) : [];
   return {
     total_value_usd: optionalDecimal(row.total_value_usd, 'total_value_usd'),
+    balance: balanceSummary(row.balance),
+    history_epoch: optionalString(row.history_epoch), pnl_rules_version: optionalString(row.pnl_rules_version),
+    completeness: optionalString(row.completeness), quantity_completeness: optionalString(row.quantity_completeness),
     cash_balance_usd: optionalDecimal(row.cash_balance_usd, 'cash_balance_usd'),
     total_assets_usd: optionalDecimal(row.total_assets_usd, 'total_assets_usd'),
     cash_observed_at: timestamp(row.cash_observed_at),
@@ -327,6 +473,17 @@ export function normalizePortfolioTradePage(value: unknown): PortfolioTradePage 
       fee_currency: feeCurrency,
       tx_chain: optionalString(trade.tx_chain),
       cycle_opened_entry_id: nonnegativeIntegerString(trade.cycle_opened_entry_id, 'trade.cycle_opened_entry_id'),
+      cycle_key: optionalString(trade.cycle_key),
+      logo: optionalString(trade.logo),
+      symbol: optionalString(trade.symbol),
+      name: optionalString(trade.name),
+      token_amount: optionalDecimal(trade.token_amount, 'trade.token_amount'),
+      trade_value_usd: optionalDecimal(trade.trade_value_usd, 'trade.trade_value_usd'),
+      execution_price_usd: optionalDecimal(trade.execution_price_usd, 'trade.execution_price_usd'),
+      fee_total_usd: optionalDecimal(trade.fee_total_usd, 'trade.fee_total_usd'),
+      asset_decimals: trade.asset_decimals == null ? undefined
+        : typeof trade.asset_decimals === 'number' && Number.isInteger(trade.asset_decimals) && trade.asset_decimals >= 0 && trade.asset_decimals <= 255
+          ? trade.asset_decimals : (() => {throw new Error('Portfolio returned an invalid trade.asset_decimals.');})(),
     } satisfies PortfolioTrade;
   });
   const cursor = nonnegativeIntegerString(row.next_cursor ?? 0, 'trade next_cursor');
@@ -369,5 +526,63 @@ export function positionTargetID(position: PortfolioPosition): string | undefine
     return `${chainID}:${kind}:${tokenAddress}:${entryID}`;
   } catch {
     return undefined;
+  }
+}
+
+// ── 客态 Portfolio（portfolio.md 第一部分：/v1/users/{id}/portfolio，2026-09） ──
+//
+// 看别人的总览 / closed / 流水。四个接口均为 **Optional 档**：匿名可看、
+// 带有效 JWT 放行、**带坏 JWT 一律 400000 拒绝（不降级成匿名）** —— 未登录就
+// 不传 bearer，绝不要把过期 token 传进来。回包类型与主态共用（契约原文：
+// 「与旧主态总览共用返回类型和计算逻辑」），归一化直接复用上面的函数。
+// 目标不存在/受限按不存在处理（不是空账户）；切换用户时调用方要清空旧游标、
+// 丢弃上一用户的迟到响应。
+
+/** 客态总览：open 持仓、账户 PnL、现金、总资产及曲线。 */
+export async function getUserPortfolio(userIdentifier: string, bearer?: string, signal?: AbortSignal): Promise<PortfolioReply> {
+  const response = await call<unknown>(`/v1/users/${encodeURIComponent(userIdentifier)}/portfolio`, {
+    bearer,
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
+    preserveInt64Fields: ['opened_entry_id', 'chain_id'],
+  });
+  try {
+    return normalizePortfolio(response.data);
+  } catch (error) {
+    throw new PortfolioDataError(error instanceof Error ? error.message : 'Invalid viewer Portfolio response.', response.traceID);
+  }
+}
+
+/** 客态 closed 轮次列表：limit 上限 20；条目比主态多 cycle_key / ending_* / valuation_status（此处宽容忽略）。 */
+export async function getUserClosedPositions(userIdentifier: string, cursor = '', bearer?: string, signal?: AbortSignal): Promise<PortfolioClosedPage> {
+  const query = new URLSearchParams({limit: '20'});
+  if (cursor) query.set('cursor', cursor);
+  const response = await call<unknown>(`/v1/users/${encodeURIComponent(userIdentifier)}/portfolio/closed?${query}`, {
+    bearer,
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
+    preserveInt64Fields: ['chain_id', 'opened_entry_id', 'closed_entry_id'],
+  });
+  try {
+    return normalizePortfolioClosedPage(response.data);
+  } catch (error) {
+    throw new PortfolioDataError(error instanceof Error ? error.message : 'Invalid viewer closed positions.', response.traceID);
+  }
+}
+
+/** 客态跨币流水：默认 50、上限 200；before_id 游标与主态同语义。 */
+export async function getUserPortfolioTrades(userIdentifier: string, beforeID = '0', limit = 50, bearer?: string, signal?: AbortSignal): Promise<PortfolioTradePage> {
+  if (!Number.isInteger(limit) || limit < 1 || limit > 200) throw new Error('Viewer trade history limit must be between 1 and 200.');
+  if (!/^\d+$/.test(beforeID)) throw new Error('Viewer trade history cursor is invalid.');
+  const cursor = BigInt(beforeID).toString();
+  const query = new URLSearchParams({limit: String(limit)});
+  if (cursor !== '0') query.set('before_id', cursor);
+  const response = await call<unknown>(`/v1/users/${encodeURIComponent(userIdentifier)}/portfolio/trades?${query}`, {
+    bearer,
+    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(15_000)]) : AbortSignal.timeout(15_000),
+    preserveInt64Fields: ['next_cursor', 'cycle_opened_entry_id'],
+  });
+  try {
+    return normalizePortfolioTradePage(response.data);
+  } catch (error) {
+    throw new PortfolioDataError(error instanceof Error ? error.message : 'Invalid viewer trade history.', response.traceID);
   }
 }

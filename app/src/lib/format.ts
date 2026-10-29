@@ -123,6 +123,9 @@ export const CHAIN_LABEL: Record<string, string> = {
   base: "BASE",
   robinhood: "RH",
   ethereum: "ETH",
+  // 这张表的值大多是原生币符号（BNB / SOL / ETH），但 Arc 的原生币是 USDC ——
+  // 写 "USDC" 会让徽标看起来像"这是一只 USDC"，所以这里写链名本身。
+  arc: "ARC",
 };
 
 export function chainLabel(id: unknown): string {

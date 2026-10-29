@@ -36,8 +36,9 @@ export function parseCaliburSignData(value: Uint8Array): CaliburSignData {
     if (
       typeof auth.digest !== 'string' || !auth.digest ||
       typeof auth.address !== 'string' || !auth.address ||
-      typeof auth.chain_id !== 'number' || !Number.isSafeInteger(auth.chain_id) ||
-      typeof auth.nonce !== 'number' || !Number.isSafeInteger(auth.nonce)
+      !/^0x[0-9a-f]{40}$/i.test(auth.address) || /^0x0{40}$/i.test(auth.address) ||
+      typeof auth.chain_id !== 'number' || !Number.isSafeInteger(auth.chain_id) || auth.chain_id <= 0 ||
+      typeof auth.nonce !== 'number' || !Number.isSafeInteger(auth.nonce) || auth.nonce < 0
     ) {
       throw new Error('Calibur authorization fields are invalid.');
     }

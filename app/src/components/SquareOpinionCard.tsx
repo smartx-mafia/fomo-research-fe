@@ -3,20 +3,26 @@
 import Image from 'next/image';
 import {ExternalLink, Heart, LoaderCircle} from 'lucide-react';
 import {useState} from 'react';
-import type {SquareFeedItem} from '@/api/social-content';
+import {TranslatedText} from './TranslatedText';
+import type {ContentLanguage} from '@/lib/content-translation';
+import type {SquareOpinionItem} from '@/api/social-content';
 import {opinionAge, opinionCycleReturn} from '@/lib/opinion-card-display';
 import {decimalSign, formatDecimalExact} from '@/lib/exact-decimal';
+import {TokenAvatar} from '@/components/TokenAvatar';
 import styles from './SquareOpinionCard.module.css';
 
-export function SquareOpinionCard({item, remark, likePending, onToggleLike, now}: {
-  item: SquareFeedItem;
+export function SquareOpinionCard({item, remark, followControl, likePending, onToggleLike, onOpenPosition, logoToToken = false, now, language = 'en'}: {
+  item: SquareOpinionItem;
+  language?: ContentLanguage;
   remark?: string;
+  followControl?: {phase: 'anonymous' | 'loading' | 'ready' | 'saving' | 'failed'; following?: boolean; onToggle: () => void};
   likePending: boolean;
-  onToggleLike: (item: SquareFeedItem) => void;
+  onToggleLike: (item: SquareOpinionItem) => void;
   now: number;
+  onOpenPosition?: (item: SquareOpinionItem) => void;
+  logoToToken?: boolean;
 }) {
   const [failedAvatar, setFailedAvatar] = useState<string>();
-  const [failedTokenLogo, setFailedTokenLogo] = useState<string>();
   const {actor, content} = item;
   const version = content.opinion.latestVersion;
   const name = actor.nickname || actor.username || `${actor.identifier.slice(0, 10)}…`;
@@ -26,7 +32,6 @@ export function SquareOpinionCard({item, remark, likePending, onToggleLike, now}
   const closed = BigInt(position.shares_raw) === BigInt(0);
   const pnlAmount = closed ? position.realized_pnl_usd : position.unrealized_pnl_usd;
   const pnlSign = decimalSign(pnlAmount);
-  const logo = content.token?.logo && /^https?:\/\//i.test(content.token.logo) ? content.token.logo : undefined;
   const href = `/token/${encodeURIComponent(position.asset.chain)}/${encodeURIComponent(position.asset.token_address)}`;
   const xLinks = version.items.filter((entry) => entry.kind === 'x_link');
   const published = new Date(item.sortTime.seconds * 1000);
@@ -48,24 +53,36 @@ export function SquareOpinionCard({item, remark, likePending, onToggleLike, now}
             </div>
             {actor.username ? <p className={styles.handle}>@{actor.username}</p> : null}
           </div>
+          <div className={styles.authorActions}>
           <time className={styles.time} dateTime={Number.isFinite(published.getTime()) ? published.toISOString() : undefined}
             title={Number.isFinite(published.getTime()) ? published.toLocaleString() : undefined}>
             {opinionAge(item.sortTime.seconds, now)}
           </time>
+          {followControl ? <button type="button" className={styles.follow}
+            disabled={followControl.phase === 'loading' || followControl.phase === 'saving'}
+            aria-pressed={followControl.following}
+            aria-label={followControl.phase === 'failed' ? `Retry follow status for ${name}` : followControl.following ? `Unfollow ${name}` : `Follow ${name}`}
+            onClick={followControl.onToggle}>
+            {followControl.phase === 'loading' || followControl.phase === 'saving' ? <LoaderCircle className={styles.spinner} size={13} aria-hidden="true" /> : null}
+            {followControl.phase === 'failed' ? 'Retry status' : followControl.phase === 'loading' ? 'Checking…' : followControl.phase === 'saving' ? 'Saving…' : followControl.following ? 'Following' : 'Follow'}
+          </button> : null}
+          </div>
         </header>
 
-        <p className={styles.body}>{version.body}</p>
+        <TranslatedText identity={JSON.stringify([content.opinion.opinionID, version.versionID])} original={version.body}
+          translation={version.translation} language={language} className={`${styles.body} ${onOpenPosition ? styles.bodyButton : ''}`}
+          openLabel={`查看 ${symbol || 'Token'} 持仓与观点`} onOpen={onOpenPosition ? () => onOpenPosition(item) : undefined} />
 
-        <div className={styles.position} aria-label="Position summary">
-          <span className={styles.tokenAvatar} aria-hidden="true">
-            {logo && failedTokenLogo !== logo ? <Image src={logo} alt="" width={32} height={32} unoptimized
-              onError={() => setFailedTokenLogo(logo)} /> : symbol?.slice(0, 1).toUpperCase() || '—'}
-          </span>
+        <div className={`${styles.position} ${onOpenPosition ? styles.positionInteractive : ''}`} aria-label={onOpenPosition ? `查看 ${symbol || 'Token'} 持仓` : 'Position summary'} role={onOpenPosition ? 'button' : undefined} tabIndex={onOpenPosition ? 0 : undefined}
+          onClick={onOpenPosition ? (event) => {if (!(event.target as HTMLElement).closest('a,button')) onOpenPosition(item);} : undefined}
+          onKeyDown={onOpenPosition ? (event) => {if (event.target === event.currentTarget && (event.key === 'Enter' || event.key === ' ')) {event.preventDefault(); onOpenPosition(item);}} : undefined}>
+          {logoToToken ? <a href={href} aria-label={`查看 ${symbol || 'Token'} 代币详情`}><TokenAvatar chain={position.asset.chain} address={position.asset.token_address} size={32} fallbackLogo={content.token?.logo} fallbackSymbol={symbol} fallbackName={content.token?.name} /></a>
+            : <TokenAvatar chain={position.asset.chain} address={position.asset.token_address} size={32} fallbackLogo={content.token?.logo} fallbackSymbol={symbol} fallbackName={content.token?.name} />}
           <div className={styles.tokenInfo}>
             <div className={styles.positionLabel}>{closed ? 'Closed' : 'Open'}<span className={styles.dot} aria-hidden="true" /></div>
             <p className={styles.symbol} title={`${symbol ?? 'Token'} · ${position.asset.chain}:${position.asset.token_address}`}>
               {/* 路径式详情页在静态导出下无客户端路由，走整页加载经 _redirects 重写 */}
-              <a href={href}>{symbol || 'Token unavailable'}</a>
+              {onOpenPosition ? <span>{symbol || 'Token unavailable'}</span> : <a href={href}>{symbol || 'Token unavailable'}</a>}
             </p>
           </div>
           <div className={styles.values}>

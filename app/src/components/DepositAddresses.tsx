@@ -5,6 +5,7 @@ import Link from 'next/link';
 
 import type {DepositAddress} from '@/api/deposit';
 import {CopyButton} from '@/components/CopyButton';
+import {TokenAvatar} from '@/components/TokenAvatar';
 import {chainLabel} from '@/lib/format';
 import type {SolanaBalanceMonitor} from '@/lib/deposit-polling';
 
@@ -52,7 +53,7 @@ export function DepositAddresses({
                 <ul className="mt-2 space-y-1 text-xs text-muted">
                   {item.accepted_tokens.map((token) => (
                     <li key={`${item.chain}:${token.address}`} className="space-y-1 rounded border border-border p-2">
-                      <div className="flex flex-wrap items-center justify-between gap-2"><span className="font-medium text-foreground">{token.symbol}</span><span>{token.decimals} decimals</span></div>
+                      <div className="flex flex-wrap items-center justify-between gap-2"><span className="flex items-center gap-2"><TokenAvatar chain={item.chain} address={token.address} size={28} fallbackSymbol={token.symbol} /><span className="font-medium text-foreground">{token.symbol}</span></span><span>{token.decimals} decimals</span></div>
                       <code className="block break-all font-mono text-[11px] text-foreground">{token.address}</code>
                       <CopyButton value={token.address} label={`Copy ${token.symbol} token address`} />
                     </li>

@@ -42,6 +42,16 @@ describe('onboarding contract', () => {
       should_prompt: true,
     });
   });
+
+  it('recommended_traders is a registered feature with no done state — CTA must call skip (2026-09-10)', () => {
+    // 服务端只在「用户点过 CTA 之后」靠 skip 登记；榜与批量关注见 social.md §5.4。
+    expect(firstPrompt([
+      {feature: 'invite', done: true},
+      {feature: 'nickname', done: true, skipped: true},
+      {feature: 'x_bind', done: true, skipped: true},
+      {feature: 'recommended_traders', should_prompt: true},
+    ])).toEqual({feature: 'recommended_traders', should_prompt: true});
+  });
 });
 
 describe('x-import privy channel', () => {

@@ -3,7 +3,7 @@
  *
  * 四条贯穿性规则（settings-integration.md §0）：
  *
- * ① **22 个端点全部要求登录**，身份只取自 JWT。
+ * ① **26 个端点 + 推送设备 4 个，全部要求登录**，身份只取自 JWT。
  * ② **每条 POST 回整页**：改一个开关，回包就是那一页的最新全貌，直接
  *    覆盖本地状态，不用再打 GET。
  * ③ **限次是滚动窗口**（最近 24h / 30 天）：到上限回 420104，
@@ -32,7 +32,12 @@ export type TradingSettings = {
   slippage_bps: number;
   /** 用户明确设过滑点。缺席 = 上面是服务端默认 3%。 */
   explicit?: boolean;
+  /** 1=AUTO（默认），2=MANUAL。 */
+  slippage_mode: SlippageMode;
 };
+
+export const SlippageMode = {AUTO: 1, MANUAL: 2} as const;
+export type SlippageMode = (typeof SlippageMode)[keyof typeof SlippageMode];
 
 export const CURRENCIES = ['USD', 'USDC', 'USDT', 'CNY'] as const;
 export type Currency = (typeof CURRENCIES)[number];
@@ -54,9 +59,19 @@ export function getTradingSettings(bearer: string, signal?: AbortSignal) {
   return call<TradingSettings>('/v1/settings/trading', {bearer, signal});
 }
 
+/** GET /v1/settings/trading/slippage-mode —— 重装或清缓存后恢复账户模式。 */
+export function getSlippageMode(bearer: string, signal?: AbortSignal) {
+  return call<TradingSettings>('/v1/settings/trading/slippage-mode', {bearer, signal});
+}
+
 /** POST /v1/settings/trading/slippage —— 十进制串（"0.02" = 2%）。回整页。 */
 export function setSlippage(bearer: string, value: string) {
   return call<TradingSettings>('/v1/settings/trading/slippage', {method: 'POST', bearer, body: {value}});
+}
+
+/** POST /v1/settings/trading/slippage-mode —— 回整页；切换不清除手动值。 */
+export function setSlippageMode(bearer: string, mode: SlippageMode) {
+  return call<TradingSettings>('/v1/settings/trading/slippage-mode', {method: 'POST', bearer, body: {mode}});
 }
 
 /** POST /v1/settings/trading/confirmation —— 回整页。 */
@@ -129,10 +144,16 @@ export function recordKeyExport(bearer: string, chain: KeyChain, address: string
 // ── Notifications ──────────────────────────────────────────────────────────
 
 export type NotificationSettings = {
-  /** 系统推送总开关。 */
+  /** 新站内通知及系统推送的总开关。 */
   push?: boolean;
   /** “我关注的人”类通知。 */
   following?: boolean;
+  deposits_withdrawals?: boolean;
+  friend_trades?: boolean;
+  friend_opinions?: boolean;
+  new_followers?: boolean;
+  announcements?: boolean;
+  minimum_trade_usd?: string;
 };
 
 export function getNotificationSettings(bearer: string, signal?: AbortSignal) {
@@ -145,6 +166,32 @@ export const setPushEnabled = (bearer: string, enabled: boolean) =>
 export const setFollowingEnabled = (bearer: string, enabled: boolean) =>
   call<NotificationSettings>('/v1/settings/notifications/following', {method: 'POST', bearer, body: {enabled}});
 
+export type NotificationToggle = Exclude<keyof NotificationSettings, 'minimum_trade_usd'>;
+const notificationPaths: Record<NotificationToggle, string> = {
+  push: 'push', following: 'following', deposits_withdrawals: 'deposits-withdrawals',
+  friend_trades: 'friends/trades', friend_opinions: 'friends/opinions',
+  new_followers: 'new-followers', announcements: 'announcements',
+};
+export function setNotificationToggle(bearer: string, key: NotificationToggle, enabled: boolean) {
+  return call<NotificationSettings>(`/v1/settings/notifications/${notificationPaths[key]}`, {method: 'POST', bearer, body: {enabled}});
+}
+export function setMinimumTradeUSD(bearer: string, value: string) {
+  return call<NotificationSettings>('/v1/settings/notifications/minimum-trade-usd', {method: 'POST', bearer, body: {value}});
+}
+export type NotificationPerson = {
+  target: {type: 'user' | 'smart_money_user' | 'smart_money'; id: string};
+  display_name: string; username: string; avatar_url: string; remark: string;
+  trades: boolean; opinions: boolean; trades_effective: boolean; opinions_effective: boolean;
+};
+export type NotificationPeople = {people: NotificationPerson[]; total: number; page: number; page_size: number};
+export function getNotificationPeople(bearer: string, query: string, page: number) {
+  const params = new URLSearchParams({query, page: String(page), page_size: '20'});
+  return call<NotificationPeople>(`/v1/settings/notifications/people?${params}`, {bearer});
+}
+export function setPersonNotifications(bearer: string, target: NotificationPerson['target'], preference: {trades?: boolean; opinions?: boolean}) {
+  return call<{matched: number}>('/v1/settings/notifications/people', {method: 'POST', bearer, body: {scope: 'targets', targets: [target], ...preference}});
+}
+
 // ── Preferences ────────────────────────────────────────────────────────────
 
 export const THEMES = ['system', 'light', 'dark'] as const;
@@ -154,6 +201,12 @@ export type Preferences = {
   /** 读自用户资料；改它走 POST /v1/user/language（本域不复制该端点）。 */
   language?: string;
   theme?: string;
+  /**
+   * X 好友自动关注的「被反向带入」开关（2026-09-10 起，默认 true）。
+   * 关掉后本人不再因为 X 好友后来加入而自动被关注；本人绑定 X 后首次导入的
+   * 正向自动关注不受它影响。关掉后回包里 "x_auto_follow":false 在场。
+   */
+  x_auto_follow?: boolean;
 };
 
 export function getPreferences(bearer: string, signal?: AbortSignal) {
@@ -163,6 +216,82 @@ export function getPreferences(bearer: string, signal?: AbortSignal) {
 /** POST /v1/settings/preferences/theme —— 取值 system / light / dark（大小写不敏感）。 */
 export function setTheme(bearer: string, theme: string) {
   return call<Preferences>('/v1/settings/preferences/theme', {method: 'POST', bearer, body: {theme}});
+}
+
+/** POST /v1/settings/preferences/x-auto-follow —— 回整页。 */
+export function setXAutoFollow(bearer: string, enabled: boolean) {
+  return call<Preferences>('/v1/settings/preferences/x-auto-follow', {method: 'POST', bearer, body: {enabled}});
+}
+
+// ── 推送设备（settings.md §2；路由都在 /v1/settings/devices 下） ────────────
+//
+// JWT 标识账号；设备标识由移动端 SDK 获取。Web 仅管理已有设备，不伪造注册标识。
+// 新设备使用 EngageLab，Expo 结构只用于兼容旧客户端。
+
+export type PushDevice = {
+  /** 设备行 id：认出「哪台是本机」靠它（比 token_masked 可靠），调 2.3/2.4 也要它。 */
+  id: number | string;
+  provider?: string;
+  /** ios / android。 */
+  platform?: string;
+  device_name?: string;
+  manufacturer?: string;
+  model?: string;
+  os_version?: string;
+  app_version?: string;
+  /** 关掉的设备仍在列表里显示 false —— 与删除（从列表消失）是两回事。 */
+  enabled?: boolean;
+  /** 掩码，不是明文；只为人工核对。 */
+  token_masked?: string;
+  last_active_at?: number | string;
+  created_at?: number | string;
+};
+
+export type DeviceListReply = {
+  list?: PushDevice[];
+  /** 数字游标（下一页起点）；has_more=false 时不翻。 */
+  next_cursor?: number | string;
+  has_more?: boolean;
+};
+
+export type PushDeviceRegistration = {
+  platform: 'ios' | 'android'; device_name?: string; manufacturer?: string;
+  model?: string; os_version?: string; app_version?: string;
+} & ({provider: 'engagelab'; registration_id: string; app_key: string; installation_id: string; application_id: string; push_token?: never}
+  | {provider?: 'expo'; push_token: string; registration_id?: never; app_key?: never; installation_id?: never; application_id?: never});
+
+/** Native SDK registration only; the browser has no mobile registration ID. */
+export function registerPushDevice(bearer: string, input: PushDeviceRegistration) {
+  return call<{id: number | string; created?: boolean}>('/v1/settings/devices/register', {
+    method: 'POST',
+    bearer,
+    body: input,
+  });
+}
+
+/** GET /v1/settings/devices —— limit 1..100（缺省 100，超过报错不截断）。 */
+export function listPushDevices(
+  bearer: string,
+  query: {cursor?: number | string; limit?: number; platform?: 'ios' | 'android'; status?: 'all' | 'enabled' | 'disabled'} = {},
+  signal?: AbortSignal,
+) {
+  const params = new URLSearchParams();
+  if (query.cursor !== undefined) params.set('cursor', String(query.cursor));
+  if (query.limit !== undefined) params.set('limit', String(query.limit));
+  if (query.platform) params.set('platform', query.platform);
+  if (query.status && query.status !== 'all') params.set('status', query.status);
+  const qs = params.toString();
+  return call<DeviceListReply>(`/v1/settings/devices${qs ? `?${qs}` : ''}`, {bearer, signal});
+}
+
+/** POST /v1/settings/devices/enabled —— 回改后的整条记录，直接拿去刷新该行。 */
+export function setDeviceEnabled(bearer: string, id: number | string, enabled: boolean) {
+  return call<PushDevice>('/v1/settings/devices/enabled', {method: 'POST', bearer, body: {id, enabled}});
+}
+
+/** POST /v1/settings/devices/delete —— 登出流程里应当调它。删除后重新注册会拿到新 id。 */
+export function deletePushDevice(bearer: string, id: number | string) {
+  return call<{deleted?: boolean}>('/v1/settings/devices/delete', {method: 'POST', bearer, body: {id}});
 }
 
 // ── 个人资料（Profile 页） ─────────────────────────────────────────────────
@@ -221,11 +350,11 @@ export function getAvatarHistory(bearer: string, signal?: AbortSignal) {
 }
 
 /** POST /v1/profile/avatar —— preset_id / url 二选一（都传或都不传回 100123）。 */
-export function setAvatar(bearer: string, source: {presetId?: string; url?: string}) {
+export function setAvatar(bearer: string, source: {presetId?: string; url?: string}, signal?: AbortSignal) {
   const body: Record<string, string> = {};
   if (source.presetId !== undefined) body.preset_id = source.presetId;
   if (source.url !== undefined) body.url = source.url;
-  return call<{user: UserInfo; quota?: ProfileQuota}>('/v1/profile/avatar', {method: 'POST', bearer, body});
+  return call<{user: UserInfo; quota?: ProfileQuota}>('/v1/profile/avatar', {method: 'POST', bearer, body, ...(signal ? {signal} : {})});
 }
 
 /** POST /v1/profile/bio —— 空串 = 清空；bio 字段必须出现在请求体里（缺席回 100111）。回 user + bio 配额。 */

@@ -3,7 +3,7 @@ import {beforeEach, describe, expect, it, vi} from 'vitest';
 const {callMock} = vi.hoisted(() => ({callMock: vi.fn()}));
 vi.mock('./envelope', () => ({call: callMock}));
 
-import {login, probeRegistration} from './auth';
+import {login, probeLoginRoute, probeUnauthenticated} from './auth';
 import {
   BIO_MAX_CHARS,
   checkUsernameAvailable,
@@ -15,38 +15,19 @@ import {
   validateNickname,
 } from './user';
 
-describe('auth login / probe contract', () => {
+describe('auth login contract (2026-09-11: no invite fields, no probe)', () => {
   beforeEach(() => callMock.mockReset());
 
-  it('login sends only the three base fields when no codes are given', async () => {
-    callMock.mockResolvedValue({data: {token: 't', user: {identifier: 'i'}}});
-    await login('AUTH_METHOD_EMAIL', 'idt');
+  it('login sends only the three base fields — invite_code / entry_code were deleted server-side', async () => {
+    callMock.mockResolvedValue({data: {token: 't', user: {identifier: 'i'}, is_new: true}});
+    await login('AUTH_METHOD_GOOGLE', 'idt');
     expect(callMock).toHaveBeenCalledWith('/v1/auth/login', {
       method: 'POST',
       body: {
         auth_channel: 'AUTH_CHANNEL_PRIVY',
-        auth_method: 'AUTH_METHOD_EMAIL',
+        auth_method: 'AUTH_METHOD_GOOGLE',
         identity_token: 'idt',
       },
-    });
-  });
-
-  it('login carries invite_code / entry_code exactly when provided (never both silently dropped)', async () => {
-    callMock.mockResolvedValue({data: {token: 't', user: {identifier: 'i'}}});
-    await login('AUTH_METHOD_GOOGLE', 'idt', {inviteCode: 'c4w5dldu'});
-    expect(callMock.mock.calls[0][1].body).toEqual({
-      auth_channel: 'AUTH_CHANNEL_PRIVY',
-      auth_method: 'AUTH_METHOD_GOOGLE',
-      identity_token: 'idt',
-      invite_code: 'c4w5dldu',
-    });
-
-    await login('AUTH_METHOD_APPLE', 'idt2', {entryCode: 'abcdefghjkmnpq23'});
-    expect(callMock.mock.calls[1][1].body).toEqual({
-      auth_channel: 'AUTH_CHANNEL_PRIVY',
-      auth_method: 'AUTH_METHOD_APPLE',
-      identity_token: 'idt2',
-      entry_code: 'abcdefghjkmnpq23',
     });
   });
 
@@ -58,10 +39,16 @@ describe('auth login / probe contract', () => {
     expect(opts.method).toBe('POST');
   });
 
-  it('probe posts identity_token only, no bearer', async () => {
-    callMock.mockResolvedValue({data: {phase: 'exclusive', requires: 2}});
-    await expect(probeRegistration('idt')).resolves.toEqual({data: {phase: 'exclusive', requires: 2}});
-    expect(callMock).toHaveBeenCalledWith('/v1/auth/probe', {method: 'POST', body: {identity_token: 'idt'}});
+  it('diagnostic probes: anonymous /v1/user/info and bare login both skip the bearer header', async () => {
+    callMock.mockResolvedValue({data: {identifier: 'i'}});
+    await probeUnauthenticated();
+    expect(callMock).toHaveBeenCalledWith('/v1/user/info');
+    callMock.mockResolvedValue({data: {token: 't', user: {identifier: 'i'}}});
+    await probeLoginRoute();
+    expect(callMock).toHaveBeenLastCalledWith('/v1/auth/login', {
+      method: 'POST',
+      body: {auth_channel: 'AUTH_CHANNEL_PRIVY', auth_method: 'AUTH_METHOD_EMAIL', identity_token: 'x'},
+    });
   });
 });
 

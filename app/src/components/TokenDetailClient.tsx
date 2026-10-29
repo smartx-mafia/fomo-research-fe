@@ -5,9 +5,11 @@ import useSWR from 'swr';
 import DetailTabs from '@/components/DetailTabs';
 import PriceChart from '@/components/PriceChart';
 import {TradePanel} from '@/components/TradePanel';
+import {TokenFollowHoldersCard} from '@/components/TokenFollowHoldersCard';
 import TokenLive from '@/components/TokenLive';
 import {PRIVY_APP_ID} from '@/config';
 import {fetchTokenMarket, MarketApiError} from '@/lib/market';
+import {useSession} from '@/session/storage';
 
 export default function TokenDetailClient({chain, address}: {chain: string; address: string}) {
   const {data: market, error, isLoading} = useSWR(
@@ -15,6 +17,8 @@ export default function TokenDetailClient({chain, address}: {chain: string; addr
     () => fetchTokenMarket(chain, address, 0),
     {revalidateOnFocus: false, shouldRetryOnError: false},
   );
+  // 「关注的人持有」是登录态社交数据：未登录时卡片自己渲染 null（不发请求）。
+  const session = useSession();
 
   if (isLoading) {
     return (
@@ -47,6 +51,9 @@ export default function TokenDetailClient({chain, address}: {chain: string; addr
       </TokenLive>
 
       <DetailTabs key={`details:${chain}:${address}`} chain={chain} address={address} />
+
+      {/* 登录用户的社交叠加块：空/静默失败时整块消失，不影响上面的 tab 布局。 */}
+      <TokenFollowHoldersCard bearer={session?.jwt ?? null} chain={chain} address={address} />
 
       {PRIVY_APP_ID ? (
         <TradePanel chain={chain} address={address} symbol={market.symbol} />

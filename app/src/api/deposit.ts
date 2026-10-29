@@ -91,6 +91,8 @@ function timestamp(value: unknown): ProtoTimestamp | undefined {
 function challenge(value: unknown): WalletProofChallenge | undefined {
   const row = record(value);
   if (!row) return undefined;
+  // Protobuf JSON emits an empty message when no wallet proof is required.
+  if ((row.challenge_id === '' || row.challenge_id === undefined) && (row.message === '' || row.message === undefined)) return undefined;
   return {challenge_id: requiredString(row.challenge_id, 'wallet_proof.challenge_id'), message: requiredString(row.message, 'wallet_proof.message')};
 }
 function depositEntry(value: unknown): DepositEntry {
@@ -145,7 +147,7 @@ export async function getDeposit(bearer: string, depositID: string, signal?: Abo
   if (!row) throw new Error('Deposit detail response is invalid.');
   const entry = depositEntry(row.deposit);
   if (entry.deposit_id !== depositID) throw new Error('Deposit detail identity does not match the request.');
-  return {deposit_id: entry.deposit_id, status: entry.status, deposit: entry, next_action: optionalString(row.next_action), wallet_proof: challenge(row.wallet_proof), client_secret: optionalString(row.client_secret)};
+  return {deposit_id: entry.deposit_id, provider_order_id: optionalString(row.provider_order_id), status: entry.status, deposit: entry, next_action: optionalString(row.next_action), wallet_proof: challenge(row.wallet_proof), client_secret: optionalString(row.client_secret)};
 }
 
 export async function createDepositSweep(bearer: string, originChain: string, originTokenAddress: string, signal?: AbortSignal) {

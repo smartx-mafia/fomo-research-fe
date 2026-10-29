@@ -430,6 +430,7 @@ export function ProfileSettingsView() {
                 </Button>
                 <span className="text-muted-foreground text-[11px]">值取自服务端快照，前端不传任何 X 资料。</span>
               </div>
+              {importFields.has('avatar') ? <p className="text-xs text-muted-foreground">导入非空 X 头像会替换当前头像，包括自定义上传的头像；背景保持不变。</p> : null}
             </>
           )}
         </CardContent>

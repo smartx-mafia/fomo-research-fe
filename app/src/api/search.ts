@@ -29,17 +29,24 @@ function optionalNumber(value: unknown): number | undefined {
   return undefined;
 }
 
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
 function normalizeToken(raw: unknown): SearchItem | null {
   const row = (raw ?? {}) as Record<string, unknown>;
   const chain = optionalString(row.chain);
   const address = optionalString(row.address);
   if (!chain || !address) return null;
+  const rawMarket = record(row.market);
   return {
     chain,
     address,
     symbol: optionalString(row.symbol),
     name: optionalString(row.name),
-    market: row.market ? normalizeTokenMarket(row.market) : undefined,
+    market: rawMarket ? normalizeTokenMarket({...rawMarket, chain, address}) : undefined,
   };
 }
 
@@ -94,9 +101,10 @@ function normalizeAccount(raw: unknown): SearchAccountEntry | null {
   return null;
 }
 
-function normalizeSearchData(raw: unknown): SearchData {
+export function normalizeSearchData(raw: unknown): SearchData {
   const data = (raw ?? {}) as Record<string, unknown>;
   const scope = data.scope === 1 || data.scope === 4 ? data.scope : undefined;
+  // TOKEN 顺序是服务端契约的一部分（市值降序）；只做逐项归一化，不在客户端重排。
   const tokens = Array.isArray(data.tokens)
     ? data.tokens.map(normalizeToken).filter((item): item is SearchItem => item !== null)
     : undefined;

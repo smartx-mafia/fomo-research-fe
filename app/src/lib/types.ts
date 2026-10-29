@@ -1,3 +1,6 @@
+import type {DiscoverySignal, DiscoveryCoverage} from "./discovery";
+import type {TokenRisk} from './token-risk';
+
 /**
  * SmartX 行情 API 类型定义（smartx-backend docs/api/market.md）。
  *
@@ -11,16 +14,17 @@
 
 /**
  * 链标识（服务端词汇表，同时也是 /token/[chain]/[address] 的路径段）。
- * 2026-09 换源后 monad 已从合法链集合移除（错误码 100305）。
+ * 2026-09 换源后 monad 已从合法链集合移除（错误码 100305）；
+ * 同期加入 arc（Circle 的 L1，链号 5042，原生 gas 币是 USDC 而不是 ETH）。
  */
-export const CHAINS = ["bsc", "solana", "base", "robinhood", "ethereum"] as const;
+export const CHAINS = ["bsc", "solana", "base", "robinhood", "ethereum", "arc"] as const;
 export type Chain = (typeof CHAINS)[number];
 
 /**
- * 榜单集合（2026-09 起）：五榜，全部是跨链聚合榜，没有链变体。
+ * 榜单集合：默认跨链，Gainers 支持服务端多链合并。
  * new / bonded 已退役；most_held 是候选池最多主体持有榜。
  */
-export const BOARDS = ["trending", "bonding", "graduated", "crypto", "most_held"] as const;
+export const BOARDS = ["trending", "gainers", "bonding", "graduated", "crypto", "most_held", "discovery_lab"] as const;
 export type BoardName = (typeof BOARDS)[number];
 
 /**
@@ -28,8 +32,11 @@ export type BoardName = (typeof BOARDS)[number];
  * 经 normalizeTokenMarket() 之后数值字段保证是 number。
  */
 export interface TokenMarket {
+  discovery?: DiscoverySignal;
   chain: string;
   address: string;
+  /** Canonical normalized risk. Transitional flat backend fields are input-only. */
+  risk: TokenRisk;
   symbol?: string;
   name?: string;
   logo?: string;
@@ -63,6 +70,7 @@ export interface TokenMarket {
 
 /** /v1/boards/{board} 回包 data（§2.1），WS snapshot 帧的 data 同形 */
 export interface BoardData {
+  discovery?: DiscoveryCoverage;
   /** 榜单版本号，单调递增，与 WS 帧的 seq 同一体系 */
   seq?: number;
   /** unix 毫秒 */
@@ -103,12 +111,51 @@ export interface TradeItem {
   platform_name?: string;
 }
 
-/** /v1/tokens/{chain}/{address}/holders 的 data.items[]（§2.3）。token_amount 同上是精确字符串 */
+export interface HolderIdentity {
+  /** Empty means the address is not mapped to a public SmartX user. */
+  identifier?: string;
+  username?: string;
+  nickname?: string;
+  avatar_url?: string;
+}
+
+export interface PlatformHolding {
+  /** 0 = not queried, 1 = has position, 2 = queried and no position, 3 = unavailable. */
+  status?: number;
+  shares?: string;
+  amount?: string;
+  asset_decimals?: number | null;
+  quote_decimals?: number | null;
+  cost_basis?: string;
+  cost_usd?: string;
+  avg_cost_usd?: string;
+  total_realized_pnl_usd?: string;
+  cycles_ready?: boolean;
+  current_realized_pnl_usd?: string;
+  current_buy_quote_usd?: string;
+  market_value_usd?: string;
+  unrealized_pnl_usd?: string;
+  pnl_percent?: string;
+  quote_at?: number;
+}
+
+export interface ViewerRelation {
+  following?: boolean;
+  remark?: string;
+}
+
+/** /v1/tokens/{chain}/{address}/holders and /top-traders row shape. */
 export interface HolderItem {
   wallet_address?: string;
   token_amount?: string;
   token_amount_usd?: number;
   percentage_of_total_supply?: number;
+  first_held_time?: number;
+  /** 0 = unknown, 1 = wallet, 2 = liquidity pool, 3 = burn address. */
+  address_type?: number;
+  identity?: HolderIdentity;
+  platform_holding?: PlatformHolding;
+  viewer?: ViewerRelation;
   realized_pnl_usd?: number;
   unrealized_pnl_usd?: number;
   total_pnl_usd?: number;
@@ -120,11 +167,20 @@ export interface HolderItem {
   platform_name?: string;
 }
 
+export interface HolderPage {
+  items: HolderItem[];
+  /** Only meaningful for the on-chain holder source. */
+  holders_count?: number;
+  /** Percentage value, e.g. 25 means 25%. */
+  top10_percent?: number;
+}
+
 /**
  * 全站搜索（GET /v1/search）的结果条目：身份 + 可选行情。
  * market 缺席是诚实的答案（暂无该币行情/穿透配额打满），不要渲染成价格 0。
- * 注意：搜索路径的 market 只给 7 字段子集（logo/price/market_cap/liquidity/
- * volume_24h/price_change_24h/updated_at），别读其它行情字段。
+ * 最新契约的 market 是 TokenMarket 全字段镜像，risk 也只在 market 内出现；
+ * 搜索结果顶层不复制 risk，避免同一事实出现两个权威位置。
+ * tokens 由服务端按市值降序返回；前端必须原样保序，不能自行按匹配度或成交量重排。
  */
 export interface SearchItem {
   chain: string;

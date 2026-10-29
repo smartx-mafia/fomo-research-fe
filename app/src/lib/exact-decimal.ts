@@ -1,9 +1,21 @@
 type ExactDecimal = {coefficient: bigint; scale: number};
 
 const DECIMAL_PATTERN = /^-?\d+(?:\.\d+)?$/;
+const SCIENTIFIC_PATTERN = /^(-?)(\d+)(?:\.(\d+))?[eE]([+-]?\d+)$/;
 
 export function parseExactDecimal(value: string): ExactDecimal {
   const input = value.trim();
+  if (input.length === 0 || input.length > 4096) throw new Error(`Invalid decimal value: ${value}`);
+  const scientific = SCIENTIFIC_PATTERN.exec(input);
+  if (scientific) {
+    const exponent = Number(scientific[4]);
+    if (!Number.isSafeInteger(exponent) || Math.abs(exponent) > 1000) throw new Error(`Invalid decimal value: ${value}`);
+    const fraction = scientific[3] ?? '';
+    const digits = `${scientific[2]}${fraction}`;
+    const scale = fraction.length - exponent;
+    const coefficient = BigInt(digits) * (scale < 0 ? BigInt(10) ** BigInt(-scale) : BigInt(1));
+    return {coefficient: scientific[1] === '-' ? -coefficient : coefficient, scale: Math.max(0, scale)};
+  }
   if (!DECIMAL_PATTERN.test(input)) throw new Error(`Invalid decimal value: ${value}`);
   const negative = input.startsWith('-');
   const unsigned = negative ? input.slice(1) : input;
@@ -77,6 +89,18 @@ export function formatDecimalExact(value: string | undefined, maxFraction = 2): 
     const [integer, fraction] = unsigned.split('.');
     const grouped = integer.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
     return `${negative ? '-' : ''}${grouped}${fraction ? `.${fraction}` : ''}`;
+  } catch {
+    return '—';
+  }
+}
+
+/** Adaptive exact price display: never round a non-zero sub-cent price to $0. */
+export function formatPriceExact(value: string | undefined, defaultFraction = 8): string {
+  if (value === undefined || value === '') return '—';
+  try {
+    const parsed = parseExactDecimal(value);
+    const fraction = parsed.coefficient === BigInt(0) ? 0 : Math.max(defaultFraction, parsed.scale);
+    return formatDecimalExact(value, fraction);
   } catch {
     return '—';
   }

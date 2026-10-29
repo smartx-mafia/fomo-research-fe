@@ -50,6 +50,7 @@ export class ApiError extends Error {
   readonly rawBody?: string;
   /** 业务失败的结构化细节，例如审查 rule_id；不得直接当用户文案展示。 */
   readonly metadata?: Record<string, unknown>;
+  readonly action?: {type: string};
 
   constructor(
     kind: FailureKind,
@@ -60,6 +61,7 @@ export class ApiError extends Error {
     sentRequestID?: string,
     rawBody?: string,
     metadata?: Record<string, unknown>,
+    action?: {type: string},
   ) {
     super(msg);
     this.name = 'ApiError';
@@ -70,6 +72,7 @@ export class ApiError extends Error {
     this.sentRequestID = sentRequestID;
     this.rawBody = rawBody;
     this.metadata = metadata;
+    this.action = action;
   }
 }
 
@@ -92,8 +95,13 @@ export function assertNoMixedContent(url: URL, pageProtocol?: string): void {
 }
 
 type CallOptions = {
+  /** Explicit language for content-bearing responses; do not rely on browser defaults. */
+  language?: string;
   method?: 'GET' | 'POST' | 'PUT' | 'DELETE';
   body?: unknown;
+  /** Browser-generated multipart boundary; never JSON-encode this body. */
+  formData?: FormData;
+  idempotencyKey?: string;
   signal?: AbortSignal;
   /**
    * This backend currently emits selected protobuf int64 values as JSON
@@ -125,7 +133,10 @@ export async function call<T>(path: string, opts: CallOptions = {}): Promise<Cal
   // 每次请求新生成，不复用（契约硬规则，复用比不传更糟）。
   const sentRequestID = newTraceID();
   const headers: Record<string, string> = {'x-request-id': sentRequestID};
+  if (opts.language) headers['Accept-Language'] = opts.language;
+  if (opts.body !== undefined && opts.formData) throw new Error('Choose JSON or multipart, not both');
   if (opts.body !== undefined) headers['content-type'] = 'application/json';
+  if (opts.idempotencyKey) headers['Idempotency-Key'] = opts.idempotencyKey;
   if (opts.bearer) headers['authorization'] = `Bearer ${opts.bearer}`;
 
   let res: Response;
@@ -135,10 +146,12 @@ export async function call<T>(path: string, opts: CallOptions = {}): Promise<Cal
     res = await fetch(url, {
       method: opts.method ?? 'GET',
       headers,
-      body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
+      body: opts.formData ?? (opts.body === undefined ? undefined : JSON.stringify(opts.body)),
       signal: opts.signal,
     });
   } catch (e) {
+    // Intentional cancellation is not a network failure or a retry candidate.
+    opts.signal?.throwIfAborted();
     throw new ApiError(
       'network',
       0,
@@ -181,6 +194,12 @@ export async function call<T>(path: string, opts: CallOptions = {}): Promise<Cal
   }
 
   if (env.code !== 200) {
+    // 准入门禁（invite.md §5）：Required 且未豁免的端点对未准入账号一律回
+    // 430114 —— 那是新用户「登录后、绑定前」的正常态，不是故障。这里广播给
+    // 全局监听器（InviteGateListener）统一带去邀请页，各调用方不必各自处理。
+    if (env.code === 430114 && typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('smartx:invite-gate'));
+    }
     throw new ApiError(
       'business',
       env.code,
@@ -190,6 +209,7 @@ export async function call<T>(path: string, opts: CallOptions = {}): Promise<Cal
       sentRequestID,
       undefined,
       env.metadata,
+      env.action,
     );
   }
   // code=200 但 data 缺席 = 回包形状与契约不符。也当失败抛，不要让
