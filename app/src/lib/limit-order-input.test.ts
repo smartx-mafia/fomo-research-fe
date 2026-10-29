@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { orderInput, CASH_ASSET, type OrderDraft } from "./limit-order-input";
-const draft: OrderDraft = {
+const draft: OrderDraft & { sourceWallet: string; destinationWallet: string } = {
   scenario: 1,
   chain: "solana",
   token: "So11111111111111111111111111111111111111112",
@@ -10,7 +10,6 @@ const draft: OrderDraft = {
   quantityMode: "amount",
   target: "0.000000000000000001",
   targetMode: "usd",
-  feeCap: "1",
   slippage: "",
   expiry: "2030-01-01T00:00:00Z",
 };
@@ -70,7 +69,7 @@ describe("order input", () => {
     { chain: "unknown" },
   ])("rejects invalid input %s", (change) => {
     expect(() =>
-      orderInput({ ...draft, ...change } as OrderDraft, 9, 0),
+      orderInput({ ...draft, ...change } as typeof draft, 9, 0),
     ).toThrow();
   });
 });

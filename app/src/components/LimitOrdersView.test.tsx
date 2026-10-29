@@ -17,6 +17,8 @@ vi.mock("@privy-io/react-auth", () => ({
     authenticated: true,
     user: {
       linkedAccounts: [
+        {type: "wallet", id: "evm-wallet", address: "0xembedded", chainType: "ethereum", walletClientType: "privy", walletIndex: 0},
+        {type: "wallet", id: "external-wallet", address: "0xexternal", chainType: "ethereum", walletClientType: "metamask"},
         {
           type: "wallet",
           id: "wallet",
@@ -96,8 +98,6 @@ it("replays the identical persisted creation after response loss and page reopen
     screen.getByLabelText("标的地址"),
     "So11111111111111111111111111111111111111112",
   );
-  await user.selectOptions(screen.getByLabelText("支付钱包"), "wallet");
-  await user.selectOptions(screen.getByLabelText("接收钱包"), "wallet");
   await user.type(screen.getByLabelText("数量 / 比例"), "1");
   await user.type(screen.getByLabelText("目标价 / 涨跌百分比"), "2");
   await user.type(screen.getByLabelText(/有效期/), "2030-01-01T00:00:00Z");
@@ -160,7 +160,6 @@ const recoveryInput: api.OrderInput = {
     fee_policy: 1,
   },
   target_usd: "2",
-  fee_cap_usd: "1",
   expires_at: "2030-01-01T00:00:00Z",
 };
 function recoveryOrder(version: string, state = 1): api.LimitOrder {
@@ -508,7 +507,6 @@ it("clears the previous account draft and signer consent when the session change
   const user = userEvent.setup();
   const view = render(<LimitOrdersView />);
   await user.type(screen.getByLabelText("标的地址"), "previous-account-token");
-  await user.selectOptions(screen.getByLabelText("支付钱包"), "wallet");
   await user.click(screen.getByLabelText("我理解后台签名权限及撤销范围"));
   expect(
     (screen.getByLabelText("我理解后台签名权限及撤销范围") as HTMLInputElement).checked,
@@ -518,9 +516,7 @@ it("clears the previous account draft and signer consent when the session change
   expect(
     (screen.getByLabelText("标的地址") as HTMLInputElement).value,
   ).toBe("previous-account-token");
-  expect(
-    (screen.getByLabelText("支付钱包") as HTMLSelectElement).value,
-  ).toBe("wallet");
+  expect(screen.queryByLabelText("支付钱包")).toBeNull();
   expect(
     (screen.getByLabelText("我理解后台签名权限及撤销范围") as HTMLInputElement).checked,
   ).toBe(true);
@@ -530,9 +526,7 @@ it("clears the previous account draft and signer consent when the session change
   expect(
     (screen.getByLabelText("标的地址") as HTMLInputElement).value,
   ).toBe("");
-  expect(
-    (screen.getByLabelText("支付钱包") as HTMLSelectElement).value,
-  ).toBe("");
+  expect(screen.queryByLabelText("支付钱包")).toBeNull();
   expect(
     (screen.getByLabelText("我理解后台签名权限及撤销范围") as HTMLInputElement).checked,
   ).toBe(false);
@@ -547,8 +541,6 @@ it.each(["exact", "exceeds", "zero", "fraction", "unavailable"])("checks the sin
   const user = userEvent.setup();
   render(<LimitOrdersView />);
   await user.type(screen.getByLabelText("标的地址"), "So11111111111111111111111111111111111111112");
-  await user.selectOptions(screen.getByLabelText("支付钱包"), "wallet");
-  await user.selectOptions(screen.getByLabelText("接收钱包"), "wallet");
   if (mode === "fraction") await user.selectOptions(screen.getByLabelText("数量方式"), "percent");
   await user.type(screen.getByLabelText("数量 / 比例"), mode === "fraction" ? "0.1" : "1");
   await user.type(screen.getByLabelText("目标价 / 涨跌百分比"), "2");
@@ -573,7 +565,6 @@ it.each([true, false])("uses backend authorization after SDK grant instead of as
   vi.mocked(api.orderAuthorization).mockResolvedValue({ authorized, wallet_id: "wallet", reason: "", signer_id: "signer", checked_at: "server-time" });
   const user = userEvent.setup();
   render(<LimitOrdersView />);
-  await user.selectOptions(screen.getByLabelText("支付钱包"), "wallet");
   const grant = screen.getByRole("button", { name: "授权后台 signer" }) as HTMLButtonElement;
   const revoke = screen.getByRole("button", { name: "撤销全部后台 signer" }) as HTMLButtonElement;
   expect(grant.disabled).toBe(true);
@@ -585,7 +576,6 @@ it.each([true, false])("uses backend authorization after SDK grant instead of as
   expect(api.orderAuthorization).toHaveBeenCalledWith("token", "wallet", "solana:mainnet");
   if (!authorized) {
     await user.type(screen.getByLabelText("标的地址"), "So11111111111111111111111111111111111111112");
-    await user.selectOptions(screen.getByLabelText("接收钱包"), "wallet");
     await user.type(screen.getByLabelText("数量 / 比例"), "1");
     await user.type(screen.getByLabelText("目标价 / 涨跌百分比"), "2");
     await user.type(screen.getByLabelText(/有效期/), "2030-01-01T00:00:00Z");
@@ -599,7 +589,6 @@ it.each([true, false])("uses backend authorization after SDK grant instead of as
 it("clears confirmed authorization only after SDK revocation succeeds", async () => {
   const user = userEvent.setup();
   render(<LimitOrdersView />);
-  await user.selectOptions(screen.getByLabelText("支付钱包"), "wallet");
   await user.click(screen.getByRole("button", { name: "检查服务端授权" }));
   await screen.findByText(/服务端已确认授权/);
   await user.click(screen.getByLabelText("我理解后台签名权限及撤销范围"));
@@ -612,4 +601,27 @@ it("clears confirmed authorization only after SDK revocation succeeds", async ()
   await waitFor(() => expect(screen.queryByText(/服务端已确认授权/)).toBeNull());
   expect(signerActions.removeSigners).toHaveBeenCalledWith({ address: "wallet-address" });
   expect(api.createOrder).not.toHaveBeenCalled();
+});
+
+it.each([1, 3])("automatically routes own wallets for Base scenario %s without fee cap", async (scenario) => {
+ const user = userEvent.setup();
+ render(<LimitOrdersView />);
+ expect(screen.queryByLabelText("支付钱包")).toBeNull();
+ expect(screen.queryByLabelText("接收钱包")).toBeNull();
+ expect(screen.queryByLabelText("累计费用上限 USD")).toBeNull();
+ await user.selectOptions(screen.getByLabelText("场景"), String(scenario));
+ await user.selectOptions(screen.getByLabelText("标的链"), "base");
+ await user.type(screen.getByLabelText("标的地址"), "0xcbb7c0000ab88b473b1f5afd9ef808440eed33bf");
+ await user.type(screen.getByLabelText("数量 / 比例"), "1");
+ await user.type(screen.getByLabelText("目标价 / 涨跌百分比"), "2");
+ await user.type(screen.getByLabelText(/有效期/), "2030-01-01T00:00:00Z");
+ await user.click(screen.getByRole("button", {name: "检查并预览"}));
+ await screen.findByRole("button", {name: "确认提交 / 重试同一请求"});
+ vi.mocked(api.createOrder).mockRejectedValueOnce(new Error("inspect request"));
+ await user.click(screen.getByRole("button", {name: "确认提交 / 重试同一请求"}));
+ await screen.findByText("inspect request");
+ const input = vi.mocked(api.createOrder).mock.calls[0][2];
+ expect(input.intent.source_wallet_id).toBe(scenario === 1 ? "wallet" : "evm-wallet");
+ expect(input.intent.destination_wallet_id).toBe(scenario === 1 ? "evm-wallet" : "wallet");
+ expect(input).not.toHaveProperty("fee_cap_usd");
 });

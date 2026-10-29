@@ -21,7 +21,6 @@ const snapshot = {
 const input = {
   scenario: 1,
   intent: { amount_in_raw: "9007199254740993123456" },
-  fee_cap_usd: "1",
   target_usd: "0.01",
 } as OrderInput;
 describe("order transport", () => {

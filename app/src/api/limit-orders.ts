@@ -20,7 +20,6 @@ export type OrderInput = {
   target_usd?: string;
   target_percent?: string;
   quantity_percent?: string;
-  fee_cap_usd: string;
   expires_at?: string;
 };
 export type OrderEvent = {

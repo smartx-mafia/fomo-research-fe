@@ -19,26 +19,22 @@ export type OrderDraft = {
   target: string;
   targetMode: "usd" | "percent";
   slippage: string;
-  feeCap: string;
   expiry: string;
-  sourceWallet: string;
-  destinationWallet: string;
 };
 function positive(value: string, label: string) {
   if (value.length > 80 || parseExactDecimal(value).coefficient <= BigInt(0))
     throw new Error(`${label} must be positive.`);
 }
 export function orderInput(
-  d: OrderDraft,
+  d: OrderDraft & { sourceWallet: string; destinationWallet: string },
   tokenDecimals: number,
   now = Date.now(),
 ): OrderInput {
   const chain = ORDER_CHAINS.find((c) => c.slug === d.chain);
   if (!chain || !d.token.trim() || !d.sourceWallet || !d.destinationWallet)
-    throw new Error("Select a token and both embedded wallets.");
+    throw new Error("Token and account wallets are required.");
   const buy = d.scenario <= 2;
   positive(d.amount, "Quantity");
-  positive(d.feeCap, "Fee cap");
   if (
     d.quantityMode === "percent" &&
     parseUnits(d.amount, 8) > BigInt(100) * BigInt(10) ** BigInt(8)
@@ -91,7 +87,6 @@ export function orderInput(
     ...(d.quantityMode === "percent"
       ? { quantity_percent: d.amount.trim() }
       : {}),
-    fee_cap_usd: d.feeCap.trim(),
     expires_at: expires.toISOString(),
   };
 }

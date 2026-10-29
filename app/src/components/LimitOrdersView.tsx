@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { embeddedWalletAddresses } from "@/lib/privy-wallets";
 import { useEffect, useRef, useState } from "react";
 import { usePrivy, useSigners } from "@privy-io/react-auth";
 import {
@@ -54,10 +55,7 @@ const initial: OrderDraft = {
   target: "",
   targetMode: "usd",
   slippage: "",
-  feeCap: "1",
   expiry: "",
-  sourceWallet: "",
-  destinationWallet: "",
 };
 function message(e: unknown) {
   if (e instanceof ApiError)
@@ -116,15 +114,17 @@ function OrderWorkspace() {
   const sourceKind = buy || draft.chain === "solana" ? "solana" : "ethereum";
   const destinationKind =
     !buy || draft.chain === "solana" ? "solana" : "ethereum";
-  const source = wallets.find(
-    (w) => w.type === "wallet" && (w.id || w.address) === draft.sourceWallet,
-  );
+  const embedded = embeddedWalletAddresses(wallets);
+  const sourceAddress = embedded.find((w) => w.chainType === sourceKind)?.address;
+  const destinationAddress = embedded.find((w) => w.chainType === destinationKind)?.address;
+  const source = wallets.find((w) => w.address === sourceAddress);
+  const destination = wallets.find((w) => w.address === destinationAddress);
   function change<K extends keyof OrderDraft>(key: K, value: OrderDraft[K]) {
     setDraft((d) => ({ ...d, [key]: value }));
     setReview(undefined);
     setRisk(undefined);
     setAuth(undefined);
-    if (["scenario", "chain", "token", "sourceWallet"].includes(key)) setBalance(undefined);
+    if (["scenario", "chain", "token"].includes(key)) setBalance(undefined);
   }
   async function run(action: (bearer: string) => Promise<void>) {
     if (!jwt || busy) return;
@@ -238,18 +238,13 @@ function OrderWorkspace() {
     await run(async (bearer) => {
       setBalance(undefined);
       const info = await getTokenInfo(draft.chain, draft.token.trim());
-      const destination = wallets.find(
-        (w) =>
-          w.type === "wallet" &&
-          (w.id || w.address) === draft.destinationWallet,
-      );
       if (
         !source?.id ||
         !destination ||
         destination.type !== "wallet" ||
         !destination.id
       )
-        throw new Error("请先授权并刷新钱包资料，再选择具备 ID 的钱包。");
+        throw new Error("当前账户缺少对应链的钱包 ID，请先授权并刷新钱包资料。");
       const input = orderInput(
         {
           ...draft,
@@ -396,10 +391,7 @@ function OrderWorkspace() {
           c.intent.slippage_mode === 2
             ? String((c.intent.slippage_bps ?? 0) / 100)
             : "",
-        feeCap: c.fee_cap_usd,
         expiry: recreate ? "" : c.expires_at,
-        sourceWallet: c.intent.source_wallet_id,
-        destinationWallet: c.intent.destination_wallet_id,
       });
       setBalance(undefined);
       setEditing(recreate ? undefined : fresh);
@@ -489,33 +481,6 @@ function OrderWorkspace() {
                 onChange={(e) => change("token", e.target.value)}
               />
             </label>
-            {(["sourceWallet", "destinationWallet"] as const).map((key, i) => (
-              <label key={key}>
-                {i ? "接收钱包" : "支付钱包"}
-                <select
-                  className={field}
-                  value={draft[key]}
-                  onChange={(e) => change(key, e.target.value)}
-                >
-                  <option value="">选择嵌入式钱包</option>
-                  {wallets
-                    .filter(
-                      (w) =>
-                        w.type === "wallet" &&
-                        w.chainType === (i ? destinationKind : sourceKind),
-                    )
-                    .map(
-                      (w) =>
-                        w.type === "wallet" && (
-                          <option key={w.address} value={w.id || w.address}>
-                            {w.address}
-                            {!w.id ? "（需先授权）" : ""}
-                          </option>
-                        ),
-                    )}
-                </select>
-              </label>
-            ))}
             <label>
               数量方式
               <select
@@ -576,14 +541,6 @@ function OrderWorkspace() {
                 className={field}
                 value={draft.slippage}
                 onChange={(e) => change("slippage", e.target.value)}
-              />
-            </label>
-            <label>
-              累计费用上限 USD
-              <input
-                className={field}
-                value={draft.feeCap}
-                onChange={(e) => change("feeCap", e.target.value)}
               />
             </label>
             <label className="sm:col-span-2">
@@ -657,7 +614,6 @@ function OrderWorkspace() {
                     );
                     if (current.current === bearer) {
                       setAuth(result);
-                      setDraft((d) => ({ ...d, sourceWallet: wallet.id! }));
                     }
                   })
                 }
@@ -703,7 +659,7 @@ function OrderWorkspace() {
                 {review.input.target_usd
                   ? `$${review.input.target_usd}`
                   : `${review.input.target_percent}%`}
-                ；费用上限 ${review.input.fee_cap_usd}。
+                。
               </p>
               <button
                 className={button}
@@ -941,8 +897,7 @@ function OrderWorkspace() {
             {selected.configuration.intent.destination_asset}
           </p>
           <p>
-            USD 目标价：${selected.configuration.target_usd}；整单费用上限：$
-            {selected.configuration.fee_cap_usd}
+            USD 目标价：${selected.configuration.target_usd}
           </p>
           <p>
             基准价：{selected.configuration.base_usd || "—"} · 基准时间：

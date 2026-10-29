@@ -46,7 +46,7 @@ describe.skipIf(!jwtFile)("real local order HTTP contract", () => {
         amount_in_raw: "100", side: 3, fee_policy: 1,
         ...(manual ? { slippage_mode: 2 as const, slippage_bps: 100 } : {}),
       },
-      target_usd: above ? "2" : "0.5", fee_cap_usd: "1",
+      target_usd: above ? "2" : "0.5",
       expires_at: new Date(Date.now() + 3600_000).toISOString(),
     };
     const key = `local-fe-${randomUUID()}`;
