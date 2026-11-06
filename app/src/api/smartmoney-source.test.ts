@@ -72,6 +72,13 @@ describe('provider snapshot source reads', () => {
     callMock.mockResolvedValueOnce({data: {meta, snapshot: {wallet: {open: [], closed: []}}}});
     await expect(getSourcePositions({type: 'user', userId: 'subject:1'})).rejects.toThrow('does not match');
   });
+
+  it.each(['4824101.3768392346308020729946336', '0', ''])('preserves the source asset value %j for the requested subject', async (amount) => {
+    callMock.mockResolvedValue({data: {meta, total_assets_usd: amount, windows: []}});
+    const data = await getSourcePnL({type: 'user', userId: 'subject:358'});
+    expect(data.total_assets_usd).toBe(amount);
+    expect(callMock.mock.calls[0][0]).toBe('/v2/smartmoney/pnl?identity.type=user&identity.user_id=subject%3A358&chain=all');
+  });
 });
 
 it('passes background refresh and overlays display fields without changing a trade', async () => {

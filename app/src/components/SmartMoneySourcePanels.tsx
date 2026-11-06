@@ -19,6 +19,7 @@ import {
   type SourcePosition,
 } from '@/api/smartmoney-source';
 import {normalizeSmartMoneySourceChain} from '@/lib/smartmoney-identity';
+import {formatDecimalExact} from '@/lib/exact-decimal';
 import type {SmartMoneyIdentityRoute} from '@/hooks/useSmartMoneyIdentityRoute';
 
 type IdentityRoute = Extract<SmartMoneyIdentityRoute, {status: 'subject' | 'wallet'}>;
@@ -29,6 +30,13 @@ function value(raw?: string): string {
 
 function money(raw?: string): string {
   return typeof raw !== 'string' || !/^-?\d+(?:\.\d+)?$/.test(raw) ? '—' : `$${raw}`;
+}
+
+function assetValue(raw?: string): string {
+  const formatted = formatDecimalExact(raw, 2);
+  if (formatted === '—') return '--';
+  const [integer, fraction = ''] = formatted.replace(/^-/, '').split('.');
+  return `${formatted.startsWith('-') ? '-' : ''}$${integer}.${fraction.padEnd(2, '0')}`;
 }
 
 function eventTime(raw?: string | number): string {
@@ -170,6 +178,11 @@ export function SmartMoneySourcePanels({route, backgroundRefresh = false}: {rout
   const closed = wallet?.closed ?? user?.closed ?? [];
 
   return <div className="space-y-4">
+    {pnlReady ? <section aria-label="资产净值" className="rounded-xl border border-border bg-surface p-5">
+      <h2 className="text-sm text-muted">资产净值</h2>
+      <p className="mt-2 break-all font-mono text-2xl font-semibold text-foreground">{assetValue(pnl.data?.total_assets_usd)}</p>
+      <p className="mt-2 text-xs text-muted">来源账户的现货资产美元估值，含现金，不含合约权益。</p>
+    </section> : null}
     <div role="note" className="rounded-lg border border-accent/25 bg-accent/5 px-4 py-3 text-xs leading-5 text-muted">
       各接口的观测时间和覆盖范围独立。请以服务端公布的金额及状态为准，不从可见仓位相加推算账户收益。
     </div>

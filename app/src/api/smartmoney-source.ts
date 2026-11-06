@@ -72,7 +72,13 @@ export type SourcePnLWindow = {
   buy_count: string;
   sell_count: string;
 };
-export type SourcePnL = {meta: SourceMeta; windows: SourcePnLWindow[]; daily_windows?: SourcePnLWindow[]};
+export type SourcePnL = {
+  meta: SourceMeta;
+  /** Source spot assets in USD, including cash, excluding derivatives equity; empty means unknown. Independent of PnL windows. */
+  total_assets_usd?: string;
+  windows: SourcePnLWindow[];
+  daily_windows?: SourcePnLWindow[];
+};
 
 const exactInt64Fields = ['fetched_at', 'occurred_at', 'snapshot_at', 'mapping_version'] as const;
 
@@ -144,7 +150,7 @@ export async function getSourceActions(identity: SourceIdentity, chain?: string,
 }
 
 export async function getSourcePnL(identity: SourceIdentity, chain?: string, signal?: AbortSignal): Promise<SourcePnL> {
-  const {data} = await call<SourcePnL>(`/v2/smartmoney/pnl?${sourceParams(identity, chain, true)}`, {signal});
+  const {data} = await call<SourcePnL>(`/v2/smartmoney/pnl?${sourceParams(identity, chain ?? 'all', true)}`, {signal});
   assertProviderSnapshotMeta(data.meta);
   if (!Array.isArray(data.windows)) throw new Error('Smart Money PnL windows are unavailable.');
   return data;

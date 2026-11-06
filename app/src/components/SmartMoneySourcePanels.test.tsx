@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import React from 'react';
 import {afterEach, expect, it, vi} from 'vitest';
-import {cleanup, render, screen, waitFor} from '@testing-library/react';
+import {cleanup, render, screen, waitFor, within} from '@testing-library/react';
 import {SWRConfig} from 'swr';
 
 const {callMock} = vi.hoisted(() => ({callMock: vi.fn()}));
@@ -11,6 +11,42 @@ import {SmartMoneySourcePanels} from './SmartMoneySourcePanels';
 import {parseSmartMoneyIdentityRoute} from '@/lib/smartmoney-identity';
 
 afterEach(() => { cleanup(); callMock.mockReset(); });
+
+it.each([
+  ['4824101.3768392346308020729946336', '$4,824,101.38'],
+  ['9007199254740993.125', '$9,007,199,254,740,993.13'],
+  ['0', '$0.00'],
+  ['12.3', '$12.30'],
+  ['', '--'],
+  [undefined, '--'],
+])('shows source net assets %j without adding positions or PnL', async (amount, expected) => {
+  const meta = {source: 'mixed', data_mode: 'provider_snapshot', data_provider: 'mixed', as_of: '2026-11-06T00:00:00Z', coverage: 'complete', ledger_verified: false};
+  const ready = {enabled: true, state: 'ready', reason: 'data_mode=provider_snapshot;ledger_verified=false', poll_after_ms: 30000};
+  callMock.mockImplementation(async (path: string) => {
+    if (path === '/v2/smartmoney/capabilities') return {data: {
+      protocol_version: '2', epoch: 'provider-snapshot-v1', supported_chains: [], surfaces: {pnl: ready, positions: ready},
+    }};
+    if (path.startsWith('/v2/smartmoney/pnl?')) return {data: {
+      meta, total_assets_usd: amount, windows: [
+        {window: 'all', total_profit_usd: '999', realized_profit_usd: '100', unrealized_profit_usd: '899'},
+        {window: '7d', total_profit_usd: '42', realized_profit_usd: '10', unrealized_profit_usd: '32'},
+      ],
+    }};
+    if (path.startsWith('/v2/smartmoney/positions?')) return {data: {
+      meta, snapshot: {user: {open: [{symbol: 'TEST', usd_value: '500'}], closed: [], list: []}},
+    }};
+    throw new Error(`Unexpected source read: ${path}`);
+  });
+  render(<SWRConfig value={{provider: () => new Map()}}><SmartMoneySourcePanels route={{status: 'subject', subjectId: 'subject:3'}} /></SWRConfig>);
+  await screen.findByText('总收益 $999');
+  const assets = screen.getByRole('region', {name: '资产净值'});
+  expect(within(assets).getByText(expected)).toBeTruthy();
+  expect(within(assets).getByText('来源账户的现货资产美元估值，含现金，不含合约权益。')).toBeTruthy();
+  expect(screen.getAllByRole('region', {name: '资产净值'})).toHaveLength(1);
+  expect(screen.getByText('总收益 $42')).toBeTruthy();
+  expect(callMock.mock.calls.filter(([path]) => path.startsWith('/v2/smartmoney/pnl?')).map(([path]) => path))
+    .toEqual(['/v2/smartmoney/pnl?identity.type=user&identity.user_id=subject%3A3&chain=all']);
+});
 
 it('lands a BSC leaderboard wallet on its published BSC snapshot', async () => {
   const route = parseSmartMoneyIdentityRoute('/smart-money',
