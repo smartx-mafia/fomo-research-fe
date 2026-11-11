@@ -15,7 +15,8 @@ describe('交给 Privy 的链表', () => {
   // Privy 只是在本地把请求拒掉，链上什么都没发生。
   it('本域每一条 EVM 链都在表里', () => {
     const want = CHAINS.filter(isEVM).map((c) => CHAIN_IDS[c]);
-    expect([...SUPPORTED_EVM_CHAIN_IDS].sort((a, b) => a - b)).toEqual([...want].sort((a, b) => a - b));
+    expect(SUPPORTED_EVM_CHAIN_IDS).toEqual(expect.arrayContaining(want));
+    expect(SUPPORTED_EVM_CHAIN_IDS).toContain(99901);
   });
 
   it('DOMAIN_EVM_CHAIN_IDS 与 chains.ts 同源（不是手抄的第二份）', () => {

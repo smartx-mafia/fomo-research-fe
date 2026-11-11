@@ -8,6 +8,14 @@
 
 本文直接交付 App 开发团队使用，不要求访问、运行或移植现有 Web 工程。代码示例中的 `<...>` 是占位符，非可直接使用的签名或账户信息。SDK 适配示例明确区分协议要求与待 App 项目验证的实现。
 
+## 网页测试入口与 Elysium 适配（2026-11-11）
+
+网页验收统一使用 fomo-research-fe 已有 `/fast-swap`。不启用 `/dev/harness`，不使用独立 web-embedded-harness；代币详情旧 v1 面板不能作为 v2 成交证明。
+
+Elysium 使用 `eip155:99901`，共享 `lib/evm-chains.ts` 提供 Privy 链配置。原生 HYPE 的产品资产身份仍为 WHYPE，签名批次沿用原 EVM 路径：可选首位 deposit、零或多条 approve、恰好一条最终 spend。包装金额不得超过意图金额，后续调用不得携带原生 value，审批和支出目标由现有 `/v1/chains` 下发。获取目录后重新检查账号、钱包、交易版本、前台状态和报价有效期；不改变 create/refresh/execution/recovery 流程。
+
+部署要求：`NEXT_PUBLIC_PRIVY_APP_ID` 匹配测试 business；FastSwap CORS 包含实际部署域名；Solana 出资腿仍须配置可用的 `NEXT_PUBLIC_SOLANA_RPC_URL`，不允许用构建成功代替链上核验。测试域名为 `https://fomo-research-fe.vercel.app`。当前改动的测试和构建通过不代表真实买卖、持仓或账务验收通过。
+
 ## 1. 先理解 App 与后端的分工
 
 | 环节 | App 负责 | SmartX 后端负责 |

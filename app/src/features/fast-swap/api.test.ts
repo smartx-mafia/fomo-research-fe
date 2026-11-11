@@ -1,6 +1,6 @@
 import {afterEach, describe, expect, it, vi} from 'vitest';
 
-import {FastSwapApiError, getCapabilities, getLatestFastSwapTrace, reportSolanaExecution, subscribeFastSwapTrace} from './api';
+import {FastSwapApiError, getCapabilities, getEvmChainPolicy, getLatestFastSwapTrace, reportSolanaExecution, subscribeFastSwapTrace} from './api';
 import {quoteFixture} from './auto-quote.fixture';
 
 describe('Fast Swap trace propagation', () => {
@@ -40,4 +40,15 @@ describe('Fast Swap trace propagation', () => {
     expect(events.some((event)=>event.stage==='parse_done')).toBe(false);
     expect(events.at(-1)).toEqual({stage:'request_error',phase:'contract_parse'});
   });
+  it('loads Elysium policy from business and rejects unavailable chains', async () => {
+    const entry = {chain_id:99901,vm:'evm',relay_spend_targets_available:true,relay_spend_targets:['0x0000000000000000000000000000000000000002'],native_wrapped_address:'0xba876237b0f021a6c6d852d6c26e107997cc5e81'};
+    const fetch = vi.fn(async (_url: unknown) => new Response(JSON.stringify({code:200,data:{chains:[entry]}}), {status:200}));
+    vi.stubGlobal('fetch', fetch);
+    await expect(getEvmChainPolicy('jwt','eip155:99901')).resolves.toEqual({spendTargets:entry.relay_spend_targets,wrappedNative:entry.native_wrapped_address});
+    expect(String(fetch.mock.calls[0]?.[0])).toContain('/v1/chains');
+    await expect(getEvmChainPolicy('jwt','eip155:99801')).rejects.toThrow('unavailable');
+    entry.relay_spend_targets_available=false;
+    await expect(getEvmChainPolicy('jwt','eip155:99901')).rejects.toThrow('unavailable');
+  });
+
 });

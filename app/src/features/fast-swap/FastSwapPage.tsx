@@ -14,7 +14,7 @@ import {useSession} from '@/session/storage';
 import {getSlippageMode} from '@/api/settings';
 
 import {
-  cancelSwap, createSwap, FastSwapApiError, getCapabilities, getLatestFastSwapTrace, getSwap, getSwapAvailability,
+  cancelSwap, createSwap, FastSwapApiError, getCapabilities, getEvmChainPolicy, getLatestFastSwapTrace, getSwap, getSwapAvailability,
   listActiveSwaps, listSwapEvents, refreshSwap, reportEvmExecution, reportSolanaExecution, reportTelemetry,
   subscribeFastSwapTrace, type RequestTimingReporter,
 } from './api';
@@ -49,7 +49,7 @@ const RECOMMENDED_WSOL = 'So11111111111111111111111111111111111111112';
 const PRIVY_PREWARM_SESSION_TIMEOUT_MS = 4000;
 
 function chainQuery(value: string | null): string {
-  const known: Record<string, string> = {solana: 'solana:mainnet', base: 'eip155:8453', ethereum: 'eip155:1', bsc: 'eip155:56', robinhood: 'eip155:4663', arc: 'eip155:5042'};
+  const known: Record<string, string> = {solana: 'solana:mainnet', base: 'eip155:8453', ethereum: 'eip155:1', bsc: 'eip155:56', robinhood: 'eip155:4663', arc: 'eip155:5042', elysium: 'eip155:99901'};
   return value ? known[value.toLowerCase()] ?? value : '';
 }
 function metadataAssetAddress(chain: string | undefined, address: string): string {
@@ -328,6 +328,8 @@ export default function FastSwapPage() {
   const sourceWallet = selectedRoute ? walletForChain(managedWallets, selectedRoute.origin_chain) : undefined;
   const destinationWallet = selectedRoute ? walletForChain(managedWallets, selectedRoute.destination_chain) : undefined;
   selectedSwapIDRef.current = snapshot?.swap_id;
+  const signingSnapshotRef = useRef(snapshot);
+  signingSnapshotRef.current = snapshot;
   pendingSwapIDRef.current = pendingExecution?.swapID;
   pendingDurableRef.current = pendingDurable;
   sessionJWTRef.current = session?.jwt;
@@ -799,7 +801,9 @@ export default function FastSwapPage() {
         const wallet = signerByAddress(evmSigners, snapshot.revision.evm.signer_address, true);
         if (!wallet) throw new Error(`Privy 中没有后端指定的 EVM 钱包 ${snapshot.revision.evm.signer_address}.`);
         markSwapTiming('wallet_selected', {wallet_type:'embedded_evm'}, snapshot.intent.client_intent_id, signAttemptID);
-        const signatures = await signEvmRevision(snapshot.revision.evm, wallet, snapshot.intent, (stage, details = {}) => {
+        const policy = await getEvmChainPolicy(bearer, snapshot.intent.origin_chain);
+        if (sessionJWTRef.current !== bearer || signerContextRef.current !== signerContext || signingSnapshotRef.current?.swap_id !== snapshot.swap_id || signingSnapshotRef.current?.revision.revision !== snapshot.revision.revision || !isReady(signingSnapshotRef.current) || signingSnapshotRef.current.execution.status !== ExecutionStatus.NOT_REPORTED || document.hidden || performance.now() >= readyUntil) throw new Error('Signing context changed or quote expired while loading chain policy.');
+        const signatures = await signEvmRevision(snapshot.revision.evm, wallet, snapshot.intent, policy, (stage, details = {}) => {
           const callbackStarted = performance.now();
           try {
             failureStage = stage;
