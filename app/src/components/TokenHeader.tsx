@@ -51,7 +51,7 @@ export default function TokenHeader({
             <span className="rounded border border-border bg-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-muted">
               {chainLabel(chain)}
             </span>
-            {data.bonded !== undefined && (
+            {data.launchpad && data.bonded !== undefined && (
               <span
                 className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
                   data.bonded ? "bg-up/10 text-up" : "bg-accent/10 text-accent"

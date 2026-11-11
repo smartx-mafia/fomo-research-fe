@@ -48,7 +48,7 @@ export default function HoldersTab({ chain, address }: { chain: string; address:
     <Card>
       <div className="flex items-center justify-between border-b border-border px-4 py-2">
         <span className="text-sm font-medium text-muted">Holders</span>
-        <span className="text-[11px] text-muted">DEX-acquired wallets · updated every 6h · PnL window: 1y</span>
+        <span className="text-[11px] text-muted">Holder snapshot · unavailable values shown as —</span>
       </div>
       {unavailable ? (
         <EmptyState>Holder data is temporarily unavailable.</EmptyState>

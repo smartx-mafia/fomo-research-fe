@@ -123,6 +123,7 @@ export const CHAIN_LABEL: Record<string, string> = {
   base: "BASE",
   robinhood: "RH",
   ethereum: "ETH",
+  elysium: "ELYSIUM",
 };
 
 export function chainLabel(id: unknown): string {
