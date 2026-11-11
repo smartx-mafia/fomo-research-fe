@@ -17,7 +17,7 @@ import type {TokenRisk} from './token-risk';
  * 2026-09 换源后 monad 已从合法链集合移除（错误码 100305）；
  * 同期加入 arc（Circle 的 L1，链号 5042，原生 gas 币是 USDC 而不是 ETH）。
  */
-export const CHAINS = ["bsc", "solana", "base", "robinhood", "ethereum", "arc"] as const;
+export const CHAINS = ["bsc", "solana", "base", "robinhood", "ethereum", "arc", "elysium"] as const;
 export type Chain = (typeof CHAINS)[number];
 
 /**
@@ -54,6 +54,7 @@ export interface TokenMarket {
   trades_24h?: number;
   buyers_24h?: number;
   holders_count?: number;
+  launchpad?: string;
   bonded?: boolean;
   bonding_percentage?: number; // 0–100
   /** 新上游无此数据源，恒为 0——是"没有数据"，不是"安全分为 0"，UI 不要展示 */

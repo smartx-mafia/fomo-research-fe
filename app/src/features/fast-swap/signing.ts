@@ -177,38 +177,43 @@ function decodeApprove(call: CaliburCall): {spender: string; amount: bigint} | n
   if (!/^0{24}[0-9a-f]{40}$/.test(addressWord)) throw new Error('ERC-20 approve spender is not canonically encoded.');
   return {spender: `0x${addressWord.slice(24)}`, amount: BigInt(`0x${data.slice(72)}`)};
 }
-function validateCalls(callsValue: unknown, intent: CreateIntent): void {
-  if (!Array.isArray(callsValue) || callsValue.length < 1 || callsValue.length > 2) throw new Error('Calibur requires one spend call or approve plus spend.');
-  const calls: CaliburCall[] = callsValue.map((item, index) => {
-    const call = object(item, `calls[${index}]`);
-    if (!equalAddress(call.to, String(call.to)) || typeof call.data !== 'string' || !/^0x(?:[0-9a-f]{2})*$/i.test(call.data) || typeof call.value !== 'string' || !/^\d+$/.test(call.value)) throw new Error(`Calibur call ${index} is malformed.`);
-    const selector = call.data.slice(2, 10).toLowerCase();
-    if (call.data.length > 2 && call.data.length < 10) throw new Error(`Calibur call ${index} does not contain a full selector.`);
-    if (PUSH_SELECTORS.has(selector)) throw new Error('Calibur may not directly transfer or transferFrom user assets.');
-    return {to: String(call.to).toLowerCase(), value: BigInt(call.value), data: call.data};
-  });
-  const firstApprove = decodeApprove(calls[0]!);
-  const secondApprove = calls.length === 2 ? decodeApprove(calls[1]!) : null;
-  if (secondApprove) throw new Error('Only the first Calibur call may be approve.');
-  if (calls.length === 2 && !firstApprove) throw new Error('A two-call Calibur batch must be approve followed by spend.');
-  if (calls.length === 1 && firstApprove) throw new Error('An approve-only Calibur batch does not execute a swap.');
-  const nativeOrigin = NATIVE_ASSETS.has(intent.origin_asset.toLowerCase());
+export type EvmChainPolicy = {spendTargets: readonly string[]; wrappedNative?: string};
+
+function validateCalls(callsValue: unknown, intent: CreateIntent, policy: EvmChainPolicy): void {
+  if (!policy?.spendTargets.length || policy.spendTargets.some((target) => !equalAddress(target, target))) throw new Error('Trusted Relay spend targets are unavailable.');
+  if (!Array.isArray(callsValue) || callsValue.length === 0) throw new Error('Calibur requires a spend call.');
+  const targets = policy.spendTargets.map((target) => target.toLowerCase());
+  const asset = intent.origin_asset.toLowerCase();
+  if (!equalAddress(asset, asset) || NATIVE_ASSETS.has(asset)) throw new Error('Use the canonical wrapped native asset identity.');
   const amountIn = BigInt(intent.amount_in_raw);
-  const spend = calls[calls.length - 1]!;
-  if (firstApprove) {
-    if (nativeOrigin) throw new Error('A native-asset swap may not contain ERC-20 approve.');
-    if (calls[0]!.to !== intent.origin_asset.toLowerCase()) throw new Error('Approve targets an asset other than the intended input asset.');
-    if (calls[0]!.value !== BigInt(0)) throw new Error('ERC-20 approve may not transfer native value.');
-    if (firstApprove.spender !== spend.to && firstApprove.spender !== PERMIT2) throw new Error('Approve grants allowance outside the current spend call.');
-    if (firstApprove.amount !== amountIn && !(firstApprove.spender === PERMIT2 && firstApprove.amount === MAX_UINT256)) throw new Error('Approve allowance exceeds the intended amount.');
+  if (amountIn <= BigInt(0)) throw new Error('Input amount must be positive.');
+  const wrapped = policy.wrappedNative?.toLowerCase();
+  let spent = false;
+  for (const [index, value] of callsValue.entries()) {
+    const call = object(value, `calls[${index}]`);
+    if (!equalAddress(call.to, String(call.to)) || typeof call.data !== 'string' || !/^0x(?:[0-9a-f]{2})*$/i.test(call.data) || call.data.length < 10 || typeof call.value !== 'string' || !/^\d+$/.test(call.value)) throw new Error(`Calibur call ${index} is malformed.`);
+    const current: CaliburCall = {to: String(call.to).toLowerCase(), data: call.data, value: BigInt(call.value)};
+    const selector = call.data.slice(2, 10).toLowerCase();
+    if (PUSH_SELECTORS.has(selector)) throw new Error('Calibur may not directly transfer or transferFrom user assets.');
+    if (spent) throw new Error('Calibur requires exactly one final spend call.');
+    if (selector === 'd0e30db0') {
+      if (index !== 0 || !wrapped || asset !== wrapped || current.to !== wrapped || current.data.length !== 10 || current.value <= BigInt(0) || current.value > amountIn) throw new Error('Native wrap target, order or amount differs from the intent.');
+      continue;
+    }
+    if (current.value !== BigInt(0)) throw new Error('Only the first wrapped native deposit may spend native value.');
+    const approve = decodeApprove(current);
+    if (approve) {
+      if (current.to !== asset || (!targets.includes(approve.spender) && approve.spender !== PERMIT2)) throw new Error('Approve targets an asset or spender outside the allowlist.');
+      if (approve.amount !== amountIn && !(approve.spender === PERMIT2 && approve.amount === MAX_UINT256)) throw new Error('Approve allowance differs from the intended amount.');
+      continue;
+    }
+    if (current.to === asset || !targets.includes(current.to)) throw new Error('Spend target is outside the Relay allowlist.');
+    spent = true;
   }
-  if (!nativeOrigin) {
-    calls.forEach((call, index) => { if (call.to === intent.origin_asset.toLowerCase() && !(index === 0 && firstApprove)) throw new Error('A non-approve call targets the input token contract.'); });
-    if (spend.value !== BigInt(0)) throw new Error('ERC-20 input may not also spend native value.');
-  } else if (spend.value !== amountIn) throw new Error('Native spend value does not equal amount_in_raw.');
+  if (!spent) throw new Error('Calibur batch does not execute a swap.');
 }
 
-function validateCalibur(signing: EvmSigning, intent: CreateIntent): void {
+function validateCalibur(signing: EvmSigning, intent: CreateIntent, policy: EvmChainPolicy): void {
   if (signing.kind !== SigningKind.EVM_CALIBUR) throw new Error('This client does not enable unverified EVM permit signing.');
   if (signing.chain !== intent.origin_chain) throw new Error('EVM signing chain differs from the immutable intent.');
   const match = /^eip155:(\d+)$/.exec(signing.chain);
@@ -230,7 +235,7 @@ function validateCalibur(signing: EvmSigning, intent: CreateIntent): void {
   }
   const deadline = Date.parse(signing.deadline);
   if (!Number.isFinite(deadline) || deadline % 1000 !== 0 || !decimalEquals(message.deadline, String(deadline / 1000))) throw new Error('Calibur deadline does not match the signed message.');
-  validateCalls(batched.calls, intent);
+  validateCalls(batched.calls, intent, policy);
   if (!fields(typed.types, 'EIP712Domain', [['name', 'string'], ['version', 'string'], ['chainId', 'uint256'], ['verifyingContract', 'address'], ['salt', 'bytes32']]) ||
     !fields(typed.types, 'SignedBatchedCall', [['batchedCall', 'BatchedCall'], ['nonce', 'uint256'], ['keyHash', 'bytes32'], ['executor', 'address'], ['deadline', 'uint256']]) ||
     !fields(typed.types, 'BatchedCall', [['calls', 'Call[]'], ['revertOnFailure', 'bool']]) ||
@@ -244,14 +249,14 @@ function validateCalibur(signing: EvmSigning, intent: CreateIntent): void {
   }
 }
 
-export async function signEvmRevision(signing: EvmSigning, wallet: EvmWallet, intent: CreateIntent, reportTiming?: SigningTimingReporter): Promise<{request_id: string; signature: string}[]> {
+export async function signEvmRevision(signing: EvmSigning, wallet: EvmWallet, intent: CreateIntent, policy: EvmChainPolicy, reportTiming?: SigningTimingReporter): Promise<{request_id: string; signature: string}[]> {
   const report = (stage: Parameters<SigningTimingReporter>[0], details?: Parameters<SigningTimingReporter>[1]) => {
     try { reportTiming?.(stage, details); } catch { /* Diagnostics never interrupt signing. */ }
   };
   const precheckStarted = monotonicNow();
   report('evm_precheck_start');
   try {
-    validateCalibur(signing, intent);
+    validateCalibur(signing, intent, policy);
     if (wallet.address.toLowerCase() !== signing.signer_address.toLowerCase()) throw new Error('The loaded EVM signer does not match the prepared revision.');
     report('evm_precheck_done', {duration_ms: monotonicNow() - precheckStarted, request_count: signing.requests.length});
   } catch (error) {

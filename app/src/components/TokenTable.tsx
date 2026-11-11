@@ -192,7 +192,7 @@ function TokenRows({ tokens, board }: { tokens: TokenMarket[]; board: BoardName 
                 <Flash value={tok.holders_count}>{fmtInt(tok.holders_count)}</Flash>
               </td>
               <td className="px-3 py-2">
-                <BondingBar pct={tok.bonding_percentage} bonded={tok.bonded} />
+                {tok.launchpad ? <BondingBar pct={tok.bonding_percentage} bonded={tok.bonded} /> : "—"}
               </td>
             </tr>
           ))}

@@ -11,7 +11,7 @@ function LiveCell({ label, raw, text }: { label: string; raw: unknown; text: str
 }
 
 export default function StatGrid({ data }: { data: TokenMarket }) {
-  const showBonding = !data.bonded && data.bonding_percentage !== undefined;
+  const showBonding = Boolean(data.launchpad) && !data.bonded && data.bonding_percentage !== undefined;
 
   return (
     <Card>
@@ -35,7 +35,7 @@ export default function StatGrid({ data }: { data: TokenMarket }) {
             text={fmtPct(data.bonding_percentage, { sign: false })}
           />
         )}
-        {data.bonded && <StatCell label="Bonding" value="Graduated" />}
+        {data.launchpad && data.bonded && <StatCell label="Bonding" value="Graduated" />}
       </div>
     </Card>
   );

@@ -155,6 +155,7 @@ export function normalizeTokenMarket(raw: unknown): TokenMarket {
     const n = num(r[f]);
     if (n !== undefined) out[f] = n;
   }
+  if (typeof r.launchpad === "string" && r.launchpad.trim()) out.launchpad = r.launchpad;
   if (typeof r.bonded === "boolean") out.bonded = r.bonded;
   return out;
 }

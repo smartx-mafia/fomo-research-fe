@@ -53,23 +53,46 @@ describe('fast swap signing', () => {
     const typed = {domain, types, primaryType: 'SignedBatchedCall', message} as const;
     const signing: EvmSigning = {kind: 2, chain: 'eip155:8453', signer_address: account.address, execution_digest: hashTypedData(typed), nonce: '1', deadline, requests: [{request_id: 'calibur_batch', method: 1, typed_data: {domain: {...domain, chainId: 8453}, types: {...types}, primary_type: typed.primaryType, message: {batchedCall: {calls: [{to: message.batchedCall.calls[0].to, value: '0', data: '0xdeadbeef'}], revertOnFailure: true}, nonce: '1', keyHash: message.keyHash, executor: message.executor, deadline: String(message.deadline)}}, authorization: null}]};
     const intent: CreateIntent = {client_intent_id: 'intent', origin_chain: 'eip155:8453', destination_chain: 'solana:mainnet', origin_asset: '0x0000000000000000000000000000000000000003', destination_asset: 'mint', amount_in_raw: '1', slippage_bps: 300, side: 2, source_wallet_id: 'evm', destination_wallet_id: 'sol', fee_policy: 1};
-    const signatures = await signEvmRevision(signing, {address: account.address, getEthereumProvider: async () => ({request: async () => account.signTypedData(typed)})}, intent);
+    const policy = {spendTargets: ['0x0000000000000000000000000000000000000002']};
+    const signatures = await signEvmRevision(signing, {address: account.address, getEthereumProvider: async () => ({request: async () => account.signTypedData(typed)})}, intent, policy);
     expect(signatures).toHaveLength(1);
     expect(signatures[0]?.signature).toMatch(/^0x[0-9a-f]{130}$/i);
-    await expect(signEvmRevision({...signing, execution_digest: `0x${'00'.repeat(32)}`}, {address: account.address, getEthereumProvider: async () => ({request: async () => account.signTypedData(typed)})}, intent)).rejects.toThrow(/digest/);
+    await expect(signEvmRevision({...signing, execution_digest: `0x${'00'.repeat(32)}`}, {address: account.address, getEthereumProvider: async () => ({request: async () => account.signTypedData(typed)})}, intent, policy)).rejects.toThrow(/digest/);
     const maliciousTyped = {...signing.requests[0]!.typed_data!, domain: {...signing.requests[0]!.typed_data!.domain, name: 'OtherApp'}};
     const maliciousDigest = hashTypedData({domain: maliciousTyped.domain, types: maliciousTyped.types, primaryType: maliciousTyped.primary_type, message: maliciousTyped.message} as Parameters<typeof hashTypedData>[0]);
     await expect(signEvmRevision(
       {...signing, execution_digest: maliciousDigest, requests: [{...signing.requests[0]!, typed_data: maliciousTyped}]},
       {address: account.address, getEthereumProvider: async () => ({request: async () => '0x'})},
-      intent,
+      intent, policy,
     )).rejects.toThrow(/allowlist/);
     const dangerousTyped = {...signing.requests[0]!.typed_data!, message: {...signing.requests[0]!.typed_data!.message, batchedCall: {calls: [{to: intent.origin_asset, value: '0', data: '0xa9059cbb'}], revertOnFailure: true}}};
     const dangerousDigest = hashTypedData({domain: dangerousTyped.domain, types: dangerousTyped.types, primaryType: dangerousTyped.primary_type, message: dangerousTyped.message} as Parameters<typeof hashTypedData>[0]);
     await expect(signEvmRevision(
       {...signing, execution_digest: dangerousDigest, requests: [{...signing.requests[0]!, typed_data: dangerousTyped}]},
       {address: account.address, getEthereumProvider: async () => ({request: async () => '0x'})},
-      intent,
+      intent, policy,
     )).rejects.toThrow(/transfer/);
+    const whype = '0xba876237b0f021a6c6d852d6c26e107997cc5e81';
+    const router = policy.spendTargets[0]!;
+    const hypeIntent = {...intent, origin_chain: 'eip155:99901', origin_asset: whype, amount_in_raw: '1000'};
+    const hypePolicy = {...policy, wrappedNative: whype};
+    type Call = {to: string; value: string; data: string};
+    const spend: Call = {to: router, value: '0', data: '0xdeadbeef'};
+    const approval: Call = {to: whype, value: '0', data: `0x095ea7b3${router.slice(2).padStart(64, '0')}${BigInt(1000).toString(16).padStart(64, '0')}`};
+    const wrap = (value: string): Call => ({to: whype, value, data: '0xd0e30db0'});
+    const run = async (calls: Call[]) => {
+      const evmTyped = {...signing.requests[0]!.typed_data!, domain: {...domain, chainId: 99901}, message: {...signing.requests[0]!.typed_data!.message, batchedCall: {calls, revertOnFailure: true}}};
+      const payload = {domain: evmTyped.domain, types: evmTyped.types, primaryType: evmTyped.primary_type, message: evmTyped.message};
+      const revision: EvmSigning = {...signing, chain: hypeIntent.origin_chain, execution_digest: hashTypedData(payload as never), requests: [{...signing.requests[0]!, typed_data: evmTyped}]};
+      return signEvmRevision(revision, {address: account.address, getEthereumProvider: async () => ({request: async () => account.signTypedData(payload as never)})}, hypeIntent, hypePolicy);
+    };
+    for (const contribution of ['0', '400', '1000']) {
+      await expect(run([...(contribution === '0' ? [] : [wrap(contribution)]), approval, spend])).resolves.toHaveLength(1);
+    }
+    for (const calls of [[wrap('1001'), spend], [approval, wrap('400'), spend], [wrap('400'), wrap('400'), spend], [approval], [spend, approval], [spend, spend], [{...spend, to: whype}], [{...spend, value: '1'}]]) {
+      await expect(run(calls)).rejects.toThrow();
+    }
+    await expect(signEvmRevision(signing, {address: account.address, getEthereumProvider: async () => {throw new Error('must not reach wallet');}}, intent, {spendTargets: []})).rejects.toThrow('Trusted Relay');
+
   });
 });
