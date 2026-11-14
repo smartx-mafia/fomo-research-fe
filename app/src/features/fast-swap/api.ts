@@ -1,3 +1,5 @@
+import {call} from '@/api/envelope';
+import type {EvmChainPolicy} from './signing';
 import {newTraceID} from '@/lib/trace';
 
 import {FAST_SWAP_API_BASE} from './config';
@@ -168,4 +170,12 @@ export const getSwapAvailability = async (bearer: string, swapID: string, signal
 export const createStreamTicket = async (bearer: string, signal?: AbortSignal) => parseStreamTicket(await request('/v2/swaps/stream-tickets', {method: 'POST', bearer, body: {}, signal}));
 export async function reportTelemetry(bearer: string, events: unknown[], key: string, signal?: AbortSignal): Promise<void> {
   try { await request('/v2/swaps/telemetry', {method: 'POST', bearer, body: {events}, idempotencyKey: key, signal}); } catch { /* Telemetry never changes the trade result. */ }
+}
+
+/** Business chain catalog owns the same Relay policy used by the existing EVM clients. */
+export async function getEvmChainPolicy(bearer: string, caip: string): Promise<EvmChainPolicy> {
+  const {data} = await call<{chains: {chain_id: number; vm: string; relay_spend_targets_available: boolean; relay_spend_targets: string[]; native_wrapped_address?: string}[]}>('/v1/chains', {bearer});
+  const chain = data.chains.find((entry) => entry.vm === 'evm' && `eip155:${entry.chain_id}` === caip);
+  if (!chain?.relay_spend_targets_available || !Array.isArray(chain.relay_spend_targets) || chain.relay_spend_targets.length === 0) throw new Error('Trusted Relay spend targets are unavailable for this chain.');
+  return {spendTargets: chain.relay_spend_targets, wrappedNative: chain.native_wrapped_address};
 }

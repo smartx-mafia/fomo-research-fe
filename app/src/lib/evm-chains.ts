@@ -47,12 +47,21 @@ export const arcMainnet = defineChain({
   blockExplorers: {default: {name: 'Arc Explorer', url: 'https://explorer.arc.io'}},
 });
 
+/** Mainnet settings from Relay /chains (99901), verified 2026-11-11. */
+export const elysiumMainnet = defineChain({
+  id: 99901,
+  name: 'Elysium',
+  nativeCurrency: {name: 'HYPE', symbol: 'HYPE', decimals: 18},
+  rpcUrls: {default: {http: ['https://rpc.elysium.kinetiq.xyz']}},
+  blockExplorers: {default: {name: 'Elysium Explorer', url: 'https://elysium.kinetiq.xyz/explorer'}},
+});
+
 /**
- * 本域的五条 EVM 链。顺序不影响行为，按 `harness/chains.ts` 的顺序排，方便对照。
+ * 本域的 EVM 链。顺序不影响行为，按 `harness/chains.ts` 的顺序排，方便对照。
  *
  * Solana 不在这里：它不是 EVM，Privy 那侧由 `config.solana` 管。
  */
-export const EVM_CHAINS = [bsc, robinhood, base, mainnet, arcMainnet] as const;
+export const EVM_CHAINS = [bsc, robinhood, base, mainnet, arcMainnet, elysiumMainnet] as const;
 
 /** 这张表覆盖的链号，给守卫用例与调试用。 */
 export const EVM_CHAIN_IDS: readonly number[] = EVM_CHAINS.map((c) => c.id);

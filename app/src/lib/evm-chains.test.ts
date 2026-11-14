@@ -1,6 +1,6 @@
 import {describe, expect, it} from 'vitest';
 
-import {ARC_RPC_URL, EVM_CHAINS, EVM_CHAIN_IDS, arcMainnet} from './evm-chains';
+import {ARC_RPC_URL, EVM_CHAINS, EVM_CHAIN_IDS, arcMainnet, elysiumMainnet} from './evm-chains';
 import {CHAINS} from './types';
 
 // harness 那侧的守卫（`features/harness/evmchains.test.ts`）拿的是交易域的链表；
@@ -21,6 +21,12 @@ describe('supportedChains 与产品侧链词汇表', () => {
   it('arc(5042) 与 robinhood(4663) 都在', () => {
     expect(EVM_CHAIN_IDS).toContain(5042);
     expect(EVM_CHAIN_IDS).toContain(4663);
+  });
+
+  it('Elysium mainnet uses HYPE and the mainnet chain ID', () => {
+    expect(EVM_CHAIN_IDS).toContain(99901);
+    expect(elysiumMainnet.nativeCurrency).toEqual({name: 'HYPE', symbol: 'HYPE', decimals: 18});
+    expect(elysiumMainnet.rpcUrls.default.http).toEqual(['https://rpc.elysium.kinetiq.xyz']);
   });
 
   // viem 2.56.0 里 arc.rpcUrls.default.http 是空数组（实测）。
