@@ -8,6 +8,15 @@ import { fetchTokenTradeBoard, normalizeTokenTradeBoard } from './token-trade-bo
 describe('token trade board contract', () => {
   beforeEach(() => callMock.mockReset());
 
+  it('preserves short and empty pages and sends the opaque cursor unchanged', async () => {
+    callMock.mockResolvedValue({data: {items: [], has_more: true, next_cursor: 'next+/=', coverage: []}});
+    const result = await fetchTokenTradeBoard('smart-money', 'solana', 'zec', {cursor: 'prior+/='});
+    expect(new URL(callMock.mock.calls[0][0], 'http://local').searchParams.get('cursor')).toBe('prior+/=');
+    expect(result).toMatchObject({items: [], hasMore: true, nextCursor: 'next+/='});
+    expect(() => normalizeTokenTradeBoard({items: [], has_more: true, next_cursor: ''})).toThrow();
+    expect(() => normalizeTokenTradeBoard({items: [], has_more: 'false'})).toThrow();
+  });
+
   it('requests the platform board with scope and clamps the limit without a cursor', async () => {
     callMock.mockResolvedValue({ data: {
       token: { chain: 'bsc', address: '0xabc', decimals: 18, symbol: 'ABC', name: 'ABC Token' },

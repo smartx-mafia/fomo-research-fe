@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { RefreshCw, UserRound } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 
 import { ApiError } from "@/api/envelope";
@@ -18,7 +18,7 @@ type TradeBoardTab = "smartx" | "smart-money" | "on-chain";
 
 const BOARDS: { id: TradeBoardTab; label: string; note: string }[] = [
   { id: "smartx", label: "SmartX", note: "Confirmed trades from SmartX users" },
-  { id: "smart-money", label: "Smart Money", note: "Bitquery + GMGN smart-money trades" },
+  { id: "smart-money", label: "Smart Money", note: "Trades from tracked smart-money accounts" },
   { id: "on-chain", label: "On-Chain", note: "Recent buy / sell events from the market source" },
 ];
 
@@ -170,18 +170,94 @@ export default function TradesTab({ chain, address }: { chain: string; address: 
   const session = useSession();
   const [board, setBoard] = useState<TradeBoardTab>("smartx");
   const [scope, setScope] = useState<TokenTradeScope>("all");
+  return <TradeBoardView key={JSON.stringify([chain, address, board, scope, session?.jwt ?? "public"])}
+    chain={chain} address={address} board={board} scope={scope} session={session} setBoard={setBoard} setScope={setScope} />;
+}
+
+function TradeBoardView({chain, address, board, scope, session, setBoard, setScope}: {
+  chain: string; address: string; board: TradeBoardTab; scope: TokenTradeScope;
+  session: ReturnType<typeof useSession>; setBoard: (value: TradeBoardTab) => void; setScope: (value: TokenTradeScope) => void;
+}) {
+  const [extraPages, setExtraPages] = useState<TokenTradeBoardPage[]>([]);
+  const [pinnedFirst, setPinnedFirst] = useState<TokenTradeBoardPage>();
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [moreError, setMoreError] = useState<unknown>();
+  const mounted = useRef(true);
+  const requests = useRef(new Set<AbortController>());
+  const moreRequest = useRef(0);
+  const inFlight = useRef(false);
+  const consumed = useRef(new Set<string>());
+  useEffect(() => {
+    mounted.current = true;
+    const active = requests.current;
+    return () => {
+      mounted.current = false;
+      // React Strict Mode may immediately remount the same effect.
+      queueMicrotask(() => { if (!mounted.current) active.forEach(controller => controller.abort()); });
+    };
+  }, []);
+  const fetchPage = async (cursor?: string) => {
+    if (board === "on-chain") return fetchOnChainTradeBoard(chain, address, LIMIT);
+    const controller = new AbortController();
+    requests.current.add(controller);
+    try {
+      return await fetchTokenTradeBoard(board === "smartx" ? "platform" : "smart-money", chain, address,
+        {scope, limit: LIMIT, bearer: session?.jwt, signal: controller.signal, ...(cursor ? {cursor} : {})});
+    } finally { requests.current.delete(controller); }
+  };
   const needsLogin = board !== "on-chain" && scope === "following" && !session;
   const key = needsLogin ? null : ["token-trade-board", chain, address, board, scope, board === "on-chain" ? "" : session?.jwt ?? "public"];
-  const { data, error, isLoading, mutate } = useSWR<TokenTradeBoardPage>(
+  const { data, error, isLoading, isValidating, mutate } = useSWR<TokenTradeBoardPage>(
     key,
-    () => board === "on-chain"
-      ? fetchOnChainTradeBoard(chain, address, LIMIT)
-      : fetchTokenTradeBoard(board === "smartx" ? "platform" : "smart-money", chain, address, {scope, limit: LIMIT, bearer: session?.jwt}),
-    { refreshInterval: 30_000, revalidateOnFocus: true, dedupingInterval: 10_000, shouldRetryOnError: false },
+    () => fetchPage(),
+    { refreshInterval: pinnedFirst ? 0 : 30_000, revalidateOnFocus: !pinnedFirst, dedupingInterval: 10_000, shouldRetryOnError: false },
   );
 
+  const first = pinnedFirst ?? data;
+  const pages = first ? [first, ...extraPages] : [];
+  const last = pages.at(-1);
+  const hasMore = board !== "on-chain" && last?.hasMore === true;
+  const loadMore = async () => {
+    if (inFlight.current || isValidating || !first || !hasMore || !last?.nextCursor) return;
+    const cursor = last.nextCursor;
+    const request = ++moreRequest.current;
+    inFlight.current = true;
+    setPinnedFirst(first);
+    setLoadingMore(true);
+    setMoreError(undefined);
+    try {
+      const page = await fetchPage(cursor);
+      if (!mounted.current || request !== moreRequest.current) return;
+      if (page.hasMore && (!page.nextCursor || page.nextCursor === cursor || consumed.current.has(page.nextCursor))) {
+        throw new Error("Trade pagination did not advance");
+      }
+      consumed.current.add(cursor);
+      setExtraPages(previous => [...previous, page]);
+    } catch (failure) {
+      if (mounted.current && request === moreRequest.current) setMoreError(failure);
+    } finally {
+      if (mounted.current && request === moreRequest.current) { inFlight.current = false; setLoadingMore(false); }
+    }
+  };
+  const refresh = () => {
+    moreRequest.current++;
+    requests.current.forEach(controller => controller.abort());
+    inFlight.current = false;
+    consumed.current.clear();
+    setPinnedFirst(undefined); setExtraPages([]); setLoadingMore(false); setMoreError(undefined);
+    void mutate();
+  };
+
   const boardNote = BOARDS.find((item) => item.id === board)?.note ?? "";
-  const items = data?.items ?? [];
+  const seen = new Set<string>();
+  const items = pages.flatMap(page => page.items).filter(row => {
+    const id = row.recordID ? `record:${row.recordID}:${row.actorID ?? ""}`
+      : row.txHash ? JSON.stringify([row.txChain ?? chain, row.actorType, row.actorID ?? row.sender, row.txHash, row.side, row.occurredAt]) : undefined;
+    if (!id) return true;
+    if (seen.has(id)) return false;
+    seen.add(id); return true;
+  });
+  const coverage = [...new Set(pages.flatMap(page => page.coverage))];
   const emptyText = board === "on-chain" ? "No on-chain trades found." : scope === "following" ? "No trades from people you follow." : board === "smartx" ? "No SmartX trades found." : "No smart-money trades found in the available sources.";
 
   return (
@@ -191,12 +267,17 @@ export default function TradesTab({ chain, address }: { chain: string; address: 
       </div>
       <div id={`trade-board-panel-${board}`} role="tabpanel" aria-labelledby={`trade-board-tab-${board}`} tabIndex={0}>
         {board !== "on-chain" ? <div role="group" aria-label="Trade scope" className="flex gap-2 px-4 pb-2"><button type="button" aria-pressed={scope === "all"} onClick={() => setScope("all")} className={`rounded-full px-3 py-1.5 text-xs ${scope === "all" ? "bg-surface-2 text-foreground" : "text-muted hover:text-foreground"}`}>All</button><button type="button" aria-pressed={scope === "following"} onClick={() => setScope("following")} className={`rounded-full px-3 py-1.5 text-xs ${scope === "following" ? "bg-surface-2 text-foreground" : "text-muted hover:text-foreground"}`}>Following</button></div> : null}
-        <p className="px-4 pb-2 text-[11px] text-muted">{boardNote} · no pagination · latest 50</p>
+        <div className="flex items-center justify-between px-4 pb-2 text-[11px] text-muted"><p>{boardNote}{board === "on-chain" ? " · latest 50" : ""}</p>
+          {!needsLogin && <button type="button" onClick={refresh} className="text-accent hover:underline">Refresh</button>}</div>
 
-        {needsLogin ? <div className="flex min-h-32 flex-col items-center justify-center gap-2 px-4 text-center"><UserRound size={18} className="text-muted" aria-hidden="true" /><p className="text-sm text-muted">Sign in to see trades from people you follow.</p><Link href="/login" className="text-xs text-accent hover:underline">Sign in</Link></div> : isLoading && !data ? <LoadingRows /> : error ? <ErrorNotice error={error} onRetry={() => void mutate()} /> : <>
-          <CoverageNotice coverage={board === "smart-money" ? data?.coverage ?? [] : []} />
-          <div className="flex items-center justify-between px-4 py-2 text-[11px] text-muted"><span>{items.length ? `${items.length} trades` : data?.coverage?.length ? "Partial source result" : ""}</span><span>USD / time</span></div>
-          {items.length > 0 ? items.map((row, index) => <TradeRow key={`${row.txHash ?? "trade"}-${row.occurredAt}-${index}`} row={row} board={board} chain={chain} />) : <div className="flex min-h-32 items-center justify-center px-4 text-sm text-muted">{data?.coverage?.length ? "No trades from the available sources." : emptyText}</div>}
+        {needsLogin ? <div className="flex min-h-32 flex-col items-center justify-center gap-2 px-4 text-center"><UserRound size={18} className="text-muted" aria-hidden="true" /><p className="text-sm text-muted">Sign in to see trades from people you follow.</p><Link href="/login" className="text-xs text-accent hover:underline">Sign in</Link></div> : isLoading && !first ? <LoadingRows /> : error && !first ? <ErrorNotice error={error} onRetry={refresh} /> : <>
+          <CoverageNotice coverage={board === "smart-money" ? coverage : []} />
+          <div className="flex items-center justify-between px-4 py-2 text-[11px] text-muted"><span>{items.length ? `${items.length} trades` : coverage.length ? "Partial source result" : ""}</span><span>USD / time</span></div>
+          {items.length > 0 ? items.map((row, index) => <TradeRow key={`${row.recordID ?? row.txHash ?? "trade"}-${row.occurredAt}-${index}`} row={row} board={board} chain={chain} />) : <div className="flex min-h-32 items-center justify-center px-4 text-sm text-muted">{hasMore ? "More history is available." : coverage.length ? "No trades from the available sources." : emptyText}</div>}
+          {moreError ? <ErrorNotice error={moreError} onRetry={() => void loadMore()} /> : null}
+          {error && first ? <ErrorNotice error={error} onRetry={refresh} /> : null}
+          {hasMore && <div className="px-4 py-3"><button type="button" disabled={loadingMore || isValidating} onClick={() => void loadMore()} className="rounded-md border border-border px-4 py-2 text-sm disabled:opacity-50">{loadingMore ? "Loading…" : "Load more"}</button></div>}
+          {!hasMore && items.length > 0 && board !== "on-chain" && <p className="px-4 py-3 text-xs text-muted">End of available history</p>}
         </>}
       </div>
     </section>

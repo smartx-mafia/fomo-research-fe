@@ -25,6 +25,8 @@ export type TokenTradeSmartMoney = {
 
 /** Common row shape for the three token-detail trade boards. */
 export type TokenTradeBoardItem = {
+	/** Stable server trade identity when supplied by the presentation. */
+	recordID?: string;
   side: 'buy' | 'sell';
   /** Unix seconds. */
   occurredAt: number;
@@ -52,6 +54,8 @@ export type TokenTradeBoardPage = {
   token?: TokenInfo;
   items: TokenTradeBoardItem[];
   coverage: string[];
+  nextCursor?: string;
+  hasMore?: boolean;
 };
 
 class TokenTradeBoardShapeError extends TypeError {
@@ -117,6 +121,7 @@ function normalizeBusinessTrade(value: unknown, index: number): TokenTradeBoardI
   if (row.side !== 'buy' && row.side !== 'sell') throw new TokenTradeBoardShapeError(`items[${index}].side is invalid`);
   const actorType = row.actor_type === 'user' || row.actor_type === 'smart_money' ? row.actor_type : undefined;
   return {
+    recordID: nonEmptyString(record(row.presentation)?.record_id),
     side: row.side,
     occurredAt: safeInteger(row.occurred_at, `items[${index}].occurred_at`),
     tokenAmount: typeof row.token_amount === 'string' && row.token_amount !== '' ? row.token_amount : undefined,
@@ -142,10 +147,17 @@ export function normalizeTokenTradeBoard(value: unknown): TokenTradeBoardPage {
     throw new TokenTradeBoardShapeError('coverage is not an array of strings');
   }
   const token = normalizeTokenInfo(row.token);
+  if (row.has_more !== undefined && typeof row.has_more !== 'boolean') throw new TokenTradeBoardShapeError('has_more is not boolean');
+  if (row.next_cursor !== undefined && typeof row.next_cursor !== 'string') throw new TokenTradeBoardShapeError('next_cursor is not a string');
+  const hasMore = row.has_more === true;
+  const nextCursor = nonEmptyString(row.next_cursor);
+  if (hasMore && !nextCursor) throw new TokenTradeBoardShapeError('has_more requires next_cursor');
   return {
     ...(token ? {token} : {}),
     items: (row.items ?? []).map(normalizeBusinessTrade),
     coverage: (coverage as string[] | undefined) ?? [],
+    hasMore,
+    nextCursor: hasMore ? nextCursor : undefined,
   };
 }
 
@@ -153,12 +165,13 @@ export async function fetchTokenTradeBoard(
   source: TokenTradeBoardSource,
   chain: string,
   address: string,
-  options: { scope?: TokenTradeScope; limit?: number; bearer?: string; signal?: AbortSignal } = {},
+  options: { scope?: TokenTradeScope; limit?: number; cursor?: string; bearer?: string; signal?: AbortSignal } = {},
 ): Promise<TokenTradeBoardPage> {
   const scope = options.scope ?? 'all';
   const requestedLimit = options.limit ?? 50;
   const limit = requestedLimit === 0 ? 50 : Math.min(200, Math.max(1, requestedLimit));
   const query = new URLSearchParams({scope, limit: String(limit)});
+  if (options.cursor) query.set('cursor', options.cursor);
   const path = source === 'platform' ? 'platform-trades' : 'smart-money-trades';
   const response = await call<unknown>(`/v1/tokens/${encodeURIComponent(chain)}/${encodeURIComponent(address)}/${path}?${query.toString()}`, {
     bearer: options.bearer,
